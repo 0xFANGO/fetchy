@@ -11,6 +11,18 @@ export function extractPageMedia({ platform, expectedId, snapshot } = {}) {
     return Number.isFinite(number) && number > 0 ? number : null;
   }
   function text(value) { return typeof value === 'string' && value ? value : null; }
+  // Read only cover fields inside the already identity-checked target. No DOM
+  // image fallback: a recommendation or advertisement is not a video cover.
+  function coverUrl(value) {
+    if (typeof value === 'string') return value;
+    if (Array.isArray(value)) {
+      for (const item of value) { const url = coverUrl(item); if (url) return url; }
+      return null;
+    }
+    if (!value || typeof value !== 'object') return null;
+    return text(value.urlDefault) || text(value.urlPre) || text(value.src) || text(value.url)
+      || coverUrl(value.urlList) || coverUrl(value.url_list) || coverUrl(value.infoList);
+  }
   function permittedUrls(values) {
     const suffix = platform === 'xiaohongshu' ? '.xhscdn.com' : '.douyinvod.com';
     const found = [];
@@ -112,6 +124,9 @@ export function extractPageMedia({ platform, expectedId, snapshot } = {}) {
   if (!formats.length) fail('no_formats', '没有找到当前支持的合流视频候选。');
   return {
     platform, id: actualId, title: text(platform === 'xiaohongshu' ? selected.title : selected.desc) || actualId,
+    thumbnailUrl: platform === 'xiaohongshu'
+      ? coverUrl(selected.imageList?.[0]) || coverUrl(selected.video?.cover)
+      : coverUrl(selected.video?.originCover) || coverUrl(selected.video?.cover),
     durationSeconds, formats, engine: 'browser', availability: 'ready',
   };
 }

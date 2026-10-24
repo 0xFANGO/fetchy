@@ -1,0 +1,10 @@
+<!doctype html>
+<html lang="zh-CN"><head><meta charset="UTF-8"><meta name="viewport" content="width=device-width, initial-scale=1"><title>安装 Fango 本地组件</title><link rel="stylesheet" href="help.css"></head>
+<body><main><p class="eyebrow">FANGO · 本地视频下载</p><h1>让浏览器连接你的文件夹。</h1><p>Fango 通过本机组件解析、下载和校验文件。关闭弹窗后，下载仍在这台电脑上继续。</p>
+<h2>首次安装 · macOS</h2><ol><li>安装 Node.js 22+、Python 3.10+、FFmpeg（包含 ffprobe）。小红书和抖音还需要可用的 Ego Lite 及 <code>ego-browser</code> 命令。</li><li>在项目根目录执行：<pre>python3 -m venv .venv
+.venv/bin/python -m pip install -r requirements.txt
+npm run extension:build
+npm run native:install -- --browser ego</pre><p>Chrome 用户将 <code>ego</code> 换成 <code>chrome</code>。移动项目或 Node 路径后，请再次运行安装命令。</p></li><li>打开浏览器扩展页 <code>chrome://extensions</code>，开启开发者模式，加载项目下的 <code>dist/extension</code> 文件夹，再打开 Fango 点击“重试连接”。</li></ol>
+<h2>浏览器与登录状态</h2><p>YouTube / B站使用本地 yt-dlp。小红书 / 抖音通过 Ego Lite 打开目标页面并读取对应视频；不会自动导出你的 Cookie。遇到登录或验证提示，请在实际打开的 Ego Lite 视频页面完成，然后返回插件重试。Chrome 与 Ego Lite 的会话并不共享。</p>
+<h2>保存位置与恢复</h2><p>默认保存到系统下载目录中的 Fango 文件夹。可从“设置”选择其他目录并保存；正在下载的任务仍使用启动时的目录。只有视频文件校验通过才显示“已保存”。断开连接时请先重连查询，避免重复下载。</p><p>电脑或本地进程重启后不提供断点续传；无法恢复的任务会标为中断。首次支持环境为 macOS；四个平台的可用性取决于具体内容、网络与会话。</p>
+<p class="foot">项目安装与实测范围详见仓库的 docs/extension-install.md 与 docs/extension-validation.md。</p></main></body></html>

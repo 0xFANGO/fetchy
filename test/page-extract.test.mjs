@@ -121,3 +121,16 @@ test('reports missing state and absent media without fabricating a ready result'
   assert.throws(() => extractPageMedia(dy({ awemeId, video: { playAddr: [{ src: 'https://evil.test/v.mp4' }] } })), { code: 'no_formats' });
   assert.throws(() => extractPageMedia({ platform: 'youtube', expectedId: 'EWvNQjAaOHw' }), { code: 'unsupported_platform' });
 });
+
+test('covers come only from the identity-checked target, with null when absent', () => {
+  const cover = 'https://sns-webpic-qc.xhscdn.com/target.webp';
+  const video = { media: { stream: { EF4: [{ masterUrl: cdn }] } } };
+  const note = { noteId, imageList: [{ urlDefault: cover }], video };
+  const result = extractPageMedia({ ...xhs(note), snapshot: { note, recommendation: { thumbnail: 'https://evil.test/recommendation.jpg' } } });
+  assert.equal(result.thumbnailUrl, cover);
+  assert.equal(extractPageMedia(xhs({ noteId, video })).thumbnailUrl, null);
+  assert.throws(() => extractPageMedia(xhs({ ...note, noteId: 'aaaaaaaaaaaaaaaaaaaaaaaa' })), { code: 'identity_mismatch' });
+  const dyCover = 'https://p3-pc-sign.douyinpic.com/target.webp';
+  assert.equal(extractPageMedia(dy({ awemeId, video: { playAddr: [{ src: dyCdn }], cover: [{ src: dyCover }] } })).thumbnailUrl, dyCover);
+  assert.equal(extractPageMedia(dy({ awemeId, video: { playAddr: [{ src: dyCdn }], originCover: { urlList: [dyCover] } } })).thumbnailUrl, dyCover);
+});

@@ -2,6 +2,7 @@
 .local/
 downloads/
 node_modules/
+dist/
 *.cookies.txt
 .DS_Store
 __pycache__/

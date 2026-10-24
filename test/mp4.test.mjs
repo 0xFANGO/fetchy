@@ -1,6 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { mkdtemp, readFile, readdir, realpath, rm, writeFile } from 'node:fs/promises';
+import { chmod, mkdtemp, readFile, readdir, realpath, rm, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
 import { spawnSync } from 'node:child_process';
@@ -244,4 +244,18 @@ test('missing encoder executable cleans temporary output while respecting an exp
   }), { code: 'dependency_missing' });
   assert.deepEqual(await readFile(source), original);
   assert.deepEqual(await readdir(directory), ['source.mkv']);
+});
+
+test('FFmpeg disk exhaustion stays actionable and leaves the original media intact', {
+  skip: skipReason(canEncode('libx264', 'aac')),
+}, async t => {
+  const directory = await sandbox(t), source = await synthetic(directory, 'source.mkv');
+  const original = await readFile(source), encoder = path.join(directory, 'fake-ffmpeg.mjs');
+  await writeFile(encoder, '#!/usr/bin/env node\nconsole.error("Error writing output file: No space left on device /private/SECRET.mp4"); process.exit(1);');
+  await chmod(encoder, 0o755);
+  await assert.rejects(ensureCompatibleMp4(source, { ffmpegLocation: encoder, ffprobePath: 'ffprobe' }), error => {
+    assert.equal(error.code, 'disk_full'); assert.doesNotMatch(error.message, /SECRET|private/); return true;
+  });
+  assert.deepEqual(await readFile(source), original);
+  assert.deepEqual((await readdir(directory)).sort(), ['fake-ffmpeg.mjs', 'source.mkv']);
 });

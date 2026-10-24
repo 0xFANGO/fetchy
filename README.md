@@ -2,10 +2,12 @@
 
 输入 YouTube、小红书、抖音或 B 站视频链接，使用同一个方法解析并下载到本地。
 
-**当前状态：本地下载核心 MVP。** 已提供 Node API、CLI 和平台适配，已完成真实样例的整片下载及音视频验证。浏览器插件 UI 尚未开发。支持范围以 [实测记录](docs/validation.md) 为准；平台页面、会话和解析器版本变化都可能影响结果。
+**当前状态：本地下载核心 + Manifest V3 扩展首版。** 已提供工具栏弹窗、当前页面识别、手动链接、下载/取消/恢复、目录设置及 Native Messaging 本地组件。核心历史样例见 [核心实测记录](docs/validation.md)，本版本插件的实际验收进度单独记录在 [扩展验证记录](docs/extension-validation.md)；不能将核心成功等同于插件四平台全部通过。
 
 - [下载核心需求](docs/requirements.md)：核心范围、统一契约、错误与验收。
-- [插件首版界面与集成需求](docs/extension-ui-requirements.md)：已确认的弹窗交互、目录设置、后台任务、本地组件接入及实现验收；供后续 Agent 开发。
+- [插件首版界面与集成需求](docs/extension-ui-requirements.md)：弹窗交互、目录设置、后台任务、本地组件接入及验收标准。
+- [扩展安装与使用](docs/extension-install.md)：macOS + Ego Lite / Chrome 的构建、导入与本地组件注册。
+- [扩展验证记录](docs/extension-validation.md)：离线状态测试与真实浏览器流程分开记录。
 - [YouTube / B站调研](docs/research-youtube-bilibili.md)
 - [小红书 / 抖音调研](docs/research-xiaohongshu-douyin.md)
 
@@ -24,6 +26,17 @@ npm test
 Windows 的虚拟环境可执行文件位于 `.venv\Scripts\`。代码优先使用项目 `.venv` 内的 yt-dlp；没有时使用 PATH 中的 `yt-dlp`。本次固定验证版本为 `2026.10.21`，没有修改全局下载器。
 
 Node 代码没有额外 npm 依赖。FFmpeg、Ego Browser 需自行配置到 PATH；可用 API 选项覆盖可执行文件路径。
+
+### 浏览器插件
+
+```bash
+npm run extension:build
+npm run native:install -- --browser ego
+```
+
+在 Ego Lite 的 `chrome://extensions/` 开启开发者模式，加载项目下的 `dist/extension`，固定「Fango 视频下载」到工具栏。打开具体视频页点击图标，或粘贴单个链接。识别后点击下载，默认保存到 `~/Downloads/Fango`，可在设置中更改。关闭弹窗不会取消下载。
+
+Chrome 注册使用 `--browser chrome`。当前安装程序仅支持 macOS；实际验证范围见[扩展验证记录](docs/extension-validation.md)。小红书/抖音仍由 Ego 打开目标页面，不假定与 Chrome 或插件当前标签页共享会话；完整说明见[安装文档](docs/extension-install.md)。
 
 ## 命令行
 
@@ -46,7 +59,7 @@ node bin/fango-download.mjs download 'https://youtu.be/EWvNQjAaOHw' --transport 
 node bin/fango-download.mjs --help
 ```
 
-成功结果以 JSON 输出，包含本地绝对路径、文件大小和验证结果。阶段信息写入 stderr。Ctrl+C 取消；失败不留下伪装成成片的文件。每次成功文件位于独立 `video-*` 目录，避免重名覆盖。
+成功结果以 JSON 输出，包含本地绝对路径、文件大小和验证结果。阶段信息写入 stderr。Ctrl+C 取消；失败不留下伪装成成片的文件。每次成功文件位于独立 `video-*` 目录，文件名使用实际视频标题，例如 `video-xxxxxx/中文视频标题.mp4`。标题中的路径/控制字符会清理，过长标题会截短，缺少可用标题时以内容 ID 等信息兜底；同目录重名自动加序号，不覆盖已有文件。扩展、CLI 和 Node API 使用相同规则。
 
 `--max-height` 是实际帧高度，例如 1080×1920 竖屏高度为 1920。分享链接的 `t=4538s` 只记录播放定位，默认仍下载整片。首版没有自动裁切。
 
@@ -69,7 +82,7 @@ const result = await downloadVideo(url, {
 console.log(result.filepath, result.validation);
 ```
 
-`resolveVideo` 返回可展示的规格，不公开签名媒体 URL。`downloadVideo` 接受原始链接并重新解析，避免使用过期地址。失败抛出带 `code` 的错误；也导出 `resolve` / `download` 别名。
+`resolveVideo` 返回可展示的规格以及可选 `thumbnailUrl`（未知为 `null`），不公开签名媒体 URL。`downloadVideo` 接受原始链接并重新解析，避免使用过期地址。失败抛出带 `code` 的错误；也导出 `resolve` / `download` 别名。
 
 | 平台 | auto 路由 | 当前机制 |
 | --- | --- | --- |
@@ -78,7 +91,7 @@ console.log(result.filepath, result.validation);
 | 小红书 | browser | 读取目标笔记候选与镜像；缺少 Ego 可退到 yt-dlp，规格可能减少 |
 | 抖音 | browser | 分享短链、精选 modal_id 与详情页映射到同一视频，读取页面合流候选 |
 
-`--engine yt-dlp` 可显式使用匿名解析路径，`--engine browser` 当前只支持小红书/抖音。浏览器路径使用 Ego 当前会话，不导出 Cookie，遇到登录/验证状态需在浏览器处理。浏览器页面错误会保留可接管空间；取消和超时能停止本地传输，但不承诺已撤销浏览器端动作。
+`--engine yt-dlp` 可显式使用匿名解析路径，`--engine browser` 当前只支持小红书/抖音。浏览器路径使用 `ego-browser` 默认上下文中的独立任务页面，不保证与插件当前标签页属于同一 profile；不导出 Cookie，遇到登录/验证状态需在实际 Ego 目标页面处理。浏览器页面错误会保留可接管空间；取消和超时能停止本地传输，但不承诺已撤销浏览器端动作。
 
 高级 API 配置包括 `ytDlpPath`、`ffprobePath`、`ffmpegLocation`、`egoBrowserPath`。`cookiesFile` / `--cookies-file` 仅用于显式指定的 yt-dlp 引擎，使用临时私有副本，不回写原文件。浏览器可设 `maxBytes`（默认 4 GiB）；`browserSpaceId` 只用于开发时复用当前任务空间。
 
@@ -102,14 +115,19 @@ src/mp4.mjs           MP4 兼容性检查、重封装与必要转码
 src/browser.mjs       浏览器生命周期、合流下载与验证
 src/process.mjs       有界、可取消的子进程
 src/index.mjs         统一 API、引擎路由与有限回退
+src/thumbnails.mjs    目标封面与图片地址校验
+src/filenames.mjs     视频标题清理与不覆盖的成片命名
+extension/           Manifest V3 弹窗、设置与后台控制
+native/              本地 host、独立任务进程、目录/文件操作与注册
+scripts/             可加载扩展构建（复用核心 URL 规则）
 bin/                 CLI
 test/                离线契约与故障测试
 docs/                需求、研究与实测记录
 ```
 
-当前 `npm test` 共 60 项测试通过，覆盖抖音短链重定向和真实 FFmpeg 的 MP4 重封装/转码；不访问真实平台、不启动真实浏览器。两轮真实样例及验证范围另见 [实测记录](docs/validation.md)，其中第二轮 YouTube/B站的兼容 MP4 由已下载文件转换得到，不能当作修改后再次完整下载的证据。
+`npm test` 覆盖核心契约、真实 FFmpeg 的 MP4 重封装/转码、弹窗/后台竞态、Native Messaging 分帧、任务去重、取消确认、目录冻结、结果校验及真实 host/daemon 断连恢复。离线测试不访问真实平台、不启动真实浏览器。最新结果见[扩展验证记录](docs/extension-validation.md)。历史两轮核心样例另见 [核心实测记录](docs/validation.md)，其中第二轮 YouTube/B站的兼容 MP4 由已下载文件转换得到，不能当作修改后再次完整下载的证据。
 
-后续插件复用这个接口；已确认的首版方案采用扩展 + Native Messaging 本地组件，具体交互、集成缺口与验收见[插件首版需求](docs/extension-ui-requirements.md)。当前仅完成需求整理，尚未添加插件 manifest 或 UI。
+插件复用同一核心接口。下载由独立本地进程管理，弹窗只是任务视图；任务的原始访问输入只在本机会话内存中保留，持久记录剔除访问参数与临时凭据。浏览器完全重启后可能需要重新粘贴原始链接，首版不提供断点续传。
 
 ## 许可证
 

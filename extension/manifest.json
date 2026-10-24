@@ -1,0 +1,33 @@
+{
+  "manifest_version": 3,
+  "name": "Fango 视频下载",
+  "version": "0.2.0",
+  "description": "识别并下载 YouTube、B站、小红书和抖音的单个视频，保存到你的文件夹。",
+  "minimum_chrome_version": "120",
+  "key": "MIIBIjANBgkqhkiG9w0BAQEFAAOCAQ8AMIIBCgKCAQEAjkFShM5BQjXYUQU3O/YeUevcRN/fRufblp6ZIndm4XEvOf8iDpaxRqwftmyBkaeN29h/iFqx4YJVHTWHBQNgQSCu2hW8tNJIFHsSa6PkX+87tmpwYbtEx7RvdAXWtQYSYOtpvjcRENqxKsJJsIB5zp2i8+eqtA5oqX/txqRkMi5ZShegWnl8k+SuxBTDNXu3U/GAWaMDE5HC1qSS5V2RhIAUvDyREBBCBbMHtjR8PLb7p/MsHX8gi6X3eoboGNTkOEb2FNTY6gfXPcyM1M9P7cHBC5UgPZ5JmurLReJPgjpUmDztQ4t/Uu7GFiPCNeGxUMrGVHFbjkWmRxfnYfU0vQIDAQAB",
+  "permissions": [
+    "activeTab",
+    "storage",
+    "nativeMessaging"
+  ],
+  "background": {
+    "service_worker": "background.mjs",
+    "type": "module"
+  },
+  "action": {
+    "default_title": "Fango 视频下载",
+    "default_popup": "popup.html",
+    "default_icon": {
+      "16": "icons/icon16.png",
+      "32": "icons/icon32.png"
+    }
+  },
+  "icons": {
+    "16": "icons/icon16.png",
+    "48": "icons/icon48.png",
+    "128": "icons/icon128.png"
+  },
+  "content_security_policy": {
+    "extension_pages": "script-src 'self'; object-src 'none'; img-src 'self' https: data:; style-src 'self'"
+  }
+}

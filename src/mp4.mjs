@@ -2,7 +2,7 @@ import { constants } from 'node:fs';
 import { copyFile, link, lstat, open, realpath, rm, stat } from 'node:fs/promises';
 import { randomUUID } from 'node:crypto';
 import path from 'node:path';
-import { EngineError, runProcess } from './process.mjs';
+import { EngineError, fileWriteError, runProcess } from './process.mjs';
 
 function fail(code, message) { throw new EngineError(code, message); }
 
@@ -139,7 +139,7 @@ export async function ensureCompatibleMp4(filepath, options = {}) {
       }
       args.push('-movflags', '+faststart', '-f', 'mp4', temporary);
       const result = await runProcess(paths.ffmpeg, args, { signal: options.signal, timeoutMs: remaining() });
-      if (result.code !== 0) fail('conversion_failed', '无法转换为兼容 MP4，请检查媒体文件与 FFmpeg 编码器。');
+      if (result.code !== 0) throw fileWriteError(result.stderr) ?? new EngineError('conversion_failed', '无法转换为兼容 MP4，请检查媒体文件与 FFmpeg 编码器。');
     }
     remaining();
     const output = await probe(temporary, paths.ffprobe, { signal: options.signal, timeoutMs: remaining() });
@@ -150,10 +150,12 @@ export async function ensureCompatibleMp4(filepath, options = {}) {
     try { await link(temporary, finalPath); }
     catch (error) {
       if (error.code === 'EEXIST') fail('output_exists', '目标文件已存在，请选择新的输出文件名。');
+      const storageError = fileWriteError(error); if (storageError) throw storageError;
       fail('output_invalid', '无法保存已验证的 MP4 文件。');
     }
     return { filepath: finalPath, mode, videoCodec: 'h264', audioCodec: output.audio.length ? 'aac' : null };
   } catch (error) {
+    const storageError = fileWriteError(error); if (storageError) throw storageError;
     if (error instanceof EngineError) throw error;
     fail('output_invalid', '无法创建或处理临时 MP4 文件。');
   } finally {

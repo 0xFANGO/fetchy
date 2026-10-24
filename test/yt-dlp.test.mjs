@@ -64,7 +64,20 @@ test('resolve returns format metadata without signed URLs or unrelated private m
   assert.equal(result.formats[0].hasVideo, true);
   assert.equal(result.formats[0].hasAudio, false);
   assert.equal(result.formats[1].hasAudio, true);
+  assert.equal(result.thumbnailUrl, null);
   assert.doesNotMatch(JSON.stringify(result), /SECRET|private_token|cdn\.test|requested_formats/);
+});
+
+test('yt-dlp uses only the verified video cover and tolerates missing or unsafe covers', async (t) => {
+  const cover = 'https://i.ytimg.com/vi/test-id/hqdefault.jpg';
+  const { options } = await fixture(t, { info: { ...metadata, thumbnail: 'https://i.ytimg.com/vi/wrong-id/hqdefault.jpg', thumbnails: [
+    { url: cover }, { url: 'https://i.ytimg.com/sb/test-id/storyboard.jpg' }, { url: 'https://evil.test/cover.jpg' },
+  ] } });
+  assert.equal((await resolveWithYtDlp(target, options)).thumbnailUrl, cover);
+  const unsafe = await fixture(t, { info: { ...metadata, thumbnail: 'file:///tmp/private.jpg' } });
+  assert.equal((await resolveWithYtDlp(target, unsafe.options)).thumbnailUrl, null);
+  const wrong = await fixture(t, { info: { ...metadata, id: 'wrong-id', thumbnail: cover } });
+  await assert.rejects(resolveWithYtDlp(target, wrong.options), { code: 'wrong_video' });
 });
 
 test('download verifies actual tracks and records stages only after success', async (t) => {
@@ -84,7 +97,8 @@ test('download verifies actual tracks and records stages only after success', as
   assert.equal(result.transport, 'hls');
   assert.equal(result.bytes, 15);
   assert.equal(path.dirname(path.dirname(result.filepath)), await realpath(options.outputDir));
-  assert.deepEqual(await readdir(path.dirname(result.filepath)), ['media.mp4']);
+  assert.equal(path.basename(result.filepath), 'Test video.mp4');
+  assert.deepEqual(await readdir(path.dirname(result.filepath)), ['Test video.mp4']);
   assert.deepEqual(stages, ['resolving', 'downloading', 'postprocessing', 'validating', 'complete']);
   const calls = (await readFile(trace, 'utf8')).trim().split('\n').map(JSON.parse);
   for (const args of calls) {
@@ -193,6 +207,22 @@ test('format and stale-session errors keep their specific meaning', () => {
   assert.equal(classifyEngineError('Fresh cookies are needed').code, 'session_required');
 });
 
+test('local disk errors retain actionable categories without leaking tool output or confusing HTTP 403', async t => {
+  const scenarios = [
+    ['ERROR: unable to write data: [Errno 28] No space left on device /private/path?token=SECRET', 'disk_full'],
+    ['ERROR: unable to open for writing: [Errno 13] Permission denied /private/path?token=SECRET', 'directory_unwritable'],
+  ];
+  for (const [message, code] of scenarios) {
+    const { options } = await fixture(t, { before: `if (!args.includes('--dump-single-json')) { console.error(${JSON.stringify(message)}); process.exit(1); }` });
+    await assert.rejects(downloadWithYtDlp(target, options), error => {
+      assert.equal(error.code, code); assert.doesNotMatch(error.message, /SECRET|private|Errno/); return true;
+    });
+    assert.deepEqual(await readdir(options.outputDir), []);
+  }
+  assert.equal(classifyEngineError('HTTP Error 403: Permission denied').code, 'network_error');
+  assert.equal(classifyEngineError('Read-only file system').code, 'directory_unwritable');
+});
+
 test('wrong video identities and the wrong Bilibili part are rejected', async (t) => {
   const wrong = await fixture(t, { info: { ...metadata, id: 'another-video' } });
   await assert.rejects(resolveWithYtDlp(target, wrong.options), { code: 'wrong_video' });
@@ -296,7 +326,7 @@ test('default download remuxes or transcodes real source media and verifies H.26
     assert.equal(result.validation.width, 160);
     assert.equal(result.validation.height, 90);
     assert.equal(path.extname(result.filepath), '.mp4');
-    assert.deepEqual(await readdir(path.dirname(result.filepath)), ['media.mp4'], 'only the validated final file remains');
+    assert.deepEqual(await readdir(path.dirname(result.filepath)), ['Test video.mp4'], 'only the validated title-named final file remains');
     const checked = await runProcess('ffprobe', ['-v', 'error', '-show_streams', '-show_format', '-of', 'json', result.filepath]);
     assert.equal(checked.code, 0);
     const actual = JSON.parse(checked.stdout);

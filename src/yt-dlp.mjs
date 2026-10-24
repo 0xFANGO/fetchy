@@ -1,8 +1,10 @@
 import { copyFile, chmod, mkdir, mkdtemp, readFile, realpath, rm, stat } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
-import { EngineError, runProcess } from './process.mjs';
+import { EngineError, fileWriteError, runProcess } from './process.mjs';
 import { ensureCompatibleMp4 } from './mp4.mjs';
+import { pickPublicThumbnail } from './thumbnails.mjs';
+import { publishVideoFile } from './filenames.mjs';
 
 export { EngineError } from './process.mjs';
 
@@ -18,6 +20,8 @@ const codecPresent = (value) => typeof value === 'string' && value !== '' && val
 
 export function classifyEngineError(text = '') {
   // Source URLs, signed parameters and credentials never leave this classifier.
+  const storageError = fileWriteError(text);
+  if (storageError) return storageError;
   if (/DRM|digital rights management/i.test(text)) return new EngineError('drm', '该内容包含 DRM 保护，无法通过此方法下载。');
   if (/fresh cookies/i.test(text)) return new EngineError('session_required', '平台需要有效浏览器会话，请使用 browser 引擎。');
   if (/captcha|verify you|verification|not a bot|sign in to confirm|验证码|验证/i.test(text)) return new EngineError('verification_required', '平台要求验证，请在浏览器完成验证后重试。');
@@ -155,6 +159,9 @@ function publicMetadata(target, info) {
     id: target.id,
     sourceId: String(info.id),
     title: typeof info.title === 'string' ? info.title : target.id,
+    thumbnailUrl: pickPublicThumbnail([info.thumbnail,
+      ...(Array.isArray(info.thumbnails) ? [...info.thumbnails].reverse().map(item => item?.url) : []),
+    ], target),
     durationSeconds: number(info.duration),
     formats: (Array.isArray(info.formats) ? info.formats : [info]).filter((item) => item.has_drm !== true).map((item) => ({
       id: String(item.format_id ?? 'unknown'),
@@ -246,8 +253,8 @@ export async function downloadWithYtDlp(target, options = {}) {
     try {
       await mkdir(outputDir, { recursive: true });
       directory = await mkdtemp(path.join(outputDir, 'video-'));
-    } catch {
-      throw new EngineError('output_invalid', '无法创建下载目录。');
+    } catch (error) {
+      throw fileWriteError(error) ?? new EngineError('output_invalid', '无法创建下载目录。');
     }
     let successful = false;
     try {
@@ -281,10 +288,13 @@ export async function downloadWithYtDlp(target, options = {}) {
       const validation = await validateOutput(filepath, directory, info, { ...settings, timeoutMs: remaining() });
       if (sourceFilepath !== filepath) await rm(sourceFilepath, { force: true });
       await rm(receipt, { force: true });
+      filepath = await publishVideoFile(filepath, { title: info.title, platform: target.platform, id: target.id, signal: settings.signal });
       successful = true;
       const output = { platform: target.platform, id: target.id, sourceId: String(record.id), engine: 'yt-dlp', filepath, transport: options.transport ?? 'auto', selectionPolicy: 'prefer-native-h264-aac', conversion: conversion.mode, ...validation };
       emit(options, 'complete', { filepath, bytes: output.bytes });
       return output;
+    } catch (error) {
+      throw fileWriteError(error) ?? error;
     } finally {
       // A failed/cancelled job is never left looking like a completed media file.
       if (!successful) await rm(directory, { recursive: true, force: true });

@@ -1,4 +1,5 @@
-import { mkdir, mkdtemp, writeFile, readFile, rm, rename, stat } from 'node:fs/promises';
+import { mkdir, mkdtemp, writeFile, readFile, rm, stat } from 'node:fs/promises';
+import { publishVideoFile } from './filenames.mjs';
 import { createWriteStream } from 'node:fs';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
@@ -6,8 +7,9 @@ import { pathToFileURL } from 'node:url';
 import { randomUUID } from 'node:crypto';
 import { Readable, Transform } from 'node:stream';
 import { pipeline } from 'node:stream/promises';
-import { EngineError, runProcess } from './process.mjs';
+import { EngineError, fileWriteError, runProcess } from './process.mjs';
 import { extractPageMedia } from './page-extract.mjs';
+import { publicThumbnailUrl } from './thumbnails.mjs';
 
 function emit(options, stage, extra = {}) {
   try { options.onProgress?.({ stage, engine: 'browser', ...extra }); } catch { /* observer */ }
@@ -23,7 +25,15 @@ function check(options) {
 }
 
 export function publicBrowserMetadata(media) {
-  return { ...media, formats: media.formats.map(({ urls, ...format }) => format), qualityScope: '当前页面明确提供的合流格式；不代表平台全部画质' };
+  return {
+    platform: media.platform, id: media.id, title: media.title,
+    thumbnailUrl: publicThumbnailUrl(media.thumbnailUrl, media),
+    durationSeconds: media.durationSeconds ?? null,
+    formats: media.formats.map(({ id, ext, protocol, width, height, fps, vcodec, acodec, bitrate, size, hasVideo, hasAudio }) =>
+      ({ id, ext, protocol, width, height, fps, vcodec, acodec, bitrate, size, hasVideo, hasAudio })),
+    engine: 'browser', availability: 'ready',
+    qualityScope: '当前页面明确提供的合流格式；不代表平台全部画质',
+  };
 }
 
 export function selectBrowserFormat(formats, { maxHeight } = {}) {
@@ -131,7 +141,7 @@ export async function downloadWithBrowser(target, options = {}) {
     const outputRoot=path.resolve(options.outputDir ?? 'downloads');
     await mkdir(outputRoot,{recursive:true});
     directory=await mkdtemp(path.join(outputRoot,'video-'));
-    const temporary=path.join(directory,'media.part'), filepath=path.join(directory,'media.mp4');
+    const temporary=path.join(directory,'media.part');
     const headers={'user-agent':userAgent,referer:`https://www.${target.platform==='douyin'?'douyin':'xiaohongshu'}.com/`};
     let bytes=0,lastError;
     emit(options,'downloading');
@@ -167,7 +177,7 @@ export async function downloadWithBrowser(target, options = {}) {
       error.details={video:!!video,audio:!!audio,durationSeconds:duration,expectedDurationSeconds:media.durationSeconds,probeExitCode:probe.code};
       throw error;
     }
-    await rename(temporary,filepath);
+    const filepath=await publishVideoFile(temporary,{title:media.title,platform:target.platform,id:target.id,signal});
     const result={platform:target.platform,id:target.id,engine:'browser',filepath,bytes:(await stat(filepath)).size,format:{...publicBrowserMetadata({...media,formats:[format]}).formats[0],vcodec:video.codec_name??null,acodec:audio.codec_name??null},validation:{video:true,audio:true,durationSeconds:duration,width:video.width,height:video.height,method:'ffprobe',fullDecode:false}};
     successful=true;
     emit(options,'complete',{filepath,bytes});
@@ -175,6 +185,7 @@ export async function downloadWithBrowser(target, options = {}) {
   }catch(error){
     if(options.signal?.aborted) throw new EngineError('cancelled','任务已取消。');
     if(timeout.aborted) throw new EngineError('timeout','任务超过时间限制。');
+    const storageError=fileWriteError(error);if(storageError)throw storageError;
     if(error instanceof EngineError) throw error;
     throw new EngineError('network_error','浏览器媒体下载失败，请检查网络后重新解析。');
   }finally{if(directory&&!successful)await rm(directory,{recursive:true,force:true});}

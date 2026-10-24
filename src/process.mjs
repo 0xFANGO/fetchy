@@ -8,6 +8,21 @@ export class EngineError extends Error {
   }
 }
 
+/** Recognize local storage failures without exposing filenames or tool output. */
+export function fileWriteError(value) {
+  const code = typeof value === 'object' && value ? value.code : null;
+  const message = typeof value === 'string' ? value : '';
+  if (['ENOSPC', 'EDQUOT'].includes(code) || /\bENOSPC\b|\bEDQUOT\b|no space left on device|disk quota exceeded|disk (?:is )?full/i.test(message)) {
+    return new EngineError('disk_full', '磁盘空间不足，请释放空间或选择其他下载目录。');
+  }
+  if (['EACCES', 'EPERM', 'EROFS'].includes(code)
+    || /\bEACCES\b|\bEPERM\b|\bEROFS\b|\[Errno (?:13|30)\]|read-only file system/i.test(message)
+    || /permission denied/i.test(message) && /unable to (?:open|write|create)|error opening output|writing (?:to )?(?:file|output)|output file/i.test(message)) {
+    return new EngineError('directory_unwritable', '无法写入下载目录，请检查目录权限或选择其他文件夹。');
+  }
+  return null;
+}
+
 /** Spawn without a shell. Never place untrusted process output in thrown errors. */
 export function runProcess(command, args, { signal, timeoutMs = 60_000, maxOutputBytes = 16 * 1024 * 1024 } = {}) {
   if (signal?.aborted) return Promise.reject(new EngineError('cancelled', '任务已取消。'));
