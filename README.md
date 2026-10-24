@@ -4,7 +4,8 @@
 
 **当前状态：本地下载核心 MVP。** 已提供 Node API、CLI 和平台适配，已完成真实样例的整片下载及音视频验证。浏览器插件 UI 尚未开发。支持范围以 [实测记录](docs/validation.md) 为准；平台页面、会话和解析器版本变化都可能影响结果。
 
-- [需求文档](docs/requirements.md)：功能范围、统一契约、错误与验收、后续插件方案。
+- [下载核心需求](docs/requirements.md)：核心范围、统一契约、错误与验收。
+- [插件首版界面与集成需求](docs/extension-ui-requirements.md)：已确认的弹窗交互、目录设置、后台任务、本地组件接入及实现验收；供后续 Agent 开发。
 - [YouTube / B站调研](docs/research-youtube-bilibili.md)
 - [小红书 / 抖音调研](docs/research-xiaohongshu-douyin.md)
 
@@ -108,7 +109,7 @@ docs/                需求、研究与实测记录
 
 当前 `npm test` 共 60 项测试通过，覆盖抖音短链重定向和真实 FFmpeg 的 MP4 重封装/转码；不访问真实平台、不启动真实浏览器。两轮真实样例及验证范围另见 [实测记录](docs/validation.md)，其中第二轮 YouTube/B站的兼容 MP4 由已下载文件转换得到，不能当作修改后再次完整下载的证据。
 
-后续插件只消费这个接口；纯扩展与 Native Messaging 本地组件的取舍见需求文档。本轮未添加插件 manifest、右键菜单或 UI。
+后续插件复用这个接口；已确认的首版方案采用扩展 + Native Messaging 本地组件，具体交互、集成缺口与验收见[插件首版需求](docs/extension-ui-requirements.md)。当前仅完成需求整理，尚未添加插件 manifest 或 UI。
 
 ## 许可证
 
