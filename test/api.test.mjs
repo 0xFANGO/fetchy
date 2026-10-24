@@ -24,7 +24,7 @@ async function fakeTools(t, { id = 'EWvNQjAaOHw', failDirect = false } = {}) {
     'await writeFile(filepath,"test-media-data");',
     'await writeFile(args[args.indexOf("--print-to-file")+2],JSON.stringify({filepath,id:' + JSON.stringify(id) + '}));',
   ].join('\n'));
-  await writeFile(ffprobePath, '#!/usr/bin/env node\nconsole.log(' + JSON.stringify(JSON.stringify({ streams: [{ codec_type: 'video', width: 1280, height: 720 }, { codec_type: 'audio', channels: 2 }], format: { duration: '12' } })) + ');');
+  await writeFile(ffprobePath, '#!/usr/bin/env node\nconsole.log(' + JSON.stringify(JSON.stringify({ streams: [{ codec_type: 'video', codec_name: 'h264', pix_fmt: 'yuv420p', width: 1280, height: 720 }, { codec_type: 'audio', codec_name: 'aac', channels: 2 }], format: { duration: '12', format_name: 'mov,mp4,m4a,3gp,3g2,mj2' } })) + ');');
   await chmod(ytDlpPath, 0o755);
   await chmod(ffprobePath, 0o755);
   return { trace, options: { ytDlpPath, ffprobePath, outputDir: path.join(root, 'output') } };

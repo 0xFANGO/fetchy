@@ -2,6 +2,7 @@ import { copyFile, chmod, mkdir, mkdtemp, readFile, realpath, rm, stat } from 'n
 import { tmpdir } from 'node:os';
 import path from 'node:path';
 import { EngineError, runProcess } from './process.mjs';
+import { ensureCompatibleMp4 } from './mp4.mjs';
 
 export { EngineError } from './process.mjs';
 
@@ -44,14 +45,21 @@ function optionsChecked(options) {
   }
 }
 
-function formatSelector(options) {
+function formatSelector(options, compatible = false) {
   const height = options.maxHeight ? `[height<=${options.maxHeight}]` : '';
   const protocol = options.transport === 'hls' ? '[protocol^=m3u8]' : '';
-  return `bv*${height}${protocol}+ba${protocol}/b${height}${protocol}`;
+  const source = `bv*${height}${protocol}+ba${protocol}/b${height}${protocol}`;
+  if (!compatible) return source;
+  const avc = '[vcodec~="^(?:avc[13]|h264)(?:[.]|$)"]';
+  const aac = '[acodec~="^(?:mp4a[.]40[.]|aac(?:[.]|$))"]';
+  const compatibleAudio = '[acodec~="^(?:none$|mp4a[.]40[.]|aac(?:[.]|$))"]';
+  // HLS can omit the audio codec. Preserve native H.264 before considering
+  // non-H.264 video; the MP4 helper probes and converts unknown/non-AAC audio.
+  return `bv*${height}${protocol}${avc}${compatibleAudio}+ba${protocol}${aac}/b${height}${protocol}${avc}${aac}/bv${height}${protocol}${avc}+ba${protocol}/b${height}${protocol}${avc}/${source}`;
 }
 
-function argsFor(options) {
-  const args = [...COMMON_ARGS, '--format', formatSelector(options)];
+function argsFor(options, compatible = false) {
+  const args = [...COMMON_ARGS, '--format', formatSelector(options, compatible)];
   // This project already requires Node >= 22; make it available for YouTube's JS challenges.
   args.push('--js-runtimes', `node:${process.execPath}`);
   if (options.ffmpegLocation) args.push('--ffmpeg-location', options.ffmpegLocation);
@@ -169,7 +177,7 @@ export async function resolveWithYtDlp(target, options = {}) {
   return withCookies(options, async (settings) => publicMetadata(target, await metadata(target, settings)));
 }
 
-async function validateOutput(filepath, directory, info, options) {
+async function validateTaskFile(filepath, directory) {
   let outputStat;
   try {
     const actual = await realpath(filepath);
@@ -180,6 +188,11 @@ async function validateOutput(filepath, directory, info, options) {
   } catch {
     throw new EngineError('output_invalid', '下载没有产生有效的任务内媒体文件。');
   }
+  return outputStat;
+}
+
+async function validateOutput(filepath, directory, info, options) {
+  const outputStat = await validateTaskFile(filepath, directory);
   const result = await runProcess(options.ffprobePath ?? 'ffprobe', ['-v', 'error', '-show_streams', '-show_format', '-of', 'json', filepath], {
     signal: options.signal, timeoutMs: Math.min(options.timeoutMs ?? 30_000, 30_000), maxOutputBytes: 2 * 1024 * 1024,
   });
@@ -198,7 +211,22 @@ async function validateOutput(filepath, directory, info, options) {
   if (number(info.duration) > 0 && durationSeconds < info.duration - Math.max(3, info.duration * 0.01)) {
     throw new EngineError('output_invalid', '下载文件的时长明显短于源视频，可能不完整。');
   }
-  return { bytes: outputStat.size, validation: { video: true, audio: audioStreams.length > 0, durationSeconds, method: 'ffprobe', fullDecode: false } };
+  const mp4Container = path.extname(filepath).toLowerCase() === '.mp4'
+    && String(probe.format?.format_name ?? '').split(',').includes('mp4');
+  if (!mp4Container || videoStreams.some((item) => item.codec_name !== 'h264' || item.pix_fmt !== 'yuv420p')
+    || audioStreams.some((item) => item.codec_name !== 'aac')) {
+    throw new EngineError('output_invalid', '最终文件不是兼容的 MP4（H.264/yuv420p 与 AAC），不能报告下载成功。');
+  }
+  return {
+    bytes: outputStat.size,
+    validation: {
+      video: true, audio: audioStreams.length > 0, durationSeconds,
+      container: 'mp4', videoCodec: videoStreams[0].codec_name,
+      audioCodec: audioStreams[0]?.codec_name ?? null, pixelFormat: videoStreams[0].pix_fmt,
+      width: videoStreams[0].width, height: videoStreams[0].height,
+      compatibleMp4: true, method: 'ffprobe', fullDecode: false,
+    },
+  };
 }
 
 export async function downloadWithYtDlp(target, options = {}) {
@@ -226,7 +254,7 @@ export async function downloadWithYtDlp(target, options = {}) {
       const receipt = path.join(directory, 'result.json');
       emit(options, 'downloading');
       const result = await runProcess(settings.ytDlpPath ?? 'yt-dlp', [
-        ...argsFor(settings), '--no-simulate', '--no-overwrites', '--merge-output-format', 'mkv',
+        ...argsFor(settings, true), '--no-simulate', '--no-overwrites', '--merge-output-format', 'mkv',
         '--match-filters', '!is_live', '--output', path.join(directory.replaceAll('%', '%%'), 'media.%(ext)s'),
         // Serialize the projected object once: optional missing fields otherwise render bare NA.
         '--print-to-file', 'after_move:%(.{filepath,id,_old_archive_ids})j', receipt.replaceAll('%', '%%'), '--', target.url,
@@ -244,11 +272,17 @@ export async function downloadWithYtDlp(target, options = {}) {
         throw new EngineError('output_invalid', '下载工具没有确认最终媒体文件。');
       }
       assertIdentity(target, record);
+      await validateTaskFile(filepath, directory);
+      const sourceFilepath = await realpath(filepath);
+      emit(options, 'postprocessing');
+      const conversion = await ensureCompatibleMp4(sourceFilepath, { ...settings, timeoutMs: remaining() });
+      filepath = conversion.filepath;
       emit(options, 'validating');
       const validation = await validateOutput(filepath, directory, info, { ...settings, timeoutMs: remaining() });
+      if (sourceFilepath !== filepath) await rm(sourceFilepath, { force: true });
       await rm(receipt, { force: true });
       successful = true;
-      const output = { platform: target.platform, id: target.id, sourceId: String(record.id), engine: 'yt-dlp', filepath, transport: options.transport ?? 'auto', ...validation };
+      const output = { platform: target.platform, id: target.id, sourceId: String(record.id), engine: 'yt-dlp', filepath, transport: options.transport ?? 'auto', selectionPolicy: 'prefer-native-h264-aac', conversion: conversion.mode, ...validation };
       emit(options, 'complete', { filepath, bytes: output.bytes });
       return output;
     } finally {

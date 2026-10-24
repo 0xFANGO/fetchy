@@ -1,6 +1,7 @@
 /** Browser-independent platform routing. Platform IDs are always strings. */
 const SHORT_HOSTS = new Set(['b23.tv', 'xhslink.com', 'www.xhslink.com', 'v.douyin.com']);
-const HOSTS = new Set([...SHORT_HOSTS, 'youtube.com', 'www.youtube.com', 'm.youtube.com',
+const DOUYIN_SHARE_HOSTS = new Set(['www.iesdouyin.com', 'iesdouyin.com']);
+const HOSTS = new Set([...SHORT_HOSTS, ...DOUYIN_SHARE_HOSTS, 'youtube.com', 'www.youtube.com', 'm.youtube.com',
   'music.youtube.com', 'youtu.be', 'www.bilibili.com', 'bilibili.com', 'm.bilibili.com',
   'www.douyin.com', 'douyin.com', 'www.xiaohongshu.com', 'xiaohongshu.com']);
 
@@ -42,7 +43,9 @@ export function normalizeUrl(input) {
     return { platform: 'bilibili', id, page, url: `https://www.bilibili.com/video/${id}/${page === 1 ? '' : `?p=${page}`}`, startTimeSeconds: startTime(u.searchParams.get('t')) };
   }
   if (host.includes('douyin')) {
-    const id = /^\/video\/(\d+)\/?$/.exec(u.pathname)?.[1] || u.searchParams.get('modal_id');
+    const id = DOUYIN_SHARE_HOSTS.has(host)
+      ? /^\/share\/video\/(\d+)\/?$/.exec(u.pathname)?.[1]
+      : /^\/video\/(\d+)\/?$/.exec(u.pathname)?.[1] || u.searchParams.get('modal_id');
     if (!/^\d{10,25}$/.test(id || '')) fail('invalid_url', '需要具体抖音视频链接或含 modal_id 的页面。');
     return { platform: 'douyin', id, url: `https://www.douyin.com/video/${id}`, startTimeSeconds: null };
   }

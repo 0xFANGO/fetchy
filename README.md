@@ -2,7 +2,7 @@
 
 输入 YouTube、小红书、抖音或 B 站视频链接，使用同一个方法解析并下载到本地。
 
-**当前状态：本地下载核心 MVP。** 已提供 Node API、CLI 和平台适配，四条给定样例均已完成整片下载及音视频验证，43项自动测试通过。浏览器插件 UI 尚未开发。支持范围以 [实测记录](docs/validation.md) 为准；平台页面、会话和解析器版本变化都可能影响结果。
+**当前状态：本地下载核心 MVP。** 已提供 Node API、CLI 和平台适配，已完成真实样例的整片下载及音视频验证。浏览器插件 UI 尚未开发。支持范围以 [实测记录](docs/validation.md) 为准；平台页面、会话和解析器版本变化都可能影响结果。
 
 - [需求文档](docs/requirements.md)：功能范围、统一契约、错误与验收、后续插件方案。
 - [YouTube / B站调研](docs/research-youtube-bilibili.md)
@@ -33,6 +33,9 @@ node bin/fango-download.mjs resolve 'https://www.youtube.com/watch?v=EWvNQjAaOHw
 # 下载：自动识别平台，必要时合并音视频
 node bin/fango-download.mjs download 'https://www.bilibili.com/video/BV19Pnb6REhD/' --output ./downloads
 node bin/fango-download.mjs download 'https://www.douyin.com/jingxuan?modal_id=7695202760953793827'
+
+# 抖音分享短链：支持跳转到 iesdouyin.com/share/video/<id>
+node bin/fango-download.mjs download 'https://v.douyin.com/vcqxnm6nUmw/'
 
 # 小红书使用完整分享链接，保留 xsec_token；也可粘贴含单个链接的分享文案
 node bin/fango-download.mjs download '<小红书完整分享链接>'
@@ -69,10 +72,10 @@ console.log(result.filepath, result.validation);
 
 | 平台 | auto 路由 | 当前机制 |
 | --- | --- | --- |
-| YouTube | yt-dlp | 提取视频/音轨并交给 FFmpeg 合并；网络错误时有限尝试 HLS |
-| B站 | yt-dlp | 保留分 P，解析 DASH 音视频并合并 |
+| YouTube | yt-dlp | 优先原生 H.264/AAC，最终输出兼容 MP4；网络错误时有限尝试 HLS |
+| B站 | yt-dlp | 保留分 P，解析 DASH 音视频并输出兼容 MP4 |
 | 小红书 | browser | 读取目标笔记候选与镜像；缺少 Ego 可退到 yt-dlp，规格可能减少 |
-| 抖音 | browser | 精选 modal_id 与详情页映射到同一视频，读取页面合流候选 |
+| 抖音 | browser | 分享短链、精选 modal_id 与详情页映射到同一视频，读取页面合流候选 |
 
 `--engine yt-dlp` 可显式使用匿名解析路径，`--engine browser` 当前只支持小红书/抖音。浏览器路径使用 Ego 当前会话，不导出 Cookie，遇到登录/验证状态需在浏览器处理。浏览器页面错误会保留可接管空间；取消和超时能停止本地传输，但不承诺已撤销浏览器端动作。
 
@@ -81,9 +84,10 @@ console.log(result.filepath, result.validation);
 ## 实现边界
 
 - 当前只处理单个已完成的视频；合集、直播、图文、DRM、精确裁切不在首版。
-- 选择的是本次实际解析到的规格，不能承诺“全站最高画质”或“无水印”。浏览器引擎同规格偏好 H.264 兼容性，不按跨编码码率硬排画质；yt-dlp 使用自身格式排序。
+- 选择的是本次实际解析到的规格，不能承诺“全站最高画质”或“无水印”。浏览器引擎同规格偏好 H.264 兼容性，不按跨编码码率硬排画质；yt-dlp 下载先选择兼容编码组，再在组内使用自身格式排序。
 - 小红书不同加载状态可返回不同编码/清晰度；抖音浏览器首版排除有独立音轨标记的候选。
-- 分离音视频默认合并为 MKV，单文件保留来源容器；不强制转码。容器和编码兼容性取决于播放器。
+- yt-dlp 引擎（默认用于 YouTube/B站）最终交付 MP4，校验 H.264、yuv420p 和 AAC 音频。优先获取原生兼容流；缺少时下载可用源并转码，不只是修改后缀。原生兼容流的最高规格可能低于其他编码，实际规格以结果为准。
+- 必要转码使用 FFmpeg，可能增加耗时和文件大小，也可能损失画质；下载结果的 `conversion` 用 `copy` / `remux` / `transcode` 区分直接使用、无损重封装与重新编码。浏览器引擎的小红书/抖音仍保留源 MP4 编码，例如 HEVC，不承诺 H.264 输出。
 - 默认用 ffprobe 检查视频、预期音频和时长；`fullDecode: false` 明确表示未逐帧完整解码。
 - 签名媒体地址只用于当前任务。Cookie、访问 token 和原始页面状态不写入公开日志/版本库。
 
@@ -93,6 +97,7 @@ console.log(result.filepath, result.validation);
 src/urls.mjs          链接与内容身份归一化
 src/page-extract.mjs  可独立放入页面执行的窄范围提取器
 src/yt-dlp.mjs        通用解析、传输及 FFmpeg 合并后端
+src/mp4.mjs           MP4 兼容性检查、重封装与必要转码
 src/browser.mjs       浏览器生命周期、合流下载与验证
 src/process.mjs       有界、可取消的子进程
 src/index.mjs         统一 API、引擎路由与有限回退
@@ -101,7 +106,7 @@ test/                离线契约与故障测试
 docs/                需求、研究与实测记录
 ```
 
-`npm test` 不访问真实平台、不启动真实浏览器。真实样例测试单独记录，不把一次通过当作所有视频都可用。
+当前 `npm test` 共 60 项测试通过，覆盖抖音短链重定向和真实 FFmpeg 的 MP4 重封装/转码；不访问真实平台、不启动真实浏览器。两轮真实样例及验证范围另见 [实测记录](docs/validation.md)，其中第二轮 YouTube/B站的兼容 MP4 由已下载文件转换得到，不能当作修改后再次完整下载的证据。
 
 后续插件只消费这个接口；纯扩展与 Native Messaging 本地组件的取舍见需求文档。本轮未添加插件 manifest、右键菜单或 UI。
 
