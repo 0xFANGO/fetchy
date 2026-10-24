@@ -1,64 +1,109 @@
 # Fango Video Downloader
 
-一个计划支持多个视频平台的浏览器插件：正常浏览视频时，通过右键菜单把想保存的内容下载到本地。
+输入 YouTube、小红书、抖音或 B 站视频链接，使用同一个方法解析并下载到本地。
 
-**当前状态：需求整理阶段。** 项目目前仅有项目说明与许可证，还没有可安装的插件，也没有经过插件端验证的支持平台。项目名暂用 `fango-video-downloader`。
+**当前状态：本地下载核心 MVP。** 已提供 Node API、CLI 和平台适配，四条给定样例均已完成整片下载及音视频验证，43项自动测试通过。浏览器插件 UI 尚未开发。支持范围以 [实测记录](docs/validation.md) 为准；平台页面、会话和解析器版本变化都可能影响结果。
 
-## 为什么做
+- [需求文档](docs/requirements.md)：功能范围、统一契约、错误与验收、后续插件方案。
+- [YouTube / B站调研](docs/research-youtube-bilibili.md)
+- [小红书 / 抖音调研](docs/research-xiaohongshu-douyin.md)
 
-从自己实际使用的需求出发，减少浏览视频和保存视频之间的操作，方便留存参考素材。先把一个平台的下载流程做通、亲自试用并修改，再逐步扩展平台支持。
+## 安装
 
-开发过程也会记录下来，分享怎样向 AI 表达需求、检查实际结果，以及根据试用反馈继续修改。
+本机需要 Node.js 22+、Python 3.10+、FFmpeg（含 ffprobe）。浏览器引擎另需已经可用的 Ego Browser；初版浏览器集成在 macOS 上验证，其他系统待测。
 
-## 目标体验
+在项目目录执行：
 
-1. 在浏览器里正常访问视频平台，找到想保存的视频。
-2. 对目标内容使用右键菜单，选择插件提供的下载操作。
-3. 插件识别这次选中的视频，将文件下载到本地，并给出明确的结果反馈。
+```bash
+python3 -m venv .venv
+.venv/bin/python -m pip install -r requirements.txt
+npm test
+```
 
-右键作用于视频画面、内容卡片还是页面链接，以及同一页面有多个视频时如何确定目标，需要结合首个平台的页面实际验证。尚未支持、无法识别或下载失败时，应说明原因。
+Windows 的虚拟环境可执行文件位于 `.venv\Scripts\`。代码优先使用项目 `.venv` 内的 yt-dlp；没有时使用 PATH 中的 `yt-dlp`。本次固定验证版本为 `2026.10.21`，没有修改全局下载器。
 
-## 功能范围
+Node 代码没有额外 npm 依赖。FFmpeg、Ego Browser 需自行配置到 PATH；可用 API 选项覆盖可执行文件路径。
 
-| 项目 | 当前约定 |
-| --- | --- |
-| 多平台视频下载 | 项目方向；逐个平台实现与测试后，再列入支持清单 |
-| 右键触发下载 | 已确定的目标操作方式，尚未实现 |
-| 保存到本地 | 首版核心流程；需要验证文件可以正常播放 |
-| 视频片段截取 | 来自最初的参考素材需求，是否进入首版待定 |
-| 支持的浏览器 | 待确定 |
-| 安装与分发 | 待确定，后续补充与实际版本对应的安装说明 |
+## 命令行
 
-**当前已支持平台：无。** 不预先承诺支持所有网站，也不把已有脚本的能力列为本插件的已实现功能。
+```bash
+# 只解析规格，不下载媒体
+node bin/fango-download.mjs resolve 'https://www.youtube.com/watch?v=EWvNQjAaOHw&t=4538s'
 
-## 多平台的维护思路
+# 下载：自动识别平台，必要时合并音视频
+node bin/fango-download.mjs download 'https://www.bilibili.com/video/BV19Pnb6REhD/' --output ./downloads
+node bin/fango-download.mjs download 'https://www.douyin.com/jingxuan?modal_id=7695202760953793827'
 
-初步按“共用下载流程 + 平台适配”的方式组织后续实现：
+# 小红书使用完整分享链接，保留 xsec_token；也可粘贴含单个链接的分享文案
+node bin/fango-download.mjs download '<小红书完整分享链接>'
 
-- 共用部分处理用户触发、任务状态、本地保存和结果反馈。
-- 平台部分分别处理页面识别、目标视频定位和媒体信息提取。
-- 新增平台时，先用真实页面完成下载验证，再登记支持范围、已知限制和验证日期。
-- 平台页面或下载方式变化后，针对该平台修复，并检查已有平台是否仍能正常使用。
+# 显式选 HLS，并限制实际帧高度
+node bin/fango-download.mjs download 'https://youtu.be/EWvNQjAaOHw' --transport hls --max-height 360
+node bin/fango-download.mjs --help
+```
 
-这些是后续实现的初步安排，当前还没有确定技术框架或代码结构。
+成功结果以 JSON 输出，包含本地绝对路径、文件大小和验证结果。阶段信息写入 stderr。Ctrl+C 取消；失败不留下伪装成成片的文件。每次成功文件位于独立 `video-*` 目录，避免重名覆盖。
 
-## 与现有下载工具的关系
+`--max-height` 是实际帧高度，例如 1080×1920 竖屏高度为 1920。分享链接的 `t=4538s` 只记录播放定位，默认仍下载整片。首版没有自动裁切。
 
-`fango-media` 仓库中的 [`video-download` skill](https://github.com/0xFANGO/fango-media/tree/main/.agents/skills/video-download) 是已有的本地脚本工具，可作为实现参考。其[架构说明](https://github.com/0xFANGO/fango-media/blob/main/.agents/skills/video-download/references/architecture.md) 记录了平台解析、媒体候选排序和下载执行层的划分。
+## 通用方法
 
-本项目是独立的浏览器插件项目。可以评估复用平台解析和候选排序逻辑；现有依赖 Node、本地浏览器控制及媒体校验工具的执行流程，需要按插件运行环境重新设计与验证。具体复用范围尚未决定。
+```js
+import { resolveVideo, downloadVideo } from './src/index.mjs';
 
-## 接下来怎么做
+const url = 'https://www.bilibili.com/video/BV19Pnb6REhD/';
+const abortController = new AbortController();
+const info = await resolveVideo(url);
+const result = await downloadVideo(url, {
+  outputDir: './downloads',
+  engine: 'auto',
+  maxHeight: 1080,
+  timeoutMs: 30 * 60_000,
+  signal: abortController.signal,
+  onProgress: ({ stage }) => console.log(stage),
+});
+console.log(result.filepath, result.validation);
+```
 
-1. 确定首个平台、目标浏览器和首版安装方式，同时决定片段截取是否进入首版。
-2. 做出一个平台的最小可用版本：找到目标视频 → 右键触发 → 下载到本地。
-3. 亲自试用，检查是否下对了视频、文件能否正常播放，以及失败时的提示是否清楚。
-4. 根据反馈修复，补齐实际可用的安装、使用和限制说明。
-5. 再增加其他平台，并持续维护各平台的验证记录。
+`resolveVideo` 返回可展示的规格，不公开签名媒体 URL。`downloadVideo` 接受原始链接并重新解析，避免使用过期地址。失败抛出带 `code` 的错误；也导出 `resolve` / `download` 别名。
 
-## 安装与开发
+| 平台 | auto 路由 | 当前机制 |
+| --- | --- | --- |
+| YouTube | yt-dlp | 提取视频/音轨并交给 FFmpeg 合并；网络错误时有限尝试 HLS |
+| B站 | yt-dlp | 保留分 P，解析 DASH 音视频并合并 |
+| 小红书 | browser | 读取目标笔记候选与镜像；缺少 Ego 可退到 yt-dlp，规格可能减少 |
+| 抖音 | browser | 精选 modal_id 与详情页映射到同一视频，读取页面合流候选 |
 
-当前没有插件安装包、扩展清单、依赖配置或构建命令。技术方案确定并完成首个原型后，再补充可实际执行的开发与安装步骤。
+`--engine yt-dlp` 可显式使用匿名解析路径，`--engine browser` 当前只支持小红书/抖音。浏览器路径使用 Ego 当前会话，不导出 Cookie，遇到登录/验证状态需在浏览器处理。浏览器页面错误会保留可接管空间；取消和超时能停止本地传输，但不承诺已撤销浏览器端动作。
+
+高级 API 配置包括 `ytDlpPath`、`ffprobePath`、`ffmpegLocation`、`egoBrowserPath`。`cookiesFile` / `--cookies-file` 仅用于显式指定的 yt-dlp 引擎，使用临时私有副本，不回写原文件。浏览器可设 `maxBytes`（默认 4 GiB）；`browserSpaceId` 只用于开发时复用当前任务空间。
+
+## 实现边界
+
+- 当前只处理单个已完成的视频；合集、直播、图文、DRM、精确裁切不在首版。
+- 选择的是本次实际解析到的规格，不能承诺“全站最高画质”或“无水印”。浏览器引擎同规格偏好 H.264 兼容性，不按跨编码码率硬排画质；yt-dlp 使用自身格式排序。
+- 小红书不同加载状态可返回不同编码/清晰度；抖音浏览器首版排除有独立音轨标记的候选。
+- 分离音视频默认合并为 MKV，单文件保留来源容器；不强制转码。容器和编码兼容性取决于播放器。
+- 默认用 ffprobe 检查视频、预期音频和时长；`fullDecode: false` 明确表示未逐帧完整解码。
+- 签名媒体地址只用于当前任务。Cookie、访问 token 和原始页面状态不写入公开日志/版本库。
+
+## 代码结构
+
+```text
+src/urls.mjs          链接与内容身份归一化
+src/page-extract.mjs  可独立放入页面执行的窄范围提取器
+src/yt-dlp.mjs        通用解析、传输及 FFmpeg 合并后端
+src/browser.mjs       浏览器生命周期、合流下载与验证
+src/process.mjs       有界、可取消的子进程
+src/index.mjs         统一 API、引擎路由与有限回退
+bin/                 CLI
+test/                离线契约与故障测试
+docs/                需求、研究与实测记录
+```
+
+`npm test` 不访问真实平台、不启动真实浏览器。真实样例测试单独记录，不把一次通过当作所有视频都可用。
+
+后续插件只消费这个接口；纯扩展与 Native Messaging 本地组件的取舍见需求文档。本轮未添加插件 manifest、右键菜单或 UI。
 
 ## 许可证
 

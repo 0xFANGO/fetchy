@@ -1,0 +1,15 @@
+{
+  "name": "fango-video-downloader",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "engines": { "node": ">=22" },
+  "exports": "./src/index.mjs",
+  "bin": { "fango-download": "./bin/fango-download.mjs" },
+  "scripts": {
+    "test": "node --test test/*.test.mjs",
+    "resolve": "node bin/fango-download.mjs resolve",
+    "download": "node bin/fango-download.mjs download"
+  },
+  "license": "PolyForm-Noncommercial-1.0.0"
+}
