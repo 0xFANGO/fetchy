@@ -46,13 +46,17 @@ the extension build on every pull request; all three must pass.
 
 ## Releasing
 
-1. Bump `version` in both `package.json` and `extension/manifest.json` and add a
-   section to `CHANGELOG.md`.
-2. Push, then publish a GitHub release whose tag is `v<version>` (for example
-   `v0.3.0`).
-3. The Release workflow builds the extension, checks that the tag matches the
-   version, and attaches `fetchy-extension-<version>.zip` to the release.
-   `npm run extension:pack` produces the same zip locally.
+```sh
+npm version patch   # or minor / major
+```
+
+That one command bumps `package.json`, copies the version into
+`extension/manifest.json`, commits, tags `v<version>` and pushes. The Release
+workflow then builds the extension, checks the tag against the version,
+creates the GitHub release with generated notes and attaches
+`fetchy-extension-<version>.zip`. Add a line to `CHANGELOG.md` beforehand if
+the generated notes are not enough. `npm run extension:pack` produces the same
+zip locally.
 
 ## Pull requests
 

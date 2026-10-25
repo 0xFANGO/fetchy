@@ -48,6 +48,8 @@
 		"doctor": "node scripts/doctor.mjs",
 		"extension:build": "node scripts/build-extension.mjs",
 		"extension:pack": "node scripts/pack-extension.mjs",
+		"version": "node scripts/sync-version.mjs && git add extension/manifest.json",
+		"postversion": "git push --follow-tags",
 		"native:install": "node native/install.mjs",
 		"resolve": "node bin/fetchy.mjs resolve",
 		"download": "node bin/fetchy.mjs download"
