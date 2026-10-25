@@ -1,6 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import {chmod, mkdtemp, readFile, readdir, realpath, rm, writeFile} from 'node:fs/promises';
+import {chmod, mkdir, mkdtemp, readFile, readdir, realpath, rm, writeFile} from 'node:fs/promises';
 import path from 'node:path';
 import {tmpdir} from 'node:os';
 import {
@@ -12,6 +12,48 @@ import {
 	validateMediaUrl,
 } from '../src/browser.mjs';
 import {publicThumbnailUrl} from '../src/thumbnails.mjs';
+import {runProcess} from '../src/process.mjs';
+
+const [encoderCheck, probeCheck] = await Promise.all([
+	runProcess('ffmpeg', ['-hide_banner', '-encoders'], {timeoutMs: 10_000}).catch(() => null),
+	runProcess('ffprobe', ['-version'], {timeoutMs: 10_000}).catch(() => null),
+]);
+const canEncode = (...names) =>
+	encoderCheck?.code === 0 &&
+	probeCheck?.code === 0 &&
+	names.every((name) => encoderCheck.stdout.includes(name));
+
+async function syntheticMedia(root, {extension, vcodec, acodec}) {
+	const filepath = path.join(root, `source.${extension}`);
+	const args = [
+		'-hide_banner',
+		'-loglevel',
+		'error',
+		'-nostdin',
+		'-f',
+		'lavfi',
+		'-i',
+		'testsrc2=size=192x128:rate=10:duration=0.6',
+		'-f',
+		'lavfi',
+		'-i',
+		'sine=frequency=440:sample_rate=48000:duration=0.6',
+		'-map',
+		'0:v:0',
+		'-map',
+		'1:a:0',
+		'-c:v',
+		vcodec,
+		'-c:a',
+		acodec,
+	];
+	if (vcodec === 'libvpx-vp9') args.push('-deadline', 'realtime', '-cpu-used', '8');
+	if (vcodec === 'libx265') args.push('-x265-params', 'log-level=error:pools=none:frame-threads=1');
+	args.push(filepath);
+	const result = await runProcess('ffmpeg', args, {timeoutMs: 30_000});
+	assert.equal(result.code, 0, `Could not create ${vcodec}/${acodec} fixture`);
+	return readFile(filepath);
+}
 
 const base = {
 	hasVideo: true,
@@ -230,7 +272,7 @@ test('browser engines publish the resolved video title only after media validati
 							{codec_type: 'video', codec_name: 'h264', width: 720, height: 1280},
 							{codec_type: 'audio', codec_name: 'aac', channels: 2},
 						],
-						format: {duration: '12'},
+						format: {duration: '12', format_name: 'mov,mp4,m4a,3gp,3g2,mj2'},
 					}),
 				) +
 				');\n',
@@ -280,6 +322,68 @@ test('browser engines publish the resolved video title only after media validati
 		fetchMock.mock.restore();
 	}
 });
+
+for (const fixture of [
+	{extension: 'webm', vcodec: 'libvpx-vp9', acodec: 'libopus', accepted: false},
+	{extension: 'mp4', vcodec: 'libx264', acodec: 'aac', accepted: true, expectedCodec: 'h264'},
+	{extension: 'mp4', vcodec: 'libx265', acodec: 'aac', accepted: true, expectedCodec: 'hevc'},
+]) {
+	test(
+		`browser validates the actual container of ${fixture.vcodec}/${fixture.extension} media before publishing`,
+		{
+			skip: canEncode(fixture.vcodec, fixture.acodec)
+				? false
+				: 'Requires local FFmpeg/ffprobe with the specified encoders',
+		},
+		async (t) => {
+			const root = await mkdtemp(path.join(tmpdir(), 'fetchy-browser-container-'));
+			t.after(() => rm(root, {recursive: true, force: true}));
+			const contents = await syntheticMedia(root, fixture);
+			const outputDir = path.join(root, 'output');
+			await mkdir(outputDir);
+			const prior = path.join(outputDir, '视频.mp4');
+			await writeFile(prior, 'preserve existing video');
+			const target = {platform: 'xiaohongshu', id: '6adb92b90000000031037a66'};
+			const media = {
+				...target,
+				title: '视频',
+				durationSeconds: 0.6,
+				formats: [{...base, ext: 'mp4', urls: ['https://sns-video.xhscdn.com/media.mp4']}],
+			};
+			t.mock.method(
+				globalThis,
+				'fetch',
+				async () =>
+					new Response(contents, {
+						headers: {'content-type': 'video/mp4', 'content-length': String(contents.length)},
+					}),
+			);
+			const stages = [];
+			const download = downloadWithBrowser(target, {
+				pageMedia: {media},
+				outputDir,
+				onProgress: ({stage}) => stages.push(stage),
+			});
+			if (fixture.accepted) {
+				const result = await download;
+				assert.equal(path.basename(result.filepath), '视频 (2).mp4');
+				assert.equal(result.format.vcodec, fixture.expectedCodec);
+				assert.equal(result.validation.video, true);
+				assert.deepEqual(await readFile(result.filepath), contents);
+				assert.deepEqual((await readdir(outputDir)).sort(), ['视频 (2).mp4', '视频.mp4']);
+				assert.equal(stages.at(-1), 'complete');
+			} else {
+				await assert.rejects(download, {
+					code: 'output_invalid',
+					message: '下载文件不是支持的 MP4 容器。',
+				});
+				assert.deepEqual(await readdir(outputDir), ['视频.mp4']);
+				assert.equal(stages.includes('complete'), false);
+			}
+			assert.equal(await readFile(prior, 'utf8'), 'preserve existing video');
+		},
+	);
+}
 
 test(
 	'a permission loss at the browser media write is a directory error and cleans the task',

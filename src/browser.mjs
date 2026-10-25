@@ -301,6 +301,10 @@ export async function downloadWithBrowser(target, options = {}) {
 		} catch {
 			throw new EngineError('output_invalid', '下载文件无法识别。');
 		}
+		const mp4 = String(info.format?.format_name ?? '')
+			.split(',')
+			.some((name) => name === 'mp4' || name === 'mov');
+		if (!mp4) throw new EngineError('output_invalid', '下载文件不是支持的 MP4 容器。');
 		const video = info.streams?.find(
 			(s) =>
 				s.codec_type === 'video' && !s.disposition?.attached_pic && s.width > 0 && s.height > 0,
