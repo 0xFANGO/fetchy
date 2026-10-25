@@ -44,6 +44,43 @@ Formatting is enforced by [oxfmt](https://oxc.rs) (tabs, single quotes) and
 linting by [oxlint](https://oxc.rs). CI runs `npm run check`, `npm test` and
 the extension build on every pull request; all three must pass.
 
+## Commit messages
+
+Commits follow [Conventional Commits](https://www.conventionalcommits.org/).
+GitHub release notes are generated from them, so the subject line is what
+users read.
+
+```
+<type>(<scope>): <subject>
+
+<body: why, not what>
+```
+
+- **type**: `feat` (user-visible feature), `fix` (bug fix), `docs`, `refactor`
+  (no behaviour change), `test`, `chore` (tooling, deps, release plumbing),
+  `ci`.
+- **scope** (optional): `extension`, `native`, `core`, `cli`, `docs`.
+- **subject**: imperative, lower case, no trailing period, under 72 characters,
+  in English. Say what changes for the user, not which file you touched.
+- **body** (optional): the reason, the trade-off, or the gotcha that the diff
+  cannot explain. Wrap at 72 characters.
+- A breaking change to the API, CLI flags, native protocol or file layout
+  gets a `!` after the type and a `BREAKING CHANGE:` paragraph in the body.
+- One logical change per commit. Formatting-only changes go in their own
+  `chore` commit so reviews stay readable.
+
+Examples:
+
+```
+feat(extension): read Douyin media from the current tab
+fix(core): keep the signed query when upgrading XHS CDN links to https
+chore: adopt oxfmt and oxlint, format the whole codebase
+feat(cli)!: drop --engine browser; the CLI always uses yt-dlp
+```
+
+Pull request titles follow the same format, since squash merges use them as
+the commit subject.
+
 ## Releasing
 
 ```sh

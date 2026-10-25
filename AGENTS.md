@@ -19,6 +19,9 @@ no runtime npm dependencies. Tests use `node:test`.
   restate the code.
 - Never commit downloaded media, cookies, tokens or signed media URLs. Logs
   and validation output go to the git-ignored `.local/`.
+- Commit messages follow Conventional Commits (`feat(extension): …`,
+  `fix(core): …`, `chore: …`); see CONTRIBUTING.md. Subject in English,
+  imperative, under 72 characters; body explains why.
 
 ## Architecture
 
