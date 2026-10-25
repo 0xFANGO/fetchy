@@ -326,7 +326,7 @@ test('the injected page script returns extractor output or an error code as data
 		},
 	};
 	const page = (videos, state) => ({
-		__fangoPageExtractArgs: {platform: 'xiaohongshu', expectedId: id},
+		__fetchyPageExtractArgs: {platform: 'xiaohongshu', expectedId: id},
 		URL,
 		document: {querySelectorAll: () => videos},
 		navigator: {userAgent: 'UA'},
@@ -344,5 +344,5 @@ test('the injected page script returns extractor output or an error code as data
 	});
 	const context = page([{readyState: 4}], noteState);
 	vm.runInNewContext(source, context);
-	assert.equal('__fangoPageExtractArgs' in context, false);
+	assert.equal('__fetchyPageExtractArgs' in context, false);
 });

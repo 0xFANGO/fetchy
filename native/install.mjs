@@ -48,11 +48,11 @@ try {
 		throw new Error('--browser 仅接受 ego、chrome 或 all。');
 	const directory = dataDirectory();
 	await privateDirectory(directory);
-	const launcher = path.join(directory, 'fango-native-host');
+	const launcher = path.join(directory, 'fetchy-native-host');
 	const hostPath = path.join(root, 'native', 'host.mjs');
 	await writeFile(
 		launcher,
-		`#!/bin/sh\nexport FANGO_DATA_DIR=${quote(directory)}\nexec ${quote(process.execPath)} ${quote(hostPath)} "$@"\n`,
+		`#!/bin/sh\nexport FETCHY_DATA_DIR=${quote(directory)}\nexec ${quote(process.execPath)} ${quote(hostPath)} "$@"\n`,
 		{mode: 0o700},
 	);
 	await chmod(launcher, 0o700);
@@ -80,11 +80,11 @@ try {
 		if (!path.isAbsolute(target)) throw new Error('--manifest-dir 必须是绝对路径。');
 		await mkdir(target, {recursive: true});
 		await writeFile(
-			path.join(target, 'com.fango.video_downloader.json'),
+			path.join(target, 'com.fetchy.video_downloader.json'),
 			JSON.stringify(
 				{
-					name: 'com.fango.video_downloader',
-					description: 'Fango Video Downloader local component',
+					name: 'com.fetchy.video_downloader',
+					description: 'Fetchy Video Downloader local component',
 					path: launcher,
 					type: 'stdio',
 					allowed_origins: [`chrome-extension://${extensionId}/`],
@@ -101,7 +101,7 @@ try {
 				installed: true,
 				extensionId,
 				browser,
-				hostName: 'com.fango.video_downloader',
+				hostName: 'com.fetchy.video_downloader',
 				manifestDirectories: directories,
 				extensionDirectory: path.join(root, 'dist', 'extension'),
 				missingDependencies: ['ytDlpPath', 'ffmpegLocation', 'ffprobePath'].filter(

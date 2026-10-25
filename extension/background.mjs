@@ -1,7 +1,7 @@
 import {Controller, activeTask} from './controller.mjs';
 import {normalizeUrl} from '../src/urls.mjs';
 
-const HOST = 'com.fango.video_downloader';
+const HOST = 'com.fetchy.video_downloader';
 const popups = new Set(),
 	requests = new Map();
 let nativePort,
@@ -168,7 +168,7 @@ async function extractOnce(tabId, target) {
 		target: {tabId},
 		world: 'MAIN',
 		func: (value) => {
-			globalThis.__fangoPageExtractArgs = value;
+			globalThis.__fetchyPageExtractArgs = value;
 		},
 		args: [args],
 	});

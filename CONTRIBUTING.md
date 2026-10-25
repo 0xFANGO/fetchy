@@ -54,4 +54,4 @@ the extension build on every pull request; all three must pass.
 5. Describe which platforms you verified manually, if any.
 
 By contributing you agree that your contributions are licensed under the
-project's [MIT](LICENSE) license.
+project's [AGPL-3.0](LICENSE) license.

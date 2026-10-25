@@ -1,6 +1,6 @@
 {
 	"manifest_version": 3,
-	"name": "Fango 视频下载",
+	"name": "Fetchy 视频下载",
 	"version": "0.2.0",
 	"description": "识别并下载 YouTube、B站、小红书和抖音的单个视频，保存到你的文件夹。",
 	"minimum_chrome_version": "120",
@@ -16,7 +16,7 @@
 		"type": "module"
 	},
 	"action": {
-		"default_title": "Fango 视频下载",
+		"default_title": "Fetchy 视频下载",
 		"default_popup": "popup.html",
 		"default_icon": {
 			"16": "icons/icon16.png",

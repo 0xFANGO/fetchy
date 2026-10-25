@@ -196,7 +196,7 @@ export async function ensureCompatibleMp4(filepath, options = {}) {
 			(source.audio[0].codec_name === 'aac' && Number(source.audio[0].channels) > 0));
 	const mode =
 		compatible && sourceIsMp4 ? 'copy' : selectedStreamsCompatible ? 'remux' : 'transcode';
-	const temporary = path.join(directory, `.fango-mp4-${randomUUID()}.mp4`);
+	const temporary = path.join(directory, `.fetchy-mp4-${randomUUID()}.mp4`);
 	let ownedTemporary = false;
 	try {
 		remaining();

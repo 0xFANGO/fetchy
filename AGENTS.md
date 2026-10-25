@@ -1,4 +1,4 @@
-# Fango Video Downloader
+# Fetchy
 
 Browser extension plus local download core for single videos from YouTube,
 Bilibili, Xiaohongshu and Douyin. Pure ESM JavaScript (`.mjs`), Node 22+,

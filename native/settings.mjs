@@ -5,9 +5,8 @@ import path from 'node:path';
 import {randomUUID} from 'node:crypto';
 import {bridgeError} from './errors.mjs';
 export const dataDirectory = () =>
-	process.env.FANGO_DATA_DIR ||
-	path.join(homedir(), 'Library', 'Application Support', 'FangoVideoDownloader');
-export const defaultOutputDirectory = () => path.join(homedir(), 'Downloads', 'Fango');
+	process.env.FETCHY_DATA_DIR || path.join(homedir(), 'Library', 'Application Support', 'Fetchy');
+export const defaultOutputDirectory = () => path.join(homedir(), 'Downloads', 'Fetchy');
 export async function privateDirectory(directory) {
 	await mkdir(directory, {recursive: true, mode: 0o700});
 	await chmod(directory, 0o700);
@@ -54,7 +53,7 @@ export async function validateDirectory(
 	}
 	if (!info.isDirectory()) throw bridgeError('directory_invalid');
 	await access(resolved, constants.W_OK);
-	const probe = path.join(resolved, `.fango-write-check-${randomUUID()}`);
+	const probe = path.join(resolved, `.fetchy-write-check-${randomUUID()}`);
 	let handle;
 	try {
 		handle = await open(probe, 'wx', 0o600);

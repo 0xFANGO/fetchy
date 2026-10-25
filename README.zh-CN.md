@@ -1,6 +1,6 @@
-# Fango Video Downloader
+# Fetchy
 
-[![License: MIT](docs/assets/badges/license.svg)](LICENSE)
+[![License: AGPL-3.0](docs/assets/badges/license.svg)](LICENSE)
 ![Node >= 22](docs/assets/badges/node.svg)
 ![Platform: macOS](docs/assets/badges/platform.svg)
 
@@ -54,7 +54,7 @@ python3 -m venv .venv && .venv/bin/python -m pip install -r requirements.txt
 npm run doctor
 
 # 下载到 ./downloads
-node bin/fango-download.mjs download 'https://www.bilibili.com/video/BV19Pnb6REhD/'
+node bin/fetchy.mjs download 'https://www.bilibili.com/video/BV19Pnb6REhD/'
 ```
 
 CLI 以 JSON 输出结果，包含文件绝对路径、大小和校验信息；阶段信息写入 stderr。`Ctrl+C` 可干净地取消，不会留下半截文件。
@@ -70,7 +70,7 @@ npm run native:install -- --browser chrome # 注册 native host；Ego Lite 用 -
 2. 把扩展固定到工具栏。
 3. 打开视频页点击图标，或在弹窗里粘贴链接。
 
-默认保存到 `~/Downloads/Fango`，可在弹窗的设置页修改。
+默认保存到 `~/Downloads/Fetchy`，可在弹窗的设置页修改。
 
 小红书和抖音的媒体信息由扩展直接从视频页面读取：已经打开的视频页会被直接使用，否则扩展在后台打开一个标签页，读完就关闭。用的是你当前浏览器的登录态，不导出任何东西。申请的权限：`activeTab`、`storage`、`nativeMessaging`、`scripting`，以及 `xiaohongshu.com` 和 `douyin.com` 的站点访问权限。
 
@@ -80,8 +80,8 @@ npm run native:install -- --browser chrome # 注册 native host；Ego Lite 用 -
 ## 命令行
 
 ```sh
-node bin/fango-download.mjs resolve  <url>   # 只解析规格，不下载
-node bin/fango-download.mjs download <url>   # 下载
+node bin/fetchy.mjs resolve  <url>   # 只解析规格，不下载
+node bin/fetchy.mjs download <url>   # 下载
 ```
 
 | 选项                    | 默认值        | 说明                                                        |
@@ -141,6 +141,6 @@ npm run fmt           # 格式化
 
 ## 许可证
 
-[MIT](LICENSE)。
+[AGPL-3.0](LICENSE)。可以自由使用、修改和分享；分发修改版或以服务形式提供时，必须以相同许可证公开源码。
 
 本工具用于保存你有权保留的内容，仅限个人使用。请遵守各平台的服务条款，尊重内容创作者的权利。许可证只覆盖代码，不覆盖任何下载下来的内容。

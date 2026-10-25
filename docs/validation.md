@@ -7,7 +7,7 @@
 - macOS；Node 24.18.0；Python 3.14；项目虚拟环境 yt-dlp 2026.10.21 + yt-dlp-ejs 0.8.0；FFmpeg/ffprobe 8.0.1。
 - 旧全局 yt-dlp 2026.06.29.234344 未更新。旧版对 B站 HTTP 412，新版同样例成功，说明依赖版本属于重现条件。
 - 浏览器：Ego Browser 2.1.0，用户已有会话。只读取所选视频必要状态，没有导出 Cookie、认证 token 或全站存储。
-- 第一轮下载文件保存在 Git 忽略的 `.local/validation/`；第二轮文件保存在用户的 `~/Downloads/Fango-video-test-2026-10-24/`。媒体文件、访问 token 和签名媒体地址均不提交。
+- 第一轮下载文件保存在 Git 忽略的 `.local/validation/`；第二轮文件保存在用户的 `~/Downloads/Fetchy-video-test-2026-10-24/`。媒体文件、访问 token 和签名媒体地址均不提交。
 
 ## 第一轮真实文件（历史输出策略）
 
@@ -26,10 +26,10 @@
 
 ```bash
 # 首先按 README 安装项目虚拟环境
-node bin/fango-download.mjs download 'https://www.bilibili.com/video/BV19Pnb6REhD/' --max-height 360 --output .local/validation --timeout-ms 240000
-node bin/fango-download.mjs download 'https://www.douyin.com/jingxuan?modal_id=7695202760953793827' --max-height 1024 --output .local/validation --timeout-ms 240000
-node bin/fango-download.mjs download '<小红书完整分享链接>' --output .local/validation --timeout-ms 240000
-node bin/fango-download.mjs download 'https://www.youtube.com/watch?v=EWvNQjAaOHw&t=4538s' --max-height 360 --transport hls --output .local/validation --timeout-ms 480000
+node bin/fetchy.mjs download 'https://www.bilibili.com/video/BV19Pnb6REhD/' --max-height 360 --output .local/validation --timeout-ms 240000
+node bin/fetchy.mjs download 'https://www.douyin.com/jingxuan?modal_id=7695202760953793827' --max-height 1024 --output .local/validation --timeout-ms 240000
+node bin/fetchy.mjs download '<小红书完整分享链接>' --output .local/validation --timeout-ms 240000
+node bin/fetchy.mjs download 'https://www.youtube.com/watch?v=EWvNQjAaOHw&t=4538s' --max-height 360 --transport hls --output .local/validation --timeout-ms 480000
 ```
 
 小红书、抖音本轮通过 Node API 调用，使用开发选项 `browserSpaceId` 复用了同一个研究空间；CLI 与 API 使用相同下载函数。研究空间已关闭。新任务默认建立自己的空间，成功后关闭；常规调用不需要指定该编号。
@@ -56,10 +56,10 @@ node bin/fango-download.mjs download 'https://www.youtube.com/watch?v=EWvNQjAaOH
 输入与现版本重现入口（小红书需自行提供有效完整访问链接）：
 
 ```bash
-node bin/fango-download.mjs download 'https://www.youtube.com/watch?v=eA9Zf2-qYYM' --output "$HOME/Downloads/Fango-video-test-2026-10-24"
-node bin/fango-download.mjs download 'https://www.bilibili.com/video/BV1TeJ96EE5t/' --output "$HOME/Downloads/Fango-video-test-2026-10-24"
-node bin/fango-download.mjs download '<小红书 6ad9e45b000000003303249c 的完整访问链接>' --output "$HOME/Downloads/Fango-video-test-2026-10-24"
-node bin/fango-download.mjs download 'https://v.douyin.com/vcqxnm6nUmw/' --output "$HOME/Downloads/Fango-video-test-2026-10-24"
+node bin/fetchy.mjs download 'https://www.youtube.com/watch?v=eA9Zf2-qYYM' --output "$HOME/Downloads/Fetchy-video-test-2026-10-24"
+node bin/fetchy.mjs download 'https://www.bilibili.com/video/BV1TeJ96EE5t/' --output "$HOME/Downloads/Fetchy-video-test-2026-10-24"
+node bin/fetchy.mjs download '<小红书 6ad9e45b000000003303249c 的完整访问链接>' --output "$HOME/Downloads/Fetchy-video-test-2026-10-24"
+node bin/fetchy.mjs download 'https://v.douyin.com/vcqxnm6nUmw/' --output "$HOME/Downloads/Fetchy-video-test-2026-10-24"
 ```
 
 CLI 会建立独立任务目录；表中的平台与 ID 目录是本轮下载后整理的文件位置，不是 CLI 文件命名承诺。签名地址、会话和平台转码会变化，重跑可能获得不同规格。

@@ -1,8 +1,8 @@
 {
-	"name": "fango-video-downloader",
+	"name": "fetchy",
 	"version": "0.2.0",
 	"private": true,
-	"description": "Download single videos from YouTube, Bilibili, Xiaohongshu and Douyin to a local folder, from a browser extension, the CLI or Node.",
+	"description": "Fetchy saves single videos from YouTube, Bilibili, Xiaohongshu and Douyin to a local folder, from a browser extension, the CLI or Node.",
 	"keywords": [
 		"bilibili",
 		"browser-extension",
@@ -18,13 +18,13 @@
 	"bugs": {
 		"url": "https://github.com/0xFANGO/fango-video-downloader/issues"
 	},
-	"license": "MIT",
+	"license": "AGPL-3.0-only",
 	"repository": {
 		"type": "git",
 		"url": "git+https://github.com/0xFANGO/fango-video-downloader.git"
 	},
 	"bin": {
-		"fango-download": "./bin/fango-download.mjs"
+		"fetchy": "./bin/fetchy.mjs"
 	},
 	"files": [
 		"src",
@@ -48,8 +48,8 @@
 		"doctor": "node scripts/doctor.mjs",
 		"extension:build": "node scripts/build-extension.mjs",
 		"native:install": "node native/install.mjs",
-		"resolve": "node bin/fango-download.mjs resolve",
-		"download": "node bin/fango-download.mjs download"
+		"resolve": "node bin/fetchy.mjs resolve",
+		"download": "node bin/fetchy.mjs download"
 	},
 	"devDependencies": {
 		"oxfmt": "^0.74.0",

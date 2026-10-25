@@ -7,8 +7,8 @@
  */
 export function pageExtractInjection(extractPageMedia) {
 	return `(() => {
-	const args = globalThis.__fangoPageExtractArgs;
-	delete globalThis.__fangoPageExtractArgs;
+	const args = globalThis.__fetchyPageExtractArgs;
+	delete globalThis.__fetchyPageExtractArgs;
 	if (![...document.querySelectorAll('video')].some((video) => video.readyState >= 1))
 		return {ok: false, code: 'browser_state_missing'};
 	try {

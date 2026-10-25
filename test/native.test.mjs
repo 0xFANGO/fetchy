@@ -39,7 +39,7 @@ const deferred = () => {
 	return {promise, resolve, reject};
 };
 async function fixture(t, options = {}) {
-	const directory = await mkdtemp('/tmp/fango-native-');
+	const directory = await mkdtemp('/tmp/fetchy-native-');
 	const outputDir = path.join(directory, 'downloads');
 	const controller = await new NativeController({
 		directory,
@@ -371,7 +371,7 @@ test('native socket disconnect and reconnect recover the same task without start
 });
 
 test('installed host framing and detached daemon survive native host exit', async (t) => {
-	const directory = await mkdtemp('/tmp/fango-host-');
+	const directory = await mkdtemp('/tmp/fetchy-host-');
 	const extensionId = 'a'.repeat(32),
 		origin = `chrome-extension://${extensionId}/`;
 	await writeFile(
@@ -390,7 +390,7 @@ test('installed host framing and detached daemon survive native host exit', asyn
 	const hostFile = fileURLToPath(new URL('../native/host.mjs', import.meta.url));
 	async function callHost(originArg) {
 		const host = spawn(process.execPath, [hostFile, originArg], {
-			env: {...process.env, FANGO_DATA_DIR: directory},
+			env: {...process.env, FETCHY_DATA_DIR: directory},
 			stdio: ['pipe', 'pipe', 'pipe'],
 		});
 		const decoder = new MessageDecoder();
@@ -411,7 +411,7 @@ test('installed host framing and detached daemon survive native host exit', asyn
 	assert.equal((await callHost(origin)).ok, true);
 	assert.equal(await readFile(path.join(directory, 'daemon.lock', 'pid'), 'utf8'), pid);
 	const bad = spawn(process.execPath, [hostFile, 'chrome-extension://' + 'b'.repeat(32) + '/'], {
-		env: {...process.env, FANGO_DATA_DIR: directory},
+		env: {...process.env, FETCHY_DATA_DIR: directory},
 		stdio: 'ignore',
 	});
 	const [code] = await once(bad, 'exit');

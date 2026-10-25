@@ -12,7 +12,7 @@ const frames = await mkdtemp(path.join(tmpdir(), 'popup-frames-'));
 const thumb = `<svg xmlns="http://www.w3.org/2000/svg" width="376" height="312"><defs><linearGradient id="g" x1="0" y1="0" x2="1" y2="1"><stop offset="0" stop-color="#2f6b8f"/><stop offset="1" stop-color="#1b2a3a"/></linearGradient></defs><rect width="376" height="312" fill="url(#g)"/><circle cx="110" cy="120" r="46" fill="#f2b84b" opacity=".9"/><path d="M0 240 Q120 170 220 230 T376 210 V312 H0Z" fill="#1f3f52"/></svg>`;
 const base = {
 	connection: {status: 'connected'},
-	settings: {outputDir: '/Users/me/Downloads/Fango'},
+	settings: {outputDir: '/Users/me/Downloads/Fetchy'},
 };
 const metadata = {
 	title: '在东京住了十年，我终于学会了怎么拍城市夜景',
@@ -64,7 +64,7 @@ const states = {
 			result: {
 				platform: 'bilibili',
 				filepath:
-					'/Users/me/Downloads/Fango/video-k3f9a2/在东京住了十年，我终于学会了怎么拍城市夜景.mp4',
+					'/Users/me/Downloads/Fetchy/video-k3f9a2/在东京住了十年，我终于学会了怎么拍城市夜景.mp4',
 				bytes: 98_000_000,
 				validation: {video: true, audio: true, durationSeconds: 754},
 			},

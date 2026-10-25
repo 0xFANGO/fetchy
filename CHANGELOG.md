@@ -12,6 +12,7 @@ All notable changes to this project are documented here. The format follows
 
 ### Changed
 
+- Renamed the project, extension, native host and default download folder to Fetchy.
 - Xiaohongshu and Douyin media is now read directly from the video page in the
   user's own browser by the extension (`scripting` + host permissions). The
   extension no longer depends on Ego Browser.
@@ -20,7 +21,7 @@ All notable changes to this project are documented here. The format follows
 
 ### Removed
 
-- The PolyForm Noncommercial license and NOTICE file; the project is now MIT.
+- The PolyForm Noncommercial license and NOTICE file; the project is now AGPL-3.0.
 - The `ego-browser` dependency, `egoBrowserPath` and `browserSpaceId` options.
 
 ## [0.2.0] - 2026-10-25

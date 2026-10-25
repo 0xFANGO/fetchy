@@ -2,9 +2,9 @@
 import {parseArgs} from 'node:util';
 import {resolveVideo, downloadVideo} from '../src/index.mjs';
 
-const HELP = `Fango Video Downloader — 先解析，再下载
-node bin/fango-download.mjs resolve '<视频链接>' [选项]
-node bin/fango-download.mjs download '<视频链接>' [选项]
+const HELP = `Fetchy Video Downloader — 先解析，再下载
+node bin/fetchy.mjs resolve '<视频链接>' [选项]
+node bin/fetchy.mjs download '<视频链接>' [选项]
 
 --engine auto|yt-dlp           默认 auto；命令行全部平台使用 yt-dlp
 --output <目录>                 默认 ./downloads

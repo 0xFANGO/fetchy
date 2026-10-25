@@ -417,7 +417,7 @@ export class NativeController extends EventEmitter {
 				'/usr/bin/osascript',
 				[
 					'-e',
-					'activate\ntry\nset selectedFolder to choose folder with prompt "选择 Fango 视频保存文件夹"\nreturn POSIX path of selectedFolder\non error number -128\nreturn ""\nend try',
+					'activate\ntry\nset selectedFolder to choose folder with prompt "选择 Fetchy 视频保存文件夹"\nreturn POSIX path of selectedFolder\non error number -128\nreturn ""\nend try',
 				],
 				{signal: controller.signal, timeoutMs: 300000, maxOutputBytes: 16384},
 			);

@@ -198,7 +198,7 @@ test('page media from the extension is re-checked against the target before use'
 });
 
 test('browser engines publish the resolved video title only after media validation', async (t) => {
-	const root = await mkdtemp(path.join(tmpdir(), 'fango-browser-title-'));
+	const root = await mkdtemp(path.join(tmpdir(), 'fetchy-browser-title-'));
 	t.after(() => rm(root, {recursive: true, force: true}));
 	const stages = [];
 	for (const platform of ['xiaohongshu', 'douyin']) {
@@ -270,7 +270,7 @@ test(
 				: false,
 	},
 	async (t) => {
-		const root = await mkdtemp(path.join(tmpdir(), 'fango-browser-storage-'));
+		const root = await mkdtemp(path.join(tmpdir(), 'fetchy-browser-storage-'));
 		t.after(() => rm(root, {recursive: true, force: true}));
 		const outputDir = path.join(root, 'output');
 		const target = {

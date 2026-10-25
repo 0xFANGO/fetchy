@@ -22,7 +22,7 @@
 
 从 PyPI 隔离获取当日稳定版 `yt-dlp 2026.10.21` 与 `yt-dlp-ejs 0.8.0`，没有更新全局环境。相同 B站样例变为匿名解析成功，15 个格式条目；默认 `100026+30280`。因此旧版 412 只能记录为该版本、当时会话下的失败。
 
-隔离研究执行器：`/tmp/fango-yt-dlp-research-20261024/yt-dlp`。它是临时研究工具，不是项目安装方式。
+隔离研究执行器：`/tmp/fetchy-yt-dlp-research-20261024/yt-dlp`。它是临时研究工具，不是项目安装方式。
 
 ### YB-002：YouTube 元数据成功，但默认媒体候选失败
 
@@ -51,12 +51,12 @@
 随后以两条 HLS 轨道验证下载与合并：
 
 ```bash
-/tmp/fango-yt-dlp-research-20261024/yt-dlp \
+/tmp/fetchy-yt-dlp-research-20261024/yt-dlp \
   --ignore-config --no-playlist --socket-timeout 15 \
   --retries 0 --extractor-retries 0 --no-progress \
   --download-sections '*4538-4543' \
   -f '230+234' --merge-output-format mp4 \
-  -o /tmp/fango-yt-dlp-research-20261024/probe-youtube.mp4 \
+  -o /tmp/fetchy-yt-dlp-research-20261024/probe-youtube.mp4 \
   'https://www.youtube.com/watch?v=EWvNQjAaOHw&t=4538s'
 ```
 

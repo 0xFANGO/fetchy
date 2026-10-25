@@ -8,7 +8,7 @@ import {runProcess} from '../src/process.mjs';
 
 const youtube = 'https://www.youtube.com/watch?v=EWvNQjAaOHw&t=4538s';
 async function fakeTools(t, {id = 'EWvNQjAaOHw', failDirect = false} = {}) {
-	const root = await mkdtemp(path.join(tmpdir(), 'fango-api-test-'));
+	const root = await mkdtemp(path.join(tmpdir(), 'fetchy-api-test-'));
 	t.after(() => rm(root, {recursive: true, force: true}));
 	const ytDlpPath = path.join(root, 'yt-dlp.mjs'),
 		ffprobePath = path.join(root, 'ffprobe.mjs');
@@ -127,7 +127,7 @@ test('XHS and Douyin use yt-dlp unless the extension supplies page media', async
 });
 
 test('CLI help is available without external dependencies', async () => {
-	const result = await runProcess(process.execPath, ['bin/fango-download.mjs', '--help']);
+	const result = await runProcess(process.execPath, ['bin/fetchy.mjs', '--help']);
 	assert.equal(result.code, 0);
 	assert.match(result.stdout, /resolve/);
 	assert.match(result.stdout, /download/);

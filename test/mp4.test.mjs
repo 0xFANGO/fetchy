@@ -20,7 +20,7 @@ const skipReason = (condition) =>
 	condition ? false : 'Requires local FFmpeg/ffprobe with the specified encoders';
 
 async function sandbox(t) {
-	const directory = await realpath(await mkdtemp(path.join(tmpdir(), 'fango-mp4-test-')));
+	const directory = await realpath(await mkdtemp(path.join(tmpdir(), 'fetchy-mp4-test-')));
 	t.after(() => rm(directory, {recursive: true, force: true}));
 	return directory;
 }
@@ -149,7 +149,7 @@ for (const codec of ['libvpx-vp9', 'libsvtav1']) {
 			await assertCompatible(result.filepath);
 			assert.deepEqual(await readFile(source), original);
 			assert.equal(
-				(await readdir(directory)).some((file) => file.startsWith('.fango-mp4-')),
+				(await readdir(directory)).some((file) => file.startsWith('.fetchy-mp4-')),
 				false,
 			);
 		},
@@ -286,7 +286,7 @@ test(
 		let stopWatching = false;
 		const watcher = (async () => {
 			while (!stopWatching) {
-				if ((await readdir(directory)).some((file) => file.startsWith('.fango-mp4-'))) {
+				if ((await readdir(directory)).some((file) => file.startsWith('.fetchy-mp4-'))) {
 					observedTemporary = true;
 					controller.abort();
 					break;
@@ -326,7 +326,7 @@ test(
 		let stopWatching = false;
 		const watcher = (async () => {
 			while (!stopWatching) {
-				if ((await readdir(directory)).some((file) => file.startsWith('.fango-mp4-'))) {
+				if ((await readdir(directory)).some((file) => file.startsWith('.fetchy-mp4-'))) {
 					await writeFile(destination, 'concurrent user file', {flag: 'wx'});
 					created = true;
 					break;
@@ -344,7 +344,7 @@ test(
 		assert.equal(await readFile(destination, 'utf8'), 'concurrent user file');
 		assert.deepEqual(await readFile(source), original);
 		assert.equal(
-			(await readdir(directory)).some((file) => file.startsWith('.fango-mp4-')),
+			(await readdir(directory)).some((file) => file.startsWith('.fetchy-mp4-')),
 			false,
 		);
 	},

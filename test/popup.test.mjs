@@ -16,7 +16,7 @@ const context = {
 	metadata: {title: 'A video', platform: 'youtube'},
 };
 const result = {
-	filepath: '/Downloads/Fango/video-one/media.mp4',
+	filepath: '/Downloads/Fetchy/video-one/media.mp4',
 	bytes: 20,
 	validation: {video: true, audio: true, durationSeconds: 12},
 };

@@ -32,7 +32,7 @@ function connect() {
 		render({
 			connection: {
 				status: 'disconnected',
-				error: {message: '请从浏览器工具栏打开已安装的 Fango 插件。'},
+				error: {message: '请从浏览器工具栏打开已安装的 Fetchy 插件。'},
 			},
 		});
 		return;

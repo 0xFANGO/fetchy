@@ -156,7 +156,7 @@ async function withCookies(options, action) {
 		if (!sourceStat.isFile() || sourceStat.size > 16 * 1024 * 1024)
 			throw new Error('invalid cookies file');
 		// yt-dlp writes its cookie jar back on exit. Give it a private copy, not the user's original file.
-		directory = await mkdtemp(path.join(tmpdir(), 'fango-cookies-'));
+		directory = await mkdtemp(path.join(tmpdir(), 'fetchy-cookies-'));
 		await chmod(directory, 0o700);
 		const destination = path.join(directory, 'cookies.txt');
 		await copyFile(source, destination);

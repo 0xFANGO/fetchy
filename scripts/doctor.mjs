@@ -100,7 +100,7 @@ const checks = [
 		async find() {
 			if (!mac) return {where: 'n/a', detail: 'installer supports macOS only'};
 			for (const directory of manifestDirectories('all', homedir())) {
-				const manifest = path.join(directory, 'com.fango.video_downloader.json');
+				const manifest = path.join(directory, 'com.fetchy.video_downloader.json');
 				try {
 					await access(manifest, constants.R_OK);
 					return {where: manifest, detail: 'registered'};

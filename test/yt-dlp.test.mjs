@@ -74,7 +74,7 @@ async function fixture(
 		realProbe = false,
 	} = {},
 ) {
-	const root = await mkdtemp(path.join(tmpdir(), 'fango-engine-test-'));
+	const root = await mkdtemp(path.join(tmpdir(), 'fetchy-engine-test-'));
 	t.after(() => rm(root, {recursive: true, force: true}));
 	const ytDlpPath = path.join(root, 'yt-dlp.mjs');
 	const ffprobePath = path.join(root, 'ffprobe.mjs');
@@ -518,7 +518,7 @@ test(
 			: 'Install FFmpeg and ffprobe to run the real-media compatibility integration test.',
 	},
 	async (t) => {
-		const root = await mkdtemp(path.join(tmpdir(), 'fango-compatibility-test-'));
+		const root = await mkdtemp(path.join(tmpdir(), 'fetchy-compatibility-test-'));
 		t.after(() => rm(root, {recursive: true, force: true}));
 		for (const config of [
 			{

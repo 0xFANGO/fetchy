@@ -1,6 +1,6 @@
-# Fango Video Downloader
+# Fetchy
 
-[![License: MIT](docs/assets/badges/license.svg)](LICENSE)
+[![License: AGPL-3.0](docs/assets/badges/license.svg)](LICENSE)
 ![Node >= 22](docs/assets/badges/node.svg)
 ![Platform: macOS](docs/assets/badges/platform.svg)
 
@@ -55,7 +55,7 @@ python3 -m venv .venv && .venv/bin/python -m pip install -r requirements.txt
 npm run doctor
 
 # download a video into ./downloads
-node bin/fango-download.mjs download 'https://www.bilibili.com/video/BV19Pnb6REhD/'
+node bin/fetchy.mjs download 'https://www.bilibili.com/video/BV19Pnb6REhD/'
 ```
 
 The CLI prints a JSON result with the absolute file path, size and validation details. Progress goes to stderr. `Ctrl+C` cancels cleanly and leaves no half-written file behind.
@@ -71,7 +71,7 @@ npm run native:install -- --browser chrome # registers the native host (--browse
 2. Pin the extension to the toolbar.
 3. Open a video page and click the icon, or paste a link into the popup.
 
-Downloads go to `~/Downloads/Fango` by default; change it from the popup's settings view.
+Downloads go to `~/Downloads/Fetchy` by default; change it from the popup's settings view.
 
 For Xiaohongshu and Douyin the extension reads the video's playback data from the page itself: an open tab on that video is used directly, otherwise a background tab is opened and closed again. Your logged-in session is used in place, nothing is exported. Permissions requested: `activeTab`, `storage`, `nativeMessaging`, `scripting`, plus host access to `xiaohongshu.com` and `douyin.com`.
 
@@ -81,8 +81,8 @@ Full installation notes, session requirements and troubleshooting: [docs/extensi
 ## CLI
 
 ```sh
-node bin/fango-download.mjs resolve  <url>   # inspect formats without downloading
-node bin/fango-download.mjs download <url>   # download
+node bin/fetchy.mjs resolve  <url>   # inspect formats without downloading
+node bin/fetchy.mjs download <url>   # download
 ```
 
 | Option                  | Default       | Description                                                                                     |
@@ -142,6 +142,6 @@ See [CONTRIBUTING.md](CONTRIBUTING.md). Design notes, platform research and manu
 
 ## License
 
-[MIT](LICENSE).
+[AGPL-3.0](LICENSE). You can use, modify and share Fetchy freely; if you distribute a modified version or run one as a service, you must publish your source under the same license.
 
 This tool is for saving content you are allowed to keep, for personal use. Respect each platform's terms of service and the rights of content creators. The license covers the code only, not any downloaded content.

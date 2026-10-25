@@ -7,7 +7,7 @@ import path from 'node:path';
 import {publishVideoFile, videoFilename} from '../src/filenames.mjs';
 
 async function fixture(t, name = 'media.part', contents = 'validated-media') {
-	const directory = await fs.realpath(await fs.mkdtemp(path.join(tmpdir(), 'fango-title-test-')));
+	const directory = await fs.realpath(await fs.mkdtemp(path.join(tmpdir(), 'fetchy-title-test-')));
 	t.after(() => fs.rm(directory, {recursive: true, force: true}));
 	const source = path.join(directory, name);
 	await fs.writeFile(source, contents);

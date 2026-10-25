@@ -1,6 +1,6 @@
-# Fango 本地组件（macOS）
+# Fetchy 本地组件（macOS）
 
-扩展通过 Native Messaging 连接 `com.fango.video_downloader`，本地组件使用仓库现有 Node API 下载。当前实现支持 macOS；Ego Lite 与 Chrome 的安装目录已提供，其他浏览器和操作系统未验证。
+扩展通过 Native Messaging 连接 `com.fetchy.video_downloader`，本地组件使用仓库现有 Node API 下载。当前实现支持 macOS；Ego Lite 与 Chrome 的安装目录已提供，其他浏览器和操作系统未验证。
 
 ## 安装
 
@@ -13,17 +13,17 @@ node native/install.mjs --browser chrome
 
 在浏览器的 `chrome://extensions` 中启用开发者模式，加载仓库 `dist/extension` 文件夹。源 manifest 中的公共 key 固定扩展 ID；安装程序按该 key 自动计算允许来源，不需要手动填写。自定义构建可用 `--extension-id <32位扩展ID>`。
 
-Ego Lite 使用 `--browser ego`；同时注册使用 `--browser all`。`--browser ego` 同时写入 Ego 产品目录和 Chrome 共享目录，以兼容实际 Ego 本地组件查找路径。如果某个 Chromium 浏览器使用不同的本地组件目录，可用 `--manifest-dir <绝对路径>` 明确注册。脚本仅注册 Fango 的 manifest，不修改其他扩展或浏览器资料。
+Ego Lite 使用 `--browser ego`；同时注册使用 `--browser all`。`--browser ego` 同时写入 Ego 产品目录和 Chrome 共享目录，以兼容实际 Ego 本地组件查找路径。如果某个 Chromium 浏览器使用不同的本地组件目录，可用 `--manifest-dir <绝对路径>` 明确注册。脚本仅注册 Fetchy 的 manifest，不修改其他扩展或浏览器资料。
 
 安装程序将启动器和私有运行配置写入：
 
 ```text
-~/Library/Application Support/FangoVideoDownloader/
+~/Library/Application Support/Fetchy/
 ```
 
 启动器固定本次 Node 可执行文件和仓库绝对路径；运行配置记录已找到的工具路径与安装时的 PATH。移动仓库、升级 Node 后删除原版本目录或调整工具路径时，应重新执行安装脚本。安装过程中显示缺失依赖时，需要安装后重新运行脚本。
 
-Ego Lite 的注册文件位于 `~/Library/Application Support/Citro Labs/ego lite/NativeMessagingHosts/com.fango.video_downloader.json`，Chrome 共享目录位于 `~/Library/Application Support/Google/Chrome/NativeMessagingHosts/com.fango.video_downloader.json`。2026-10-25 在 macOS 的 Ego Lite 0.6.0.20 中实测：只注册产品目录时插件报告“Specified native messaging host not found”，补充 Chrome 共享目录后真实插件成功连接；所以 `--browser ego` 默认注册两处。默认目录为 `~/Downloads/Fango`，首次下载时创建；自选目录必须已存在并且可写。
+Ego Lite 的注册文件位于 `~/Library/Application Support/Citro Labs/ego lite/NativeMessagingHosts/com.fetchy.video_downloader.json`，Chrome 共享目录位于 `~/Library/Application Support/Google/Chrome/NativeMessagingHosts/com.fetchy.video_downloader.json`。2026-10-25 在 macOS 的 Ego Lite 0.6.0.20 中实测：只注册产品目录时插件报告“Specified native messaging host not found”，补充 Chrome 共享目录后真实插件成功连接；所以 `--browser ego` 默认注册两处。默认目录为 `~/Downloads/Fetchy`，首次下载时创建；自选目录必须已存在并且可写。
 
 ## 下载生命周期
 
@@ -63,4 +63,4 @@ daemon 持久化目录配置、待保存的目录选择、最近任务的安全�
 
 运行 `node --test test/native.test.mjs` 验证消息分帧、来源拒绝、真实 host 重连、单任务去重、取消确认、目录冻结与持久化、错误脱敏、结果路径约束和 daemon 重启中断标记。测试中下载媒体由桩替代；它不等同于真实平台或插件端到端验收。
 
-卸载时删除对应浏览器下的 `com.fango.video_downloader.json` 和上述 Fango 私有运行目录即可；先等待任务结束。已保存视频位于下载目录，卸载本地组件不应删除这些视频。
+卸载时删除对应浏览器下的 `com.fetchy.video_downloader.json` 和上述 Fetchy 私有运行目录即可；先等待任务结束。已保存视频位于下载目录，卸载本地组件不应删除这些视频。

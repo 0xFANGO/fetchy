@@ -36,7 +36,7 @@ try {
 			{
 				detached: true,
 				stdio: 'ignore',
-				env: {...process.env, FANGO_DATA_DIR: directory},
+				env: {...process.env, FETCHY_DATA_DIR: directory},
 			},
 		);
 		child.on('error', () => {});
