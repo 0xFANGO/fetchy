@@ -47,8 +47,8 @@ native host 安装脚本目前只支持 **macOS**。下载核心和 CLI 也能�
 ## 快速开始
 
 ```sh
-git clone https://github.com/0xFANGO/fango-video-downloader.git
-cd fango-video-downloader
+git clone https://github.com/0xFANGO/fetchy.git
+cd fetchy
 npm install
 python3 -m venv .venv && .venv/bin/python -m pip install -r requirements.txt
 npm run doctor

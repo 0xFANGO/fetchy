@@ -14,8 +14,8 @@ See the [README](README.md#requirements) for the one-line install per platform.
 ## Getting started
 
 ```sh
-git clone https://github.com/0xFANGO/fango-video-downloader.git
-cd fango-video-downloader
+git clone https://github.com/0xFANGO/fetchy.git
+cd fetchy
 npm install
 python3 -m venv .venv && .venv/bin/python -m pip install -r requirements.txt
 npm run doctor

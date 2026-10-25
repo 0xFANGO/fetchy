@@ -14,14 +14,14 @@
 		"youtube",
 		"yt-dlp"
 	],
-	"homepage": "https://github.com/0xFANGO/fango-video-downloader#readme",
+	"homepage": "https://github.com/0xFANGO/fetchy#readme",
 	"bugs": {
-		"url": "https://github.com/0xFANGO/fango-video-downloader/issues"
+		"url": "https://github.com/0xFANGO/fetchy/issues"
 	},
 	"license": "AGPL-3.0-only",
 	"repository": {
 		"type": "git",
-		"url": "git+https://github.com/0xFANGO/fango-video-downloader.git"
+		"url": "git+https://github.com/0xFANGO/fetchy.git"
 	},
 	"bin": {
 		"fetchy": "./bin/fetchy.mjs"

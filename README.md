@@ -48,8 +48,8 @@ The native host installer currently supports **macOS** only. The download core a
 ## Quick start
 
 ```sh
-git clone https://github.com/0xFANGO/fango-video-downloader.git
-cd fango-video-downloader
+git clone https://github.com/0xFANGO/fetchy.git
+cd fetchy
 npm install
 python3 -m venv .venv && .venv/bin/python -m pip install -r requirements.txt
 npm run doctor
