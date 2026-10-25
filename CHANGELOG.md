@@ -26,6 +26,11 @@ All notable changes to this project are documented here. The format follows
 - The PolyForm Noncommercial license and NOTICE file; the project is now AGPL-3.0.
 - The `ego-browser` dependency, `egoBrowserPath` and `browserSpaceId` options.
 
+### Fixed
+
+- Reuse browser-resolved Xiaohongshu and Douyin short links without requesting
+  the redirect again outside the browser session.
+
 ## [0.2.0] - 2026-10-25
 
 ### Added

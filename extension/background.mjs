@@ -187,7 +187,7 @@ async function extractFromTab(tabId, target, attempts) {
 		} catch {
 			last = {ok: false, code: 'browser_unavailable'};
 		}
-		if (last.ok) return {media: last.media, userAgent: last.userAgent};
+		if (last.ok) return {media: last.media, userAgent: last.userAgent, resolvedUrl: target.url};
 		if (!RETRYABLE.includes(last.code)) break;
 		await delay(500);
 	}

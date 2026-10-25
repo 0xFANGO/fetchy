@@ -526,6 +526,8 @@ test('page media reaches the core for resolve and start but never a snapshot or 
 		},
 	});
 	const pageMedia = {
+		resolvedUrl:
+			'https://www.xiaohongshu.com/explore/6adb92b90000000031037a66?xsec_token=RESOLVED_SECRET',
 		media: {
 			platform: 'xiaohongshu',
 			id: '6adb92b90000000031037a66',

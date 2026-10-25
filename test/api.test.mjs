@@ -126,6 +126,118 @@ test('XHS and Douyin use yt-dlp unless the extension supplies page media', async
 	});
 });
 
+const pageTargets = [
+	{
+		platform: 'xiaohongshu',
+		id: '6adb92b90000000031037a66',
+		shortUrl: 'https://xhslink.com/example',
+		resolvedUrl: 'https://www.xiaohongshu.com/explore/6adb92b90000000031037a66?xsec_token=example',
+		cdn: 'https://sns-video.xhscdn.com/a.mp4',
+	},
+	{
+		platform: 'douyin',
+		id: '7695202760953793827',
+		shortUrl: 'https://v.douyin.com/example/',
+		resolvedUrl: 'https://www.douyin.com/jingxuan?modal_id=7695202760953793827',
+		cdn: 'https://v3.douyinvod.com/a.mp4',
+	},
+];
+function pageMediaFor({platform, id, resolvedUrl, cdn}) {
+	return {
+		resolvedUrl,
+		media: {
+			platform,
+			id,
+			title: 'from page',
+			durationSeconds: 12,
+			formats: [{hasVideo: true, hasAudio: true, width: 1280, height: 720, urls: [cdn]}],
+		},
+	};
+}
+
+test('browser-resolved short links resolve and download without a second redirect request', async (t) => {
+	for (const target of pageTargets) {
+		const {options} = await fakeTools(t, {id: target.id});
+		const redirect = t.mock.fn(() => {
+			throw new Error('the short link requires the browser session');
+		});
+		const fetchMedia = t.mock.method(globalThis, 'fetch', async (url) => {
+			assert.equal(url, target.cdn);
+			return new Response('test-media-data', {
+				headers: {'content-type': 'video/mp4', 'content-length': '15'},
+			});
+		});
+		const settings = {...options, fetchImpl: redirect, pageMedia: pageMediaFor(target)};
+		const info = await resolveVideo(target.shortUrl, settings);
+		const result = await downloadVideo(target.shortUrl, settings);
+		assert.equal(info.engine, 'browser');
+		assert.equal(info.id, target.id);
+		assert.equal(result.id, target.id);
+		assert.equal(result.validation.video, true);
+		assert.equal(await readFile(result.filepath, 'utf8'), 'test-media-data');
+		assert.equal(redirect.mock.callCount(), 0);
+		assert.equal(fetchMedia.mock.callCount(), 1);
+		assert.doesNotMatch(JSON.stringify(info), /xsec_token|resolvedUrl|xhscdn|douyinvod/);
+		fetchMedia.mock.restore();
+	}
+});
+
+test('browser redirect hints must identify a concrete video on the original platform', async (t) => {
+	const target = pageTargets[0];
+	const redirect = t.mock.fn(() => {
+		throw new Error('invalid browser hints must not fetch');
+	});
+	const media = pageMediaFor(target).media;
+	for (const [pageMedia, code] of [
+		[{media, resolvedUrl: target.shortUrl}, 'identity_mismatch'],
+		[{media, resolvedUrl: pageTargets[1].resolvedUrl}, 'identity_mismatch'],
+		[
+			{media, resolvedUrl: 'https://www.xiaohongshu.com/explore/aaaaaaaaaaaaaaaaaaaaaaaa'},
+			'identity_mismatch',
+		],
+		[{media: {...media, platform: 'douyin'}, resolvedUrl: target.resolvedUrl}, 'identity_mismatch'],
+		[{media, resolvedUrl: 'http://www.xiaohongshu.com/explore/' + target.id}, 'invalid_url'],
+		[{media, resolvedUrl: 'https://example.com/video'}, 'unsupported_platform'],
+	]) {
+		for (const action of [resolveVideo, downloadVideo]) {
+			await assert.rejects(action(target.shortUrl, {pageMedia, fetchImpl: redirect}), {code});
+		}
+	}
+	assert.equal(redirect.mock.callCount(), 0);
+});
+
+test('browser redirect hints cannot replace an explicit long-link identity', async () => {
+	const target = pageTargets[0];
+	const wrongId = 'aaaaaaaaaaaaaaaaaaaaaaaa';
+	const pageMedia = pageMediaFor({
+		...target,
+		id: wrongId,
+		resolvedUrl: 'https://www.xiaohongshu.com/explore/' + wrongId,
+	});
+	for (const action of [resolveVideo, downloadVideo])
+		await assert.rejects(action(target.resolvedUrl, {pageMedia}), {code: 'identity_mismatch'});
+	const info = await resolveVideo(target.resolvedUrl, {
+		pageMedia: {...pageMediaFor(target), resolvedUrl: pageTargets[1].resolvedUrl},
+	});
+	assert.equal(info.id, target.id);
+});
+
+test('other platforms, explicit yt-dlp and legacy page media keep normal short-link resolution', async (t) => {
+	const target = pageTargets[0],
+		pageMedia = pageMediaFor(target);
+	const redirect = t.mock.fn(async () => new Response('browser redirect', {status: 200}));
+	for (const [url, options] of [
+		['https://b23.tv/example', {pageMedia}],
+		[target.shortUrl, {engine: 'yt-dlp', pageMedia}],
+		[target.shortUrl, {pageMedia: {media: pageMedia.media}}],
+	]) {
+		await assert.rejects(resolveVideo(url, {...options, fetchImpl: redirect}), {
+			code: 'redirect_required',
+		});
+	}
+	assert.equal(redirect.mock.callCount(), 3);
+});
+
 test('CLI help is available without external dependencies', async () => {
 	const result = await runProcess(process.execPath, ['bin/fetchy.mjs', '--help']);
 	assert.equal(result.code, 0);

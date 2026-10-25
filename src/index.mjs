@@ -1,6 +1,6 @@
 import {existsSync} from 'node:fs';
 import {fileURLToPath} from 'node:url';
-import {resolveTarget} from './urls.mjs';
+import {normalizeUrl, resolveTarget} from './urls.mjs';
 import {resolveWithYtDlp, downloadWithYtDlp} from './yt-dlp.mjs';
 import {resolveWithBrowser, downloadWithBrowser} from './browser.mjs';
 import {EngineError} from './process.mjs';
@@ -20,6 +20,27 @@ function settings(options) {
 	if (!['auto', 'yt-dlp', 'browser'].includes(result.engine ?? 'auto'))
 		throw new EngineError('invalid_options', 'engine 必须为 auto、yt-dlp 或 browser。');
 	return result;
+}
+
+async function inputTarget(input, options) {
+	const target = normalizeUrl(input);
+	if (
+		target.needsRedirect &&
+		['xiaohongshu', 'douyin'].includes(target.platform) &&
+		options.engine !== 'yt-dlp' &&
+		options.pageMedia?.resolvedUrl !== undefined
+	) {
+		const resolved = normalizeUrl(options.pageMedia.resolvedUrl);
+		if (
+			resolved.needsRedirect ||
+			resolved.platform !== target.platform ||
+			options.pageMedia.media?.platform !== resolved.platform ||
+			options.pageMedia.media?.id !== resolved.id
+		)
+			throw new EngineError('identity_mismatch', '浏览器展开的页面与目标视频不一致。');
+		return resolved;
+	}
+	return target.needsRedirect ? resolveTarget(input, options) : target;
 }
 
 async function execute(action, input, options = {}) {
@@ -42,7 +63,7 @@ async function execute(action, input, options = {}) {
 		signal: AbortSignal.any([deadline, ...(callerSignal ? [callerSignal] : [])]),
 	};
 	try {
-		const target = await resolveTarget(input, options);
+		const target = await inputTarget(input, options);
 		options.timeoutMs = Math.max(1, timeoutMs - (Date.now() - started));
 		// Xiaohongshu and Douyin use the browser engine only when the extension
 		// supplies media it extracted from the user's own tab; the CLI and plain
