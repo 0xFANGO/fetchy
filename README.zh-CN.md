@@ -61,12 +61,14 @@ CLI 以 JSON 输出结果，包含文件绝对路径、大小和校验信息；�
 
 ## 浏览器扩展
 
+每个 [Release](https://github.com/0xFANGO/fetchy/releases) 都附带可直接加载的 `fetchy-extension-<版本>.zip`，下载解压后可以跳过下面的构建步骤。本地组件仍然来自这个仓库，所以无论如何都要 clone 一份。
+
 ```sh
-npm run extension:build                 # 输出到 dist/extension
+npm run extension:build                 # 输出到 dist/extension（下载了 Release 的 zip 可跳过）
 npm run native:install -- --browser chrome # 注册 native host；Ego Lite 用 --browser ego
 ```
 
-1. 打开 `chrome://extensions/`，开启开发者模式，点击「加载已解压的扩展程序」，选择 `dist/extension`。
+1. 打开 `chrome://extensions/`，开启开发者模式，点击「加载已解压的扩展程序」，选择 `dist/extension`（或 Release 解压出来的 `extension` 文件夹）。
 2. 把扩展固定到工具栏。
 3. 打开视频页点击图标，或在弹窗里粘贴链接。
 

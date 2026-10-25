@@ -47,6 +47,7 @@
 		"check": "npm run fmt:check && npm run lint",
 		"doctor": "node scripts/doctor.mjs",
 		"extension:build": "node scripts/build-extension.mjs",
+		"extension:pack": "node scripts/pack-extension.mjs",
 		"native:install": "node native/install.mjs",
 		"resolve": "node bin/fetchy.mjs resolve",
 		"download": "node bin/fetchy.mjs download"

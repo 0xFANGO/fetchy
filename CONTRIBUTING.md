@@ -44,6 +44,16 @@ Formatting is enforced by [oxfmt](https://oxc.rs) (tabs, single quotes) and
 linting by [oxlint](https://oxc.rs). CI runs `npm run check`, `npm test` and
 the extension build on every pull request; all three must pass.
 
+## Releasing
+
+1. Bump `version` in both `package.json` and `extension/manifest.json` and add a
+   section to `CHANGELOG.md`.
+2. Push, then publish a GitHub release whose tag is `v<version>` (for example
+   `v0.3.0`).
+3. The Release workflow builds the extension, checks that the tag matches the
+   version, and attaches `fetchy-extension-<version>.zip` to the release.
+   `npm run extension:pack` produces the same zip locally.
+
 ## Pull requests
 
 1. Branch from `main`.

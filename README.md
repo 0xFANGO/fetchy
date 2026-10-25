@@ -62,12 +62,14 @@ The CLI prints a JSON result with the absolute file path, size and validation de
 
 ## Browser extension
 
+Every [release](https://github.com/0xFANGO/fetchy/releases) ships a ready-to-load `fetchy-extension-<version>.zip`. Download it, unzip it, and skip the build step below. The native host still comes from this repository, so clone it either way.
+
 ```sh
-npm run extension:build                 # writes dist/extension
+npm run extension:build                 # writes dist/extension (skip if you downloaded the release zip)
 npm run native:install -- --browser chrome # registers the native host (--browser ego for Ego Lite)
 ```
 
-1. Open `chrome://extensions/`, enable Developer mode, click **Load unpacked** and pick `dist/extension`.
+1. Open `chrome://extensions/`, enable Developer mode, click **Load unpacked** and pick `dist/extension` (or the unzipped `extension` folder from the release).
 2. Pin the extension to the toolbar.
 3. Open a video page and click the icon, or paste a link into the popup.
 

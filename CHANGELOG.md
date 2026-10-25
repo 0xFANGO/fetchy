@@ -8,6 +8,8 @@ All notable changes to this project are documented here. The format follows
 ### Added
 
 - `npm run doctor` to check local dependencies.
+- `npm run extension:pack` and a Release workflow that attaches the packed
+  extension zip to every GitHub release.
 - Code style tooling (oxfmt, oxlint), CI workflow and contributor docs.
 
 ### Changed
