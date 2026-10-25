@@ -2,10 +2,41 @@
 	"name": "fango-video-downloader",
 	"version": "0.2.0",
 	"private": true,
+	"description": "Download single videos from YouTube, Bilibili, Xiaohongshu and Douyin to a local folder, from a browser extension, the CLI or Node.",
+	"keywords": [
+		"bilibili",
+		"browser-extension",
+		"douyin",
+		"downloader",
+		"manifest-v3",
+		"video",
+		"xiaohongshu",
+		"youtube",
+		"yt-dlp"
+	],
+	"homepage": "https://github.com/0xFANGO/fango-video-downloader#readme",
+	"bugs": {
+		"url": "https://github.com/0xFANGO/fango-video-downloader/issues"
+	},
 	"license": "PolyForm-Noncommercial-1.0.0",
+	"repository": {
+		"type": "git",
+		"url": "git+https://github.com/0xFANGO/fango-video-downloader.git"
+	},
 	"bin": {
 		"fango-download": "./bin/fango-download.mjs"
 	},
+	"files": [
+		"src",
+		"bin",
+		"native",
+		"extension",
+		"scripts",
+		"LICENSE",
+		"NOTICE",
+		"README.md",
+		"README.zh-CN.md"
+	],
 	"type": "module",
 	"exports": "./src/index.mjs",
 	"scripts": {
