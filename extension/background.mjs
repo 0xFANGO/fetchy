@@ -1,4 +1,5 @@
 import {Controller, activeTask} from './controller.mjs';
+import {normalizeUrl} from '../src/urls.mjs';
 
 const HOST = 'com.fango.video_downloader';
 const popups = new Set(),
@@ -9,6 +10,7 @@ let nativePort,
 	reconnectAttempt = 0;
 const controller = new Controller({
 	rpc,
+	collectPageMedia,
 	readActiveTab: async () => (await chrome.tabs.query({active: true, lastFocusedWindow: true}))[0],
 	saveSession: (session) => chrome.storage.session.set({session}),
 	emit: (state) => {
@@ -135,6 +137,113 @@ async function connect() {
 async function rpc(method, params, timeoutMs) {
 	await connect();
 	return send(method, params, timeoutMs);
+}
+
+// Xiaohongshu and Douyin media is read from a page in the user's own browser
+// session instead of a separate automation browser. An open tab on the exact
+// video is used when there is one; otherwise a background tab is opened and
+// closed again. Only the extractor's narrow result crosses into the native host.
+const PAGE_PLATFORMS = ['xiaohongshu', 'douyin'];
+const PAGE_HOSTS = ['https://*.xiaohongshu.com/*', 'https://*.douyin.com/*'];
+const RETRYABLE = ['browser_state_missing', 'browser_unavailable'];
+const delay = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
+// Douyin's /video/<id> page does not carry app.videoDetail; the modal page does.
+const pageUrl = (target) =>
+	target.platform === 'douyin'
+		? `https://www.douyin.com/jingxuan?modal_id=${target.id}`
+		: target.url;
+function targetOf(url) {
+	try {
+		const target = normalizeUrl(url);
+		return target.needsRedirect ? null : target;
+	} catch {
+		return null;
+	}
+}
+const sameTarget = (a, b) => Boolean(a && b && a.platform === b.platform && a.id === b.id);
+
+async function extractOnce(tabId, target) {
+	const args = {platform: target.platform, expectedId: target.id};
+	await chrome.scripting.executeScript({
+		target: {tabId},
+		world: 'MAIN',
+		func: (value) => {
+			globalThis.__fangoPageExtractArgs = value;
+		},
+		args: [args],
+	});
+	const [injection] = await chrome.scripting.executeScript({
+		target: {tabId},
+		world: 'MAIN',
+		files: ['shared/page-extract.inject.js'],
+	});
+	return injection?.result ?? {ok: false, code: 'browser_state_missing'};
+}
+async function extractFromTab(tabId, target, attempts) {
+	let last = {ok: false, code: 'browser_state_missing'};
+	for (let attempt = 0; attempt < attempts; attempt++) {
+		try {
+			last = await extractOnce(tabId, target);
+		} catch {
+			last = {ok: false, code: 'browser_unavailable'};
+		}
+		if (last.ok) return {media: last.media, userAgent: last.userAgent};
+		if (!RETRYABLE.includes(last.code)) break;
+		await delay(500);
+	}
+	throw {code: typeof last.code === 'string' ? last.code : 'browser_state_missing'};
+}
+async function waitForTarget(tabId, expected, timeoutMs) {
+	const deadline = Date.now() + timeoutMs;
+	while (Date.now() < deadline) {
+		const tab = await chrome.tabs.get(tabId).catch(() => null);
+		if (!tab) throw {code: 'browser_unavailable'};
+		const url = tab.url || tab.pendingUrl || '';
+		const target = targetOf(url);
+		if (
+			tab.status === 'complete' &&
+			target?.platform === expected.platform &&
+			(!expected.id || target.id === expected.id)
+		)
+			return {target, url};
+		await delay(250);
+	}
+	throw {code: 'timeout'};
+}
+async function collectPageMedia(input) {
+	let expected;
+	try {
+		expected = normalizeUrl(input);
+	} catch {
+		return undefined;
+	}
+	if (!PAGE_PLATFORMS.includes(expected.platform)) return undefined;
+	if (!expected.needsRedirect) {
+		const tabs = await chrome.tabs.query({url: PAGE_HOSTS}).catch(() => []);
+		for (const tab of tabs) {
+			if (!sameTarget(targetOf(tab.url), expected)) continue;
+			try {
+				return await extractFromTab(tab.id, expected, 3);
+			} catch (error) {
+				if (!RETRYABLE.includes(error.code)) throw error;
+			}
+		}
+	}
+	const tab = await chrome.tabs.create({
+		url: expected.needsRedirect ? expected.url : pageUrl(expected),
+		active: false,
+	});
+	try {
+		let {target, url} = await waitForTarget(tab.id, expected, 20000);
+		if (target.platform === 'douyin' && !url.includes('modal_id=')) {
+			await chrome.tabs.update(tab.id, {url: pageUrl(target)});
+			await delay(250);
+			({target, url} = await waitForTarget(tab.id, target, 20000));
+		}
+		return await extractFromTab(tab.id, target, 40);
+	} finally {
+		chrome.tabs.remove(tab.id).catch(() => {});
+	}
 }
 
 chrome.runtime.onConnect.addListener((port) => {

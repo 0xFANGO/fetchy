@@ -11,14 +11,13 @@ const messages = {
 	unavailable: '该内容不可用或不在当前支持范围内。',
 	drm: '该视频受 DRM 保护，当前不支持下载。',
 	auth_required:
-		'该内容需要访问权限。小红书和抖音请在 Ego Lite 的目标页面登录后重试；YouTube 和 B站当前使用匿名解析。',
-	session_required: '平台需要有效会话。请在 Ego Lite 打开的目标页面确认登录和访问权限后重试。',
+		'该内容需要访问权限。小红书和抖音请在浏览器中登录后打开视频页重试；YouTube 和 B站当前使用匿名解析。',
+	session_required: '平台需要有效会话。请在浏览器中登录后重新打开视频页，然后重试。',
 	verification_required:
-		'平台要求人工验证。小红书和抖音请在 Ego Lite 打开的目标页面完成验证后重试；YouTube 和 B站匿名解析暂时不可用。',
-	browser_state_missing:
-		'请在 Ego Lite 打开的目标页面确认视频可以播放，并完成登录或验证，然后重试。',
-	browser_unavailable: '无法连接 Ego Lite，请启动 Ego Lite 并确认 ego-browser 可用后重试。',
-	dependency_missing: '缺少本地下载依赖，请按安装指引修复 Node.js、yt-dlp、FFmpeg 或 Ego Browser。',
+		'平台要求人工验证。小红书和抖音请在浏览器打开的视频页完成验证后重试；YouTube 和 B站匿名解析暂时不可用。',
+	browser_state_missing: '页面尚未加载出目标视频，请等视频可以播放后重试。',
+	browser_unavailable: '无法读取浏览器页面，请重新打开视频页后重试。',
+	dependency_missing: '缺少本地下载依赖，请按安装指引修复 Node.js、yt-dlp 或 FFmpeg。',
 	network_error: '连接失败，请检查网络后重试。',
 	timeout: '识别或下载超时，请稍后重试。',
 	media_expired: '媒体访问地址已失效，请重新解析并下载。',

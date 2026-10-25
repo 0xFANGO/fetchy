@@ -14,8 +14,8 @@
 			<h2>首次安装 · macOS</h2>
 			<ol>
 				<li>
-					安装 Node.js 22+、Python 3.10+、FFmpeg（包含 ffprobe）。小红书和抖音还需要可用的 Ego Lite
-					及 <code>ego-browser</code> 命令。
+					安装 Node.js 22+、Python 3.10+、FFmpeg（包含 ffprobe）。可运行
+					<code>npm run doctor</code> 检查。
 				</li>
 				<li>
 					在项目根目录执行：
@@ -23,9 +23,9 @@
 python3 -m venv .venv
 .venv/bin/python -m pip install -r requirements.txt
 npm run extension:build
-npm run native:install -- --browser ego</pre>
+npm run native:install -- --browser chrome</pre>
 					<p>
-						Chrome 用户将 <code>ego</code> 换成 <code>chrome</code>。移动项目或 Node
+						Ego Lite 用户将 <code>chrome</code> 换成 <code>ego</code>。移动项目或 Node
 						路径后，请再次运行安装命令。
 					</p>
 				</li>
@@ -36,9 +36,9 @@ npm run native:install -- --browser ego</pre>
 			</ol>
 			<h2>浏览器与登录状态</h2>
 			<p>
-				YouTube / B站使用本地 yt-dlp。小红书 / 抖音通过 Ego Lite
-				打开目标页面并读取对应视频；不会自动导出你的 Cookie。遇到登录或验证提示，请在实际打开的 Ego
-				Lite 视频页面完成，然后返回插件重试。Chrome 与 Ego Lite 的会话并不共享。
+				YouTube / B站使用本地 yt-dlp 匿名解析。小红书 /
+				抖音直接读取你当前浏览器里视频页面的播放信息：已经打开的视频页会被直接使用，否则插件会在后台打开一个标签页并在读取后关闭。不会导出你的
+				Cookie。遇到登录或验证提示，请在浏览器里完成后返回插件重试。
 			</p>
 			<h2>保存位置与恢复</h2>
 			<p>

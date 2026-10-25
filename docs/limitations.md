@@ -23,12 +23,11 @@
 
 ## 引擎与会话
 
-- `--engine yt-dlp` 可显式使用匿名解析路径，`--engine browser` 当前只支持小红书/抖音。
-- 浏览器路径使用 `ego-browser` 默认上下文中的独立任务页面，不保证与插件当前标签页属于同一 profile；不导出 Cookie，遇到登录/验证状态需在实际 Ego 目标页面处理。
-- 小红书在缺少 Ego 时可退到 yt-dlp，规格可能减少；结果中 `fallback: 'browser_dependency_missing'`。
+- 浏览器引擎只处理小红书/抖音，且只在调用方传入 `pageMedia` 时启用：扩展把 `src/page-extract.mjs` 注入你浏览器里的视频页，取回目标视频的媒体候选后交给本地组件下载。核心会把传入的媒体信息重新与链接身份、CDN 域名校验一遍。
+- 命令行和不带 `pageMedia` 的 API 调用对全部平台使用 yt-dlp 的匿名解析；小红书和抖音在这条路径上可能需要 Cookie 或拿到更少的规格。
+- 不导出 Cookie。遇到登录/验证提示，在浏览器里的视频页完成后重试即可；扩展后台打开的标签页同样使用当前浏览器的登录态。
 - YouTube 在 HTTPS 传输遇到网络错误时会有限尝试 HLS；结果中 `fallback: 'https_failed_retry_hls'`。
-- 浏览器页面错误会保留可接管空间；取消和超时能停止本地传输，但不承诺已撤销浏览器端动作。
-- `cookiesFile` / `--cookies-file` 仅用于显式指定的 yt-dlp 引擎，使用临时私有副本，不回写原文件。浏览器引擎可设 `maxBytes`（默认 4 GiB）；`browserSpaceId` 只用于开发时复用当前任务空间。
+- `cookiesFile` / `--cookies-file` 仅用于显式指定的 yt-dlp 引擎，使用临时私有副本，不回写原文件。浏览器引擎可设 `maxBytes`（默认 4 GiB）。
 
 ## 隐私
 

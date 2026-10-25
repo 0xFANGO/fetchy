@@ -12,7 +12,15 @@ All notable changes to this project are documented here. The format follows
 
 ### Changed
 
+- Xiaohongshu and Douyin media is now read directly from the video page in the
+  user's own browser by the extension (`scripting` + host permissions). The
+  extension no longer depends on Ego Browser.
+- The CLI uses yt-dlp for every platform; `--engine browser` is gone.
 - Rewrote the README for first-time users; moved design notes into `docs/`.
+
+### Removed
+
+- The `ego-browser` dependency, `egoBrowserPath` and `browserSpaceId` options.
 
 ## [0.2.0] - 2026-10-25
 

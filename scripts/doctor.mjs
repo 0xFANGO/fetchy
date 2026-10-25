@@ -95,15 +95,6 @@ const checks = [
 		hint: hint('ffmpeg', 'ships with FFmpeg'),
 	},
 	{
-		name: 'Ego Browser',
-		required: false,
-		async find() {
-			const where = await onPath('ego-browser');
-			return where ? {where, detail: 'needed for Xiaohongshu / Douyin'} : null;
-		},
-		hint: 'optional: only Xiaohongshu and Douyin need it; see docs/extension-install.md',
-	},
-	{
 		name: 'Native host',
 		required: false,
 		async find() {
@@ -117,7 +108,7 @@ const checks = [
 			}
 			return null;
 		},
-		hint: 'npm run extension:build && npm run native:install -- --browser ego',
+		hint: 'npm run extension:build && npm run native:install -- --browser chrome',
 	},
 ];
 

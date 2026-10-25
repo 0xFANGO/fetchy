@@ -71,6 +71,15 @@ function checkedInput(input) {
 		throw bridgeError('invalid_url');
 	return input.trim();
 }
+function checkedPageMedia(value) {
+	if (value === undefined || value === null) return undefined;
+	if (!value || typeof value !== 'object' || Array.isArray(value))
+		throw bridgeError('invalid_request');
+	if (!value.media || typeof value.media !== 'object' || Array.isArray(value.media))
+		throw bridgeError('invalid_request');
+	if (JSON.stringify(value).length > 256 * 1024) throw bridgeError('invalid_request');
+	return value;
+}
 function checkedId(id) {
 	if (typeof id !== 'string' || !/^[\w-]{1,128}$/.test(id)) throw bridgeError('invalid_request');
 	return id;
@@ -85,6 +94,9 @@ export class NativeController extends EventEmitter {
 		this.engineOptions = options.engineOptions ?? {};
 		this.settings = {outputDir: this.defaultDirectory};
 		this.task = null;
+		// Signed media URLs extracted by the extension live here only; they are
+		// never part of a snapshot or the persisted state file.
+		this.taskPageMedia = null;
 		this.pendingDirectory = null;
 		this.choosingDirectory = false;
 		this.resolvers = new Map();
@@ -159,7 +171,6 @@ export class NativeController extends EventEmitter {
 			],
 			ffmpeg: [this.engineOptions.ffmpegLocation ?? 'ffmpeg', ['-version']],
 			ffprobe: [this.engineOptions.ffprobePath ?? 'ffprobe', ['-version']],
-			egoBrowser: [this.engineOptions.egoBrowserPath ?? 'ego-browser', ['--version']],
 		};
 		const checks = await Promise.all(
 			Object.entries(commands).map(async ([name, [command, args]]) => {
@@ -224,15 +235,20 @@ export class NativeController extends EventEmitter {
 				throw bridgeError('invalid_request');
 		}
 	}
-	async resolve({input, requestId}) {
+	async resolve({input, requestId, pageMedia}) {
 		input = checkedInput(input);
 		requestId = checkedId(requestId);
+		pageMedia = checkedPageMedia(pageMedia);
 		this.resolvers.get(requestId)?.abort();
 		const controller = new AbortController();
 		this.resolvers.set(requestId, controller);
 		try {
 			const metadata = publicMetadata(
-				await this.core.resolveVideo(input, {...this.engineOptions, signal: controller.signal}),
+				await this.core.resolveVideo(input, {
+					...this.engineOptions,
+					pageMedia,
+					signal: controller.signal,
+				}),
 			);
 			if (controller.signal.aborted) throw bridgeError('cancelled');
 			this.resolved.set(input, metadata);
@@ -242,9 +258,10 @@ export class NativeController extends EventEmitter {
 			if (this.resolvers.get(requestId) === controller) this.resolvers.delete(requestId);
 		}
 	}
-	async start({input, taskId, metadata}) {
+	async start({input, taskId, metadata, pageMedia}) {
 		taskId = checkedId(taskId);
 		input = checkedInput(input);
+		pageMedia = checkedPageMedia(pageMedia);
 		if (this.task?.id === taskId) return this.snapshot();
 		if (this.recentTaskIds.includes(taskId)) throw bridgeError('task_already_finished');
 		if (active(this.task)) throw bridgeError('task_busy');
@@ -263,6 +280,7 @@ export class NativeController extends EventEmitter {
 			createdAt: Date.now(),
 			updatedAt: Date.now(),
 		});
+		this.taskPageMedia = pageMedia ?? null;
 		this.recentTaskIds = [...this.recentTaskIds, taskId].slice(-64);
 		// Reserve before any await: concurrent start requests cannot launch two jobs.
 		try {
@@ -286,6 +304,7 @@ export class NativeController extends EventEmitter {
 		try {
 			const result = await this.core.downloadVideo(task.input, {
 				...this.engineOptions,
+				pageMedia: this.taskPageMedia ?? undefined,
 				outputDir: task.outputDir,
 				signal: controller.signal,
 				onProgress: ({stage, bytes, totalBytes}) => {
@@ -362,6 +381,7 @@ export class NativeController extends EventEmitter {
 				controller.signal.aborted || error.code === 'cancelled' ? 'cancelled' : 'failed';
 			task.error = publicError(task.status === 'cancelled' ? bridgeError('cancelled') : error);
 		} finally {
+			this.taskPageMedia = null;
 			task.updatedAt = Date.now();
 			task.unread = true;
 			task.progress = null;

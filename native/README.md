@@ -4,16 +4,16 @@
 
 ## 安装
 
-先按照项目 README 安装 Node.js 22+、项目 `.venv` 中的 yt-dlp、FFmpeg/ffprobe，以及小红书/抖音所需的 Ego Browser。然后在仓库根目录运行：
+先按照项目 README 安装 Node.js 22+、项目 `.venv` 中的 yt-dlp、FFmpeg/ffprobe。然后在仓库根目录运行：
 
 ```sh
 npm run extension:build
-node native/install.mjs --browser ego
+node native/install.mjs --browser chrome
 ```
 
-在 Ego Lite 的 `chrome://extensions` 中启用开发者模式，加载仓库 `dist/extension` 文件夹。源 manifest 中的公共 key 固定扩展 ID；安装程序按该 key 自动计算允许来源，不需要手动填写。自定义构建可用 `--extension-id <32位扩展ID>`。
+在浏览器的 `chrome://extensions` 中启用开发者模式，加载仓库 `dist/extension` 文件夹。源 manifest 中的公共 key 固定扩展 ID；安装程序按该 key 自动计算允许来源，不需要手动填写。自定义构建可用 `--extension-id <32位扩展ID>`。
 
-Chrome 使用 `--browser chrome`；同时注册使用 `--browser all`。`--browser ego` 同时写入 Ego 产品目录和 Chrome 共享目录，以兼容实际 Ego 本地组件查找路径。如果某个 Chromium 浏览器使用不同的本地组件目录，可用 `--manifest-dir <绝对路径>` 明确注册。脚本仅注册 Fango 的 manifest，不修改其他扩展或浏览器资料。
+Ego Lite 使用 `--browser ego`；同时注册使用 `--browser all`。`--browser ego` 同时写入 Ego 产品目录和 Chrome 共享目录，以兼容实际 Ego 本地组件查找路径。如果某个 Chromium 浏览器使用不同的本地组件目录，可用 `--manifest-dir <绝对路径>` 明确注册。脚本仅注册 Fango 的 manifest，不修改其他扩展或浏览器资料。
 
 安装程序将启动器和私有运行配置写入：
 
@@ -41,25 +41,25 @@ daemon 持久化目录配置、待保存的目录选择、最近任务的安全�
 
 `state` 包含 `{task, settings: {outputDir}, pendingDirectory, choosingDirectory}`。任务状态包括 `running`、`cancelling`、`completed`、`cancelled`、`failed`、`interrupted`。
 
-| 方法              | 参数                         | 结果                                              |
-| ----------------- | ---------------------------- | ------------------------------------------------- |
-| `hello`           | 无                           | `{version, protocolVersion, dependencies, state}` |
-| `getState`        | 无                           | 当前完整 state                                    |
-| `resolve`         | `{input, requestId}`         | 经过筛选的视频元数据                              |
-| `cancelResolve`   | `{requestId}`                | 取消指定解析请求                                  |
-| `start`           | `{input, taskId, metadata?}` | 接受后的完整 state，任务随后发事件                |
-| `cancel`          | `{taskId}`                   | 当前完整 state，确认停止后再发终态                |
-| `getSettings`     | 无                           | `{outputDir}`                                     |
-| `chooseDirectory` | 无                           | 选择器关闭后的完整 state                          |
-| `saveSettings`    | `{outputDir}`                | 校验并保存后的完整 state                          |
-| `reveal`          | `{taskId}`                   | `{revealed: true}`                                |
-| `acknowledge`     | `{taskId}`                   | 将任务结果标为已查看后的完整 state                |
+| 方法              | 参数                                     | 结果                                              |
+| ----------------- | ---------------------------------------- | ------------------------------------------------- |
+| `hello`           | 无                                       | `{version, protocolVersion, dependencies, state}` |
+| `getState`        | 无                                       | 当前完整 state                                    |
+| `resolve`         | `{input, requestId, pageMedia?}`         | 经过筛选的视频元数据                              |
+| `cancelResolve`   | `{requestId}`                            | 取消指定解析请求                                  |
+| `start`           | `{input, taskId, metadata?, pageMedia?}` | 接受后的完整 state，任务随后发事件                |
+| `cancel`          | `{taskId}`                               | 当前完整 state，确认停止后再发终态                |
+| `getSettings`     | 无                                       | `{outputDir}`                                     |
+| `chooseDirectory` | 无                                       | 选择器关闭后的完整 state                          |
+| `saveSettings`    | `{outputDir}`                            | 校验并保存后的完整 state                          |
+| `reveal`          | `{taskId}`                               | `{revealed: true}`                                |
+| `acknowledge`     | `{taskId}`                               | 将任务结果标为已查看后的完整 state                |
 
 首次连接会立即发送 state 事件。解析、下载启动、目录选择均在本地执行，不因 popup 端口断开而中止。`saveSettings` 只接受已有目录、默认目录或本次系统选择器选中的目录。
 
 ## 会话条件与测试范围
 
-小红书与抖音沿用现有 Ego 引擎：本地组件通过 `ego-browser` 打开目标视频，在 Ego 的可用会话中读取匹配目标 ID 的必要媒体信息。它没有读取插件所在标签页的 DOM，也不会导出全浏览器 Cookie。需要登录或验证时，请处理 Ego 打开的目标页面。YouTube/B站仍走 yt-dlp 匿名解析，不能假定浏览器登录后这条解析路径也取得登录态。
+小红书与抖音的媒体信息由扩展在浏览器页面里提取，经 `resolve` / `start` 的 `pageMedia` 参数传入本地组件；本地组件只在内存中保留它，并由核心重新校验身份和 CDN 域名后下载。它不读取 Cookie，也不会写入持久状态文件。
 
 运行 `node --test test/native.test.mjs` 验证消息分帧、来源拒绝、真实 host 重连、单任务去重、取消确认、目录冻结与持久化、错误脱敏、结果路径约束和 daemon 重启中断标记。测试中下载媒体由桩替代；它不等同于真实平台或插件端到端验收。
 

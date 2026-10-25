@@ -307,3 +307,42 @@ test('covers come only from the identity-checked target, with null when absent',
 		dyCover,
 	);
 });
+
+test('the injected page script returns extractor output or an error code as data', async () => {
+	const {pageExtractInjection} = await import('../scripts/page-extract-inject.mjs');
+	const source = pageExtractInjection(extractPageMedia);
+	// Values come from another realm; compare structure only.
+	const run = (context) => JSON.parse(JSON.stringify(vm.runInNewContext(source, context)));
+	const id = '6adb92b90000000031037a66';
+	const noteState = {
+		noteId: id,
+		title: '标题',
+		video: {
+			media: {
+				stream: {
+					h264: [{masterUrl: 'https://sns-video.xhscdn.com/a.mp4', width: 720, height: 1280}],
+				},
+			},
+		},
+	};
+	const page = (videos, state) => ({
+		__fangoPageExtractArgs: {platform: 'xiaohongshu', expectedId: id},
+		URL,
+		document: {querySelectorAll: () => videos},
+		navigator: {userAgent: 'UA'},
+		window: {__INITIAL_STATE__: {note: {noteDetailMap: {[id]: {note: state}}}}},
+	});
+	assert.deepEqual(run(page([], noteState)), {ok: false, code: 'browser_state_missing'});
+	const result = run(page([{readyState: 4}], noteState));
+	assert.equal(result.ok, true);
+	assert.equal(result.userAgent, 'UA');
+	assert.equal(result.media.title, '标题');
+	assert.equal(result.media.formats[0].urls[0], 'https://sns-video.xhscdn.com/a.mp4');
+	assert.deepEqual(run(page([{readyState: 4}], {...noteState, noteId: 'other'})), {
+		ok: false,
+		code: 'identity_mismatch',
+	});
+	const context = page([{readyState: 4}], noteState);
+	vm.runInNewContext(source, context);
+	assert.equal('__fangoPageExtractArgs' in context, false);
+});

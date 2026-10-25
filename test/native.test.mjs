@@ -505,3 +505,52 @@ test('directory chooser activates itself and shutdown aborts its process and cle
 	assert.equal(controller.snapshot().choosingDirectory, false);
 	assert.equal(controller.snapshot().pendingDirectory, null);
 });
+
+test('page media reaches the core for resolve and start but never a snapshot or the state file', async (t) => {
+	const seen = [];
+	const gate = deferred();
+	const {controller, directory} = await fixture(t, {
+		core: {
+			resolveVideo: async (_input, settings) => {
+				seen.push(settings.pageMedia);
+				return metadata;
+			},
+			downloadVideo: async (_input, settings) => {
+				seen.push(settings.pageMedia);
+				await gate.promise;
+				return output(settings.outputDir);
+			},
+		},
+	});
+	const pageMedia = {
+		media: {
+			platform: 'xiaohongshu',
+			id: '6adb92b90000000031037a66',
+			formats: [{urls: ['https://sns-video.xhscdn.com/a.mp4?sign=SECRET']}],
+		},
+		userAgent: 'UA',
+	};
+	await controller.request('resolve', {
+		input: 'https://youtu.be/test-video',
+		requestId: 'r1',
+		pageMedia,
+	});
+	await controller.request('start', {
+		input: 'https://youtu.be/test-video',
+		taskId: 'job-page-media',
+		metadata,
+		pageMedia,
+	});
+	assert.doesNotMatch(JSON.stringify(controller.snapshot()), /SECRET|pageMedia/);
+	gate.resolve();
+	await controller.downloadPromise;
+	assert.deepEqual(seen, [pageMedia, pageMedia]);
+	assert.doesNotMatch(
+		await readFile(path.join(directory, 'state.json'), 'utf8'),
+		/SECRET|pageMedia/,
+	);
+	await assert.rejects(
+		controller.request('resolve', {input: 'https://youtu.be/x', requestId: 'r2', pageMedia: []}),
+		{code: 'invalid_request'},
+	);
+});

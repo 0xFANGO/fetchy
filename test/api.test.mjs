@@ -97,16 +97,33 @@ test('YouTube direct failure retries HLS once and reports the fallback', async (
 	assert.equal(calls.filter((args) => args.includes('--dump-single-json')).length, 2);
 });
 
-test('XHS missing browser dependency can fall back explicitly without exporting cookies', async (t) => {
+test('XHS and Douyin use yt-dlp unless the extension supplies page media', async (t) => {
 	const id = '6adb92b90000000031037a66';
 	const {options} = await fakeTools(t, {id});
-	const result = await resolveVideo('https://www.xiaohongshu.com/explore/' + id, {
-		...options,
-		egoBrowserPath: '/missing/ego-browser',
-	});
+	const url = 'https://www.xiaohongshu.com/explore/' + id;
+	const result = await resolveVideo(url, options);
 	assert.equal(result.engine, 'yt-dlp');
-	assert.equal(result.fallback, 'browser_dependency_missing');
-	assert.match(result.qualityScope, /匿名/);
+	const media = {
+		platform: 'xiaohongshu',
+		id,
+		title: 'from page',
+		formats: [
+			{
+				hasVideo: true,
+				hasAudio: true,
+				width: 720,
+				height: 1280,
+				urls: ['https://sns-video.xhscdn.com/a.mp4'],
+			},
+		],
+	};
+	const fromPage = await resolveVideo(url, {...options, pageMedia: {media}});
+	assert.equal(fromPage.engine, 'browser');
+	assert.equal(fromPage.title, 'from page');
+	assert.doesNotMatch(JSON.stringify(fromPage), /xhscdn/);
+	await assert.rejects(resolveVideo(url, {...options, engine: 'browser'}), {
+		code: 'invalid_options',
+	});
 });
 
 test('CLI help is available without external dependencies', async () => {

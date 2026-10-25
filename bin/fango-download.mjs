@@ -6,7 +6,7 @@ const HELP = `Fango Video Downloader — 先解析，再下载
 node bin/fango-download.mjs resolve '<视频链接>' [选项]
 node bin/fango-download.mjs download '<视频链接>' [选项]
 
---engine auto|yt-dlp|browser    默认 auto；小红书/抖音使用浏览器
+--engine auto|yt-dlp           默认 auto；命令行全部平台使用 yt-dlp
 --output <目录>                 默认 ./downloads
 --max-height <像素>             实际帧高度上限（竖屏1080×1920的高度为1920）
 --transport auto|hls           YouTube可显式选HLS
@@ -60,7 +60,6 @@ try {
 				error: {
 					code: known ? error.code : 'invalid_arguments',
 					message: known ? error.message : '参数或任务无效，请运行 --help。',
-					...(error.browserSpaceId ? {browserSpaceId: error.browserSpaceId} : {}),
 				},
 			},
 			null,

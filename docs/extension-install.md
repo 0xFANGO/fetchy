@@ -1,10 +1,10 @@
 # Fango 扩展安装与使用
 
-版本：0.2.0。首版实现环境为 macOS + Chromium Manifest V3；本次面向 Ego Lite。真实验收进度见 [扩展验证记录](extension-validation.md)，不能将离线测试等同于四个平台真实下载均通过。
+版本：0.2.0。首版实现环境为 macOS + Chromium Manifest V3；真实验证在 Ego Lite 上完成，Chrome 走同样的流程。真实验收进度见 [扩展验证记录](extension-validation.md)，不能将离线测试等同于四个平台真实下载均通过。
 
 ## 1. 安装依赖与构建
 
-需要 Node.js 22+、Python 3.10+、FFmpeg（含 ffprobe）。小红书/抖音使用已经安装并运行的 Ego Lite，命令 `ego-browser` 必须可用。
+需要 Node.js 22+、Python 3.10+、FFmpeg（含 ffprobe）。小红书/抖音不需要额外软件：扩展直接从你浏览器里的视频页读取媒体信息。
 
 在项目根目录运行：
 
@@ -13,16 +13,16 @@ python3 -m venv .venv
 .venv/bin/python -m pip install -r requirements.txt
 npm test
 npm run extension:build
-npm run native:install -- --browser ego
+npm run native:install -- --browser chrome
 ```
 
-随时可以运行 `npm run doctor` 查看哪些工具已找到、哪些缺失以及对应的安装提示。Node 运行时没有额外 npm 依赖，`npm install` 只安装格式化与 lint 工具。安装脚本记录当前 Node、yt-dlp、FFmpeg 和 Ego 命令的绝对路径及运行 PATH，因此从浏览器启动时不依赖终端初始化脚本。`missingDependencies` 应为空；如非空，安装相应依赖后重新执行安装命令。
+随时可以运行 `npm run doctor` 查看哪些工具已找到、哪些缺失以及对应的安装提示。Node 运行时没有额外 npm 依赖，`npm install` 只安装格式化与 lint 工具。安装脚本记录当前 Node、yt-dlp、FFmpeg 命令的绝对路径及运行 PATH，因此从浏览器启动时不依赖终端初始化脚本。`missingDependencies` 应为空；如非空，安装相应依赖后重新执行安装命令。
 
-`--browser ego` 会同时注册 Ego 产品目录和 Chrome 共享目录，兼容本次实测的 Ego Lite 查找路径。Chrome 可使用 `--browser chrome` 只注册共享目录；`--browser all` 同样注册两处。提供 Chrome 注册选项不代表已完成 Chrome 实测。Windows/Linux 不提供首版安装支持。
+`--browser chrome` 只注册 Chrome 的共享目录；Ego Lite 用户使用 `--browser ego`，它会同时注册 Ego 产品目录和 Chrome 共享目录，兼容实测到的 Ego Lite 查找路径；`--browser all` 同样注册两处。提供 Chrome 注册选项不代表已完成 Chrome 实测。Windows/Linux 不提供首版安装支持。
 
 ## 2. 导入扩展
 
-1. 在 Ego Lite 打开 `chrome://extensions/`。
+1. 在浏览器打开 `chrome://extensions/`。
 2. 打开开发者模式，点击「Load unpacked / 加载已解压的扩展程序」。
 3. 选择项目中的 **`dist/extension`** 文件夹。不要选择项目根目录或源码 `extension` 文件夹。
 4. 在扩展菜单中将「Fango 视频下载」固定到工具栏。
@@ -51,21 +51,22 @@ npm run native:install -- --browser ego
 
 ## 4. 会话与可用性
 
-| 平台          | 实际执行路径                                         | 会话前提                                                                     |
-| ------------- | ---------------------------------------------------- | ---------------------------------------------------------------------------- |
-| YouTube / B站 | 本地 yt-dlp + FFmpeg/ffprobe                         | 当前默认匿名路径；扩展不导出浏览器 Cookie                                    |
-| 小红书 / 抖音 | Ego Browser 引擎在新任务空间打开目标页并提取匹配视频 | Ego Lite 已运行，核心实际打开的页面能够访问目标；遇到登录/验证须在该页面处理 |
+| 平台          | 实际执行路径                                                                          | 会话前提                                                      |
+| ------------- | ------------------------------------------------------------------------------------- | ------------------------------------------------------------- |
+| YouTube / B站 | 本地 yt-dlp + FFmpeg/ffprobe                                                          | 当前默认匿名路径；扩展不导出浏览器 Cookie                     |
+| 小红书 / 抖音 | 扩展把提取器注入你浏览器里的视频页，取回目标视频的媒体地址；本地组件从 CDN 下载并校验 | 当前浏览器能正常播放该视频；遇到登录/验证在浏览器里完成后重试 |
 
-插件传入的是具体目标 URL。核心在识别时和下载重新解析时分别创建任务空间，使用 `ego-browser` 的默认浏览器上下文，未显式指定 profile。插件不会把当前标签页、profile 或 Cookie 传给核心；即使插件安装在 Ego Lite，也不能假定核心任务页面与当前标签页拥有完全相同的登录状态。Chrome 的登录态同样不能直接用于 Ego 路径。
+识别和下载时扩展各读取一次页面：如果某个标签页正打开这个视频，直接在那个标签页里读取；否则扩展在后台打开一个不激活的标签页加载目标页（抖音使用 `jingxuan?modal_id=<id>` 页面，因为 `/video/<id>` 页面不含所需的视频详情），读取完成后关闭。读取只取回目标视频的标题、封面和媒体地址，不读取 Cookie，也不会把其他页面内容传给本地组件。本地组件再次校验媒体身份与 CDN 域名后才会下载。
 
-正常解析完成后，核心关闭本次任务页面；发生需要处理的页面错误时会保留可接管的 Ego 页面。请在**本地组件实际打开的目标视频页面**完成登录或验证，再返回插件重试。仅在其他窗口或 profile 登录可能不起作用。无需填写空间编号，也不会自动绕过验证。
+请在**当前浏览器**完成登录或验证后重试。短链（`v.douyin.com`、`xhslink.com`）会先在后台标签页中展开。
 
 支持单个已完成视频；不支持合集、直播、图文、DRM、批量下载、清晰度选择和去水印。原有核心输出格式边界保持不变，详见 [实现边界](limitations.md)。
 
 ## 5. 连接与恢复
 
-- **无法连接本地组件**：确认 `native:install -- --browser ego` 已成功，安装输出包含上述两个注册目录，重新打开弹窗并点击「重新连接」。若曾只手动注册 Ego 产品目录，请重新运行安装命令补齐共享目录。
-- **缺依赖**：按提示安装 Node、yt-dlp、FFmpeg/ffprobe 或 Ego，再运行注册命令。
+- **无法连接本地组件**：确认 `native:install -- --browser chrome`（Ego Lite 为 `--browser ego`）已成功，安装输出包含上述两个注册目录，重新打开弹窗并点击「重新连接」。若曾只手动注册 Ego 产品目录，请重新运行安装命令补齐共享目录。
+- **缺依赖**：按提示安装 Node、yt-dlp、FFmpeg/ffprobe，再运行注册命令。
+- **页面还没有加载出这个视频**：等视频可以播放后再点识别或下载；后台标签页最多等待约 20 秒。
 - **任务暂时断开**：先重连，插件会查询稳定任务 ID；不会自动重复发起下载。
 - **电脑/本地进程重启**：无法恢复的任务显示中断；没有断点续传。浏览器仍在同一会话时保留原目标以重试；整个浏览器会话结束后，为避免长期保存访问凭据，可能需要重新粘贴原链接。
 - **目录或磁盘错误**：重新选择可写目录或释放空间，再重试。不会静默改存其他目录。
@@ -81,7 +82,7 @@ npm run native:install -- --browser ego
 
 ## 7. 数据与权限
 
-扩展只申请 `activeTab`、`storage`、`nativeMessaging`。不注入任意网页脚本，不申请全站 Cookie 或下载权限。当前输入、临时封面及任务上下文只在本机内存和 `chrome.storage.session` 中保留；目录和脱敏任务结果写入权限受限的本地状态文件。原始分享输入、token、签名媒体 URL 和原始标题字段不写入持久任务记录；成功文件路径包含清理后的标题文件名。命名时也去除标题中嵌入的 URL 与可识别的访问凭据赋值。
+扩展申请 `activeTab`、`storage`、`nativeMessaging`、`scripting`，以及 `xiaohongshu.com`、`douyin.com`、`iesdouyin.com` 的站点权限。脚本只注入这三个站点的视频页，且只执行仓库内的 `src/page-extract.mjs`；不申请 Cookie 或下载权限。当前输入、临时封面及任务上下文只在本机内存和 `chrome.storage.session` 中保留；目录和脱敏任务结果写入权限受限的本地状态文件。原始分享输入、token、签名媒体 URL 和原始标题字段不写入持久任务记录；成功文件路径包含清理后的标题文件名。命名时也去除标题中嵌入的 URL 与可识别的访问凭据赋值。
 
 host 仅允许注册的扩展来源。文件定位只能操作记录中的成功输出；目录保存只能使用当前/默认/系统选择器选中的路径。所有页面文本按普通文本渲染，执行进程使用参数数组，不将 URL 或标题拼成 shell 命令。
 

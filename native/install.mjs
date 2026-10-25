@@ -28,7 +28,7 @@ const quote = (value) => `'${String(value).replaceAll("'", "'\\''")}'`;
 try {
 	if (args.includes('--help')) {
 		console.log(
-			'用法：node native/install.mjs [--browser ego|chrome|all] [--extension-id <id>] [--manifest-dir <绝对路径>]\nmacOS 本地开发安装；默认同时注册 Ego Lite 和 Chrome。',
+			'用法：node native/install.mjs [--browser ego|chrome|all] [--extension-id <id>] [--manifest-dir <绝对路径>]\nmacOS 本地开发安装；默认同时注册 Chrome 和 Ego Lite。',
 		);
 		process.exit(0);
 	}
@@ -66,7 +66,6 @@ try {
 	}
 	engineOptions.ffmpegLocation = await executable('ffmpeg');
 	engineOptions.ffprobePath = await executable('ffprobe');
-	engineOptions.egoBrowserPath = await executable('ego-browser');
 	for (const name of Object.keys(engineOptions))
 		if (!engineOptions[name]) delete engineOptions[name];
 	await writeJson(path.join(directory, 'runtime.json'), {
@@ -105,12 +104,9 @@ try {
 				hostName: 'com.fango.video_downloader',
 				manifestDirectories: directories,
 				extensionDirectory: path.join(root, 'dist', 'extension'),
-				missingDependencies: [
-					'ytDlpPath',
-					'ffmpegLocation',
-					'ffprobePath',
-					'egoBrowserPath',
-				].filter((key) => !engineOptions[key]),
+				missingDependencies: ['ytDlpPath', 'ffmpegLocation', 'ffprobePath'].filter(
+					(key) => !engineOptions[key],
+				),
 			},
 			null,
 			2,

@@ -4,6 +4,7 @@ import {chmod, mkdtemp, readFile, readdir, rm, writeFile} from 'node:fs/promises
 import path from 'node:path';
 import {tmpdir} from 'node:os';
 import {
+	checkPageMedia,
 	downloadWithBrowser,
 	publicBrowserMetadata,
 	resolveWithBrowser,
@@ -135,13 +136,12 @@ test('invalid browser options and unsupported platforms fail before launching a 
 	await assert.rejects(resolveWithBrowser(target, {timeoutMs: Infinity}), {
 		code: 'invalid_options',
 	});
-	await assert.rejects(resolveWithBrowser(target, {browserSpaceId: 0}), {code: 'invalid_options'});
 	for (const bad of [
 		{maxBytes: NaN},
 		{maxBytes: Infinity},
 		{maxBytes: -1},
 		{outputDir: 12},
-		{egoBrowserPath: ''},
+		{ffprobePath: ''},
 		{transport: 'hls'},
 		{cookiesFile: 'cookies.txt'},
 	]) {
@@ -150,6 +150,51 @@ test('invalid browser options and unsupported platforms fail before launching a 
 	await assert.rejects(resolveWithBrowser({...target, platform: 'youtube'}), {
 		code: 'unsupported_platform',
 	});
+	await assert.rejects(resolveWithBrowser(target), {code: 'invalid_options'});
+});
+
+test('page media from the extension is re-checked against the target before use', () => {
+	const target = {platform: 'xiaohongshu', id: '6adb92b90000000031037a66'};
+	const format = {...base, urls: ['https://sns-video.xhscdn.com/a.mp4?sign=1']};
+	const media = {platform: 'xiaohongshu', id: target.id, title: 't', formats: [format]};
+	assert.throws(() => checkPageMedia(null, target), {code: 'invalid_options'});
+	assert.throws(() => checkPageMedia({media: {...media, id: 'other'}}, target), {
+		code: 'identity_mismatch',
+	});
+	assert.throws(() => checkPageMedia({media: {...media, platform: 'douyin'}}, target), {
+		code: 'identity_mismatch',
+	});
+	assert.throws(
+		() =>
+			checkPageMedia(
+				{media: {...media, formats: [{...format, urls: ['https://evil.test/a.mp4']}]}},
+				target,
+			),
+		{code: 'no_formats'},
+	);
+	const checked = checkPageMedia(
+		{
+			media: {
+				...media,
+				title: 'x'.repeat(2000),
+				durationSeconds: -1,
+				thumbnailUrl: 'https://sns-webpic-qc.xhscdn.com/c.webp',
+				formats: [
+					{...format, urls: ['https://v3.douyinvod.com/wrong-platform.mp4', format.urls[0]]},
+				],
+			},
+			userAgent: 'UA',
+		},
+		target,
+	);
+	assert.equal(checked.media.title.length, 1000);
+	assert.equal(checked.media.durationSeconds, null);
+	assert.deepEqual(checked.media.formats[0].urls, [format.urls[0]]);
+	assert.equal(checked.userAgent, 'UA');
+	assert.equal(
+		publicBrowserMetadata(checked.media).thumbnailUrl,
+		'https://sns-webpic-qc.xhscdn.com/c.webp',
+	);
 });
 
 test('browser engines publish the resolved video title only after media validation', async (t) => {
@@ -175,21 +220,7 @@ test('browser engines publish the resolved video title only after media validati
 			durationSeconds: 12,
 			formats: [{...base, urls: [url], size: 15}],
 		};
-		const egoBrowserPath = path.join(root, `fake-${platform}.mjs`),
-			ffprobePath = path.join(root, 'fake-probe.mjs');
-		await writeFile(
-			egoBrowserPath,
-			[
-				'#!/usr/bin/env node',
-				"import { readFile, writeFile } from 'node:fs/promises';",
-				'const scriptUrl = JSON.parse(process.argv.at(-1).match(/await import\\((.+)\\)/)[1]);',
-				'const source = await readFile(new URL(scriptUrl), "utf8");',
-				'const resultFile = JSON.parse(source.match(/const resultFile=(.+);/)[1]);',
-				'await writeFile(resultFile, JSON.stringify(' +
-					JSON.stringify({ok: true, media, userAgent: 'test'}) +
-					'));',
-			].join('\n'),
-		);
+		const ffprobePath = path.join(root, 'fake-probe.mjs');
 		await writeFile(
 			ffprobePath,
 			'#!/usr/bin/env node\nconsole.log(' +
@@ -204,7 +235,6 @@ test('browser engines publish the resolved video title only after media validati
 				) +
 				');\n',
 		);
-		await chmod(egoBrowserPath, 0o755);
 		await chmod(ffprobePath, 0o755);
 		const fetchMock = t.mock.method(
 			globalThis,
@@ -215,7 +245,7 @@ test('browser engines publish the resolved video title only after media validati
 				}),
 		);
 		const result = await downloadWithBrowser(target, {
-			egoBrowserPath,
+			pageMedia: {media, userAgent: 'test'},
 			ffprobePath,
 			outputDir: path.join(root, platform),
 			onProgress: (event) => stages.push(event),
@@ -242,8 +272,7 @@ test(
 	async (t) => {
 		const root = await mkdtemp(path.join(tmpdir(), 'fango-browser-storage-'));
 		t.after(() => rm(root, {recursive: true, force: true}));
-		const egoBrowserPath = path.join(root, 'fake-ego.mjs'),
-			outputDir = path.join(root, 'output');
+		const outputDir = path.join(root, 'output');
 		const target = {
 			platform: 'xiaohongshu',
 			id: '6adb92b90000000031037a66',
@@ -255,27 +284,12 @@ test(
 			durationSeconds: 1,
 			formats: [{...base, urls: ['https://sns-video.xhscdn.com/media.mp4']}],
 		};
-		// Implements only the extraction receipt contract; no real browser is launched.
-		await writeFile(
-			egoBrowserPath,
-			[
-				'#!/usr/bin/env node',
-				"import { readFile, writeFile } from 'node:fs/promises';",
-				'const scriptUrl = JSON.parse(process.argv.at(-1).match(/await import\\((.+)\\)/)[1]);',
-				'const source = await readFile(new URL(scriptUrl), "utf8");',
-				'const resultFile = JSON.parse(source.match(/const resultFile=(.+);/)[1]);',
-				'await writeFile(resultFile, JSON.stringify(' +
-					JSON.stringify({ok: true, media, userAgent: 'test'}) +
-					'));',
-			].join('\n'),
-		);
-		await chmod(egoBrowserPath, 0o755);
 		t.mock.method(globalThis, 'fetch', async () => {
 			const task = (await readdir(outputDir)).find((name) => name.startsWith('video-'));
 			await chmod(path.join(outputDir, task), 0o555);
 			return new Response('test-media-data', {headers: {'content-type': 'video/mp4'}});
 		});
-		await assert.rejects(downloadWithBrowser(target, {egoBrowserPath, outputDir}), (error) => {
+		await assert.rejects(downloadWithBrowser(target, {pageMedia: {media}, outputDir}), (error) => {
 			assert.equal(error.code, 'directory_unwritable');
 			assert.doesNotMatch(error.message, /sns-video|\/output|EACCES/);
 			return true;

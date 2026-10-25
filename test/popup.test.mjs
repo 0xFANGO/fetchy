@@ -190,10 +190,10 @@ test('starting reservation disables buttons while a native start response is pen
 
 test('dependency repair is visible without preventing unrelated platform downloads', () => {
 	const view = deriveView({
-		connection: {...connected, dependencies: {egoBrowser: {available: false}}},
+		connection: {...connected, dependencies: {ffmpeg: {available: false}}},
 		context,
 	});
-	assert.match(view.connectionNotice, /Ego Lite/);
+	assert.match(view.connectionNotice, /FFmpeg/);
 	assert.equal(view.showConnectionHelp, true);
 	assert.equal(view.primary.action, 'start');
 	assert.equal(view.primary.disabled, false);

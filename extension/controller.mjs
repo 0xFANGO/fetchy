@@ -1,6 +1,16 @@
 import {normalizeUrl} from '../src/urls.mjs';
 
 export const activeTask = (task) => ['running', 'cancelling'].includes(task?.status);
+const PAGE_PLATFORMS = ['xiaohongshu', 'douyin'];
+// Only Xiaohongshu and Douyin need media read from a page; other platforms must
+// not pay an extra async hop, which would reorder in-flight resolve requests.
+export function pageMediaNeeded(input) {
+	try {
+		return PAGE_PLATFORMS.includes(normalizeUrl(input).platform);
+	} catch {
+		return false;
+	}
+}
 export const visibleTask = (task) => activeTask(task) || task?.unread;
 export const initialState = () => ({
 	connection: {status: 'connecting'},
@@ -22,6 +32,10 @@ const messages = {
 	native_unavailable: '无法连接本地组件，请按安装指引完成安装后重试。',
 	timeout: '识别或下载超时，请重试。',
 	cancelled: '操作已取消。',
+	browser_state_missing: '页面还没有加载出这个视频，请等它可以播放后重试。',
+	browser_unavailable: '无法读取视频页面，请重新打开视频页后重试。',
+	identity_mismatch: '页面内容与链接不一致，请重新打开目标视频。',
+	no_formats: '页面没有提供可下载的视频，请确认这是单个视频内容。',
 };
 export function displayError(error) {
 	const code = typeof error?.code === 'string' ? error.code : 'unknown_error';
@@ -40,13 +54,23 @@ export class Controller {
 	constructor({
 		rpc,
 		readActiveTab,
+		collectPageMedia = async () => undefined,
 		saveSession = async () => {},
 		emit = () => {},
 		openHelp = async () => {},
 		uuid = () => crypto.randomUUID(),
 		debounceMs = 450,
 	}) {
-		Object.assign(this, {rpc, readActiveTab, saveSession, emit, openHelp, uuid, debounceMs});
+		Object.assign(this, {
+			rpc,
+			readActiveTab,
+			collectPageMedia,
+			saveSession,
+			emit,
+			openHelp,
+			uuid,
+			debounceMs,
+		});
 		this.state = initialState();
 		this.generation = 0;
 		this.resolveId = null;
@@ -238,7 +262,12 @@ export class Controller {
 		this.state.context.error = null;
 		this.publish();
 		try {
-			const metadata = await this.rpc('resolve', {input, requestId}, 90000);
+			let pageMedia;
+			if (pageMediaNeeded(input)) {
+				pageMedia = await this.collectPageMedia(input);
+				if (generation !== this.generation || input !== this.state.context.input) return;
+			}
+			const metadata = await this.rpc('resolve', {input, requestId, pageMedia}, 90000);
 			if (generation !== this.generation || input !== this.state.context.input) return;
 			this.state.context.status = 'ready';
 			this.state.context.metadata = metadata;
@@ -278,6 +307,16 @@ export class Controller {
 			return;
 		this.starting = true;
 		this.invalidate();
+		this.state.notice = '正在读取页面视频信息…';
+		this.publish();
+		let pageMedia;
+		try {
+			if (pageMediaNeeded(input)) pageMedia = await this.collectPageMedia(input);
+		} catch (error) {
+			this.starting = false;
+			this.state.notice = displayError(error).message;
+			return this.publish();
+		}
 		const taskId = this.uuid();
 		this.pendingStart = {taskId, input, metadata};
 		this.state.notice = '正在连接下载任务…';
@@ -286,7 +325,7 @@ export class Controller {
 		try {
 			await this.persist;
 			sent = true;
-			this.receiveNative(await this.rpc('start', {taskId, input, metadata}));
+			this.receiveNative(await this.rpc('start', {taskId, input, metadata, pageMedia}));
 			this.pendingStart = null;
 		} catch (error) {
 			this.state.notice = null;

@@ -26,24 +26,23 @@ One toolbar button, one command, or one function call. Everything runs locally.
 
 ## Supported platforms
 
-| Platform    | Accepted input                                                       | Engine      | Notes                                                         |
-| ----------- | -------------------------------------------------------------------- | ----------- | ------------------------------------------------------------- |
-| YouTube     | `youtube.com/watch`, `youtu.be`, Shorts                              | yt-dlp      | Prefers native H.264/AAC, falls back to HLS on network errors |
-| Bilibili    | `bilibili.com/video/BV…`, `av…`, multi-part `?p=`                    | yt-dlp      | DASH video and audio merged into MP4                          |
-| Xiaohongshu | Full share link with `xsec_token`, or share text containing one link | Ego Browser | Reads the note page in your logged-in browser session         |
-| Douyin      | `v.douyin.com` short links, `modal_id` links, detail pages           | Ego Browser | Short links are resolved to the canonical video ID            |
+| Platform    | Accepted input                                                       | Engine              | Notes                                                                              |
+| ----------- | -------------------------------------------------------------------- | ------------------- | ---------------------------------------------------------------------------------- |
+| YouTube     | `youtube.com/watch`, `youtu.be`, Shorts                              | yt-dlp              | Prefers native H.264/AAC, falls back to HLS on network errors                      |
+| Bilibili    | `bilibili.com/video/BV…`, `av…`, multi-part `?p=`                    | yt-dlp              | DASH video and audio merged into MP4                                               |
+| Xiaohongshu | Full share link with `xsec_token`, or share text containing one link | In-page (extension) | Media is read from the note page in your own browser; the CLI falls back to yt-dlp |
+| Douyin      | `v.douyin.com` short links, `modal_id` links, detail pages           | In-page (extension) | Short links are expanded first; the CLI falls back to yt-dlp                       |
 
 Single, finished videos only. Playlists, live streams, image notes, DRM content and watermark removal are out of scope.
 See [docs/limitations.md](docs/limitations.md) for the full list.
 
 ## Requirements
 
-| Tool                        | Needed for                    | macOS install                                                                  |
-| --------------------------- | ----------------------------- | ------------------------------------------------------------------------------ |
-| Node.js 22+                 | everything                    | `brew install node`                                                            |
-| FFmpeg + ffprobe            | merging, remuxing, validation | `brew install ffmpeg`                                                          |
-| yt-dlp (pinned version)     | YouTube, Bilibili             | `python3 -m venv .venv && .venv/bin/python -m pip install -r requirements.txt` |
-| Ego Browser (`ego-browser`) | Xiaohongshu, Douyin only      | optional, see [docs/extension-install.md](docs/extension-install.md)           |
+| Tool                    | Needed for                    | macOS install                                                                  |
+| ----------------------- | ----------------------------- | ------------------------------------------------------------------------------ |
+| Node.js 22+             | everything                    | `brew install node`                                                            |
+| FFmpeg + ffprobe        | merging, remuxing, validation | `brew install ffmpeg`                                                          |
+| yt-dlp (pinned version) | YouTube, Bilibili; every platform on the CLI | `python3 -m venv .venv && .venv/bin/python -m pip install -r requirements.txt` |
 
 Run `npm run doctor` at any time to see what is found and what is missing.
 
@@ -68,7 +67,7 @@ The CLI prints a JSON result with the absolute file path, size and validation de
 
 ```sh
 npm run extension:build                 # writes dist/extension
-npm run native:install -- --browser ego # registers the native host (use --browser chrome for Chrome)
+npm run native:install -- --browser chrome # registers the native host (--browser ego for Ego Lite)
 ```
 
 1. Open `chrome://extensions/`, enable Developer mode, click **Load unpacked** and pick `dist/extension`.
@@ -76,9 +75,10 @@ npm run native:install -- --browser ego # registers the native host (use --brows
 3. Open a video page and click the icon, or paste a link into the popup.
 
 Downloads go to `~/Downloads/Fango` by default; change it from the popup's settings view.
-The extension only requests `activeTab`, `storage` and `nativeMessaging`.
 
-Verified so far on macOS with Ego Lite. Chrome registration is available but not yet verified end to end.
+For Xiaohongshu and Douyin the extension reads the video's playback data from the page itself: an open tab on that video is used directly, otherwise a background tab is opened and closed again. Your logged-in session is used in place, nothing is exported. Permissions requested: `activeTab`, `storage`, `nativeMessaging`, `scripting`, plus host access to `xiaohongshu.com` and `douyin.com`.
+
+Verified so far on macOS with Ego Lite (a Chromium browser). Chrome registration is available but not yet verified end to end.
 Full installation notes, session requirements and troubleshooting: [docs/extension-install.md](docs/extension-install.md).
 
 ## CLI
@@ -88,14 +88,14 @@ node bin/fango-download.mjs resolve  <url>   # inspect formats without downloadi
 node bin/fango-download.mjs download <url>   # download
 ```
 
-| Option                           | Default       | Description                                                                  |
-| -------------------------------- | ------------- | ---------------------------------------------------------------------------- |
-| `--output <dir>`                 | `./downloads` | Target directory; each download gets its own `video-*` subfolder             |
-| `--engine auto\|yt-dlp\|browser` | `auto`        | `auto` routes Xiaohongshu/Douyin to the browser engine, the rest to yt-dlp   |
-| `--max-height <px>`              | unlimited     | Upper bound on the actual frame height (a 1080×1920 portrait video is 1920)  |
-| `--transport auto\|hls`          | `auto`        | Force HLS on YouTube                                                         |
-| `--timeout-ms <ms>`              | 30 min        | Whole-task timeout                                                           |
-| `--cookies-file <file>`          | none          | Netscape cookie file for the yt-dlp engine; a private temporary copy is used |
+| Option                  | Default       | Description                                                                                     |
+| ----------------------- | ------------- | ----------------------------------------------------------------------------------------------- |
+| `--output <dir>`        | `./downloads` | Target directory; each download gets its own `video-*` subfolder                                |
+| `--engine auto\|yt-dlp` | `auto`        | The CLI uses yt-dlp for every platform; the browser engine is only reachable from the extension |
+| `--max-height <px>`     | unlimited     | Upper bound on the actual frame height (a 1080×1920 portrait video is 1920)                     |
+| `--transport auto\|hls` | `auto`        | Force HLS on YouTube                                                                            |
+| `--timeout-ms <ms>`     | 30 min        | Whole-task timeout                                                                              |
+| `--cookies-file <file>` | none          | Netscape cookie file for the yt-dlp engine; a private temporary copy is used                    |
 
 `npm run download -- <url>` and `npm run resolve -- <url>` are shortcuts for the same commands.
 
@@ -117,7 +117,7 @@ const result = await downloadVideo(url, {
 console.log(result.filepath, result.validation);
 ```
 
-Options: `outputDir`, `engine`, `maxHeight`, `transport`, `timeoutMs`, `signal` (an `AbortSignal`), `onProgress`, `cookiesFile`, plus tool paths `ytDlpPath`, `ffmpegLocation`, `ffprobePath`, `egoBrowserPath`.
+Options: `outputDir`, `engine`, `maxHeight`, `transport`, `timeoutMs`, `signal` (an `AbortSignal`), `onProgress`, `cookiesFile`, plus tool paths `ytDlpPath`, `ffmpegLocation`, `ffprobePath`. `pageMedia` carries the output of `extractPageMedia` from a Xiaohongshu or Douyin page and switches those platforms to the browser engine; the extension fills it in automatically.
 
 `resolveVideo` returns displayable metadata (`platform`, `id`, `title`, `thumbnailUrl`, `durationSeconds`, `formats`) and never exposes signed media URLs.
 `downloadVideo` re-resolves the link, downloads, validates and returns `{filepath, bytes, validation, conversion, …}`.
@@ -128,10 +128,10 @@ Failures throw an `EngineError` with a stable `code` such as `invalid_url`, `uns
 ```
 extension/   Manifest V3 popup + service worker   ─┐
 bin/         CLI                                   ├─▶ src/index.mjs ─▶ yt-dlp engine (yt-dlp + FFmpeg)
-native/      Native Messaging host + daemon       ─┘                  └─▶ browser engine (Ego Browser page extraction)
+native/      Native Messaging host + daemon       ─┘                  └─▶ browser engine (media read from the page by the extension)
 ```
 
-The popup is only a view. A native host hands each task to a standalone daemon that owns the download, so closing the popup, rebuilding the service worker or dropping the port never cancels a transfer. Persisted task records contain no raw inputs, tokens or signed URLs.
+For Xiaohongshu and Douyin the service worker injects `src/page-extract.mjs` into the video page, which returns only the target video's title, cover and signed media URLs; the native host downloads from those URLs and validates the file. The popup is only a view. A native host hands each task to a standalone daemon that owns the download, so closing the popup, rebuilding the service worker or dropping the port never cancels a transfer. Persisted task records contain no raw inputs, tokens or signed URLs.
 
 ## Development
 

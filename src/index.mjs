@@ -44,10 +44,13 @@ async function execute(action, input, options = {}) {
 	try {
 		const target = await resolveTarget(input, options);
 		options.timeoutMs = Math.max(1, timeoutMs - (Date.now() - started));
+		// Xiaohongshu and Douyin use the browser engine only when the extension
+		// supplies media it extracted from the user's own tab; the CLI and plain
+		// API calls fall back to yt-dlp's anonymous extractors.
 		const engine =
 			options.engine && options.engine !== 'auto'
 				? options.engine
-				: ['xiaohongshu', 'douyin'].includes(target.platform)
+				: options.pageMedia && ['xiaohongshu', 'douyin'].includes(target.platform)
 					? 'browser'
 					: 'yt-dlp';
 		const fn =
@@ -61,21 +64,6 @@ async function execute(action, input, options = {}) {
 		try {
 			return {...(await fn(target, options)), startTimeSeconds: target.startTimeSeconds};
 		} catch (error) {
-			if (
-				(options.engine ?? 'auto') === 'auto' &&
-				target.platform === 'xiaohongshu' &&
-				engine === 'browser' &&
-				error.code === 'dependency_missing' &&
-				error.dependency === 'ego-browser'
-			) {
-				const fallback = action === 'resolve' ? resolveWithYtDlp : downloadWithYtDlp;
-				return {
-					...(await fallback(target, options)),
-					fallback: 'browser_dependency_missing',
-					qualityScope: '匿名网页可见格式，可能少于登录后的浏览器页面',
-					startTimeSeconds: target.startTimeSeconds,
-				};
-			}
 			if (
 				action === 'download' &&
 				target.platform === 'youtube' &&

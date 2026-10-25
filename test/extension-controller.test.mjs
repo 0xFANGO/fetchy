@@ -301,3 +301,28 @@ test('session persistence failure releases startup lock without sending a downlo
 	assert.equal(controller.starting, false);
 	assert.equal(controller.pendingStart, null);
 });
+
+test('page media collected from the tab travels with resolve and start; collection errors stay local', async () => {
+	const X = 'https://www.xiaohongshu.com/explore/6adb92b90000000031037a66';
+	const pageMedia = {media: {platform: 'xiaohongshu', id: '6adb92b90000000031037a66'}};
+	let fail = false;
+	const {controller, calls} = harness({
+		readActiveTab: async () => ({id: 1, url: X}),
+		collectPageMedia: async (input) => {
+			if (fail) throw {code: 'browser_state_missing'};
+			return input === X ? pageMedia : undefined;
+		},
+	});
+	await controller.initialize();
+	assert.equal(controller.state.context.status, 'ready');
+	assert.deepEqual(calls[0].params.pageMedia, pageMedia);
+	await controller.start();
+	assert.deepEqual(calls.at(-1).params.pageMedia, pageMedia);
+	assert.equal(calls.at(-1).method, 'start');
+	fail = true;
+	controller.state.task = null;
+	await controller.start();
+	assert.equal(calls.at(-1).method, 'start');
+	assert.match(controller.state.notice, /页面还没有加载出/);
+	assert.equal(controller.state.starting, false);
+});

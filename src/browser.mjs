@@ -1,14 +1,10 @@
-import {mkdir, mkdtemp, writeFile, readFile, rm, stat} from 'node:fs/promises';
+import {mkdir, mkdtemp, rm, stat} from 'node:fs/promises';
 import {publishVideoFile} from './filenames.mjs';
 import {createWriteStream} from 'node:fs';
-import {tmpdir} from 'node:os';
 import path from 'node:path';
-import {pathToFileURL} from 'node:url';
-import {randomUUID} from 'node:crypto';
 import {Readable, Transform} from 'node:stream';
 import {pipeline} from 'node:stream/promises';
 import {EngineError, fileWriteError, runProcess} from './process.mjs';
-import {extractPageMedia} from './page-extract.mjs';
 import {publicThumbnailUrl} from './thumbnails.mjs';
 
 function emit(options, stage, extra = {}) {
@@ -32,11 +28,6 @@ function check(options) {
 	)
 		throw new EngineError('invalid_options', 'timeoutMs 必须是有效的正整数。');
 	if (
-		options.browserSpaceId !== undefined &&
-		(!Number.isSafeInteger(options.browserSpaceId) || options.browserSpaceId < 1)
-	)
-		throw new EngineError('invalid_options', 'browserSpaceId 必须是有效任务空间编号。');
-	if (
 		options.maxBytes !== undefined &&
 		(!Number.isSafeInteger(options.maxBytes) || options.maxBytes < 1)
 	)
@@ -51,7 +42,7 @@ function check(options) {
 		);
 	if (options.cookiesFile !== undefined)
 		throw new EngineError('invalid_options', 'cookiesFile 仅可用于 yt-dlp 引擎。');
-	for (const key of ['outputDir', 'egoBrowserPath', 'ffprobePath'])
+	for (const key of ['outputDir', 'ffprobePath'])
 		if (
 			options[key] !== undefined &&
 			(typeof options[key] !== 'string' || !options[key] || options[key].includes('\0'))
@@ -123,85 +114,77 @@ export function selectBrowserFormat(formats, {maxHeight} = {}) {
 	return selected[0];
 }
 
-async function extract(target, options) {
+const PAGE_PLATFORMS = ['xiaohongshu', 'douyin'];
+const positive = (value) =>
+	typeof value === 'number' && Number.isFinite(value) && value > 0 ? value : null;
+const bounded = (value, max) => (typeof value === 'string' && value ? value.slice(0, max) : null);
+
+/**
+ * The browser engine never opens pages itself. The extension runs
+ * extractPageMedia inside the user's own tab and hands the result over as
+ * options.pageMedia = {media, userAgent}. Only the fields below are trusted;
+ * everything is re-checked against the resolved target before any download.
+ */
+export function checkPageMedia(pageMedia, target) {
+	if (!pageMedia || typeof pageMedia !== 'object' || Array.isArray(pageMedia))
+		throw new EngineError('invalid_options', 'browser 引擎需要扩展提供的页面媒体信息。');
+	const {media, userAgent} = pageMedia;
+	if (!media || typeof media !== 'object' || Array.isArray(media))
+		throw new EngineError('invalid_options', '页面媒体信息格式无效。');
+	if (media.platform !== target.platform || media.id !== target.id)
+		throw new EngineError('identity_mismatch', '页面视频与输入链接不一致。');
+	const formats = (Array.isArray(media.formats) ? media.formats.slice(0, 128) : [])
+		.filter((item) => item && typeof item === 'object' && Array.isArray(item.urls))
+		.map((item, index) => {
+			const urls = [];
+			for (const raw of item.urls.slice(0, 8)) {
+				try {
+					urls.push(validateMediaUrl(raw, target.platform));
+				} catch {
+					/* unverified CDN hosts are dropped, never fetched */
+				}
+			}
+			return {
+				id: bounded(item.id, 64) ?? `format-${index}`,
+				ext: bounded(item.ext, 16) ?? 'mp4',
+				protocol: 'https',
+				width: positive(item.width),
+				height: positive(item.height),
+				fps: positive(item.fps),
+				vcodec: bounded(item.vcodec, 32),
+				acodec: bounded(item.acodec, 32),
+				bitrate: positive(item.bitrate),
+				size: positive(item.size),
+				hasVideo: item.hasVideo === true,
+				hasAudio: item.hasAudio === true,
+				urls,
+			};
+		})
+		.filter((item) => item.urls.length);
+	if (!formats.length) throw new EngineError('no_formats', '页面没有提供可下载的视频地址。');
+	return {
+		media: {
+			platform: target.platform,
+			id: target.id,
+			title: bounded(media.title, 1000) ?? target.id,
+			thumbnailUrl: bounded(media.thumbnailUrl, 8192),
+			durationSeconds: positive(media.durationSeconds),
+			formats,
+		},
+		userAgent: bounded(userAgent, 512),
+	};
+}
+
+function pageMediaFor(target, options) {
 	check(options);
-	if (!['xiaohongshu', 'douyin'].includes(target.platform))
+	if (!PAGE_PLATFORMS.includes(target.platform))
 		throw new EngineError('unsupported_platform', '浏览器引擎当前仅支持小红书和抖音。');
 	emit(options, 'resolving');
-	const dir = await mkdtemp(path.join(tmpdir(), 'fango-browser-'));
-	const resultFile = path.join(dir, 'result.json');
-	const scriptFile = path.join(dir, 'extract.mjs');
-	// Only scoped media data crosses the browser boundary; never cookies or whole page state.
-	const source = `const fs=await import('node:fs/promises');
-const resultFile=${JSON.stringify(resultFile)};
-let task;
-try {
- task=await taskSpace(${JSON.stringify(options.browserSpaceId ?? `fango-download-${randomUUID()}`)});
- const page=task.page('p1');
- await page.goto(${JSON.stringify(target.platform === 'douyin' ? `https://www.douyin.com/jingxuan?modal_id=${target.id}` : target.url)});
- await page.waitForFunction(({platform,id}) => {
-   if(![...document.querySelectorAll('video')].some(v=>v.readyState>=1))return false;
-   if(platform==='xiaohongshu')return window.__INITIAL_STATE__?.note?.noteDetailMap?.[id]?.note?.noteId===id;
-   try{return JSON.parse(decodeURIComponent(document.getElementById('RENDER_DATA')?.textContent))?.app?.videoDetail?.awemeId===id;}catch{return false;}
- }, ${JSON.stringify({platform: target.platform, id: target.id})}, {timeout:20000});
- const extracted=await page.evaluate((args)=>{try{return{ok:true,media:(${extractPageMedia.toString()})(args)};}catch(e){return{ok:false,code:e.code};}},${JSON.stringify({platform: target.platform, expectedId: target.id})});
- if(!extracted.ok)throw Object.assign(new Error('media extraction failed'),{code:extracted.code});
- const media=extracted.media;
- const userAgent=await page.evaluate(()=>navigator.userAgent);
- await fs.writeFile(resultFile,JSON.stringify({ok:true,media,userAgent}),{mode:0o600});
- ${options.browserSpaceId ? '' : 'await task.finish({keep:[]});'}
-} catch(error) {
- await fs.writeFile(resultFile,JSON.stringify({ok:false,code:typeof error.code==='string'?error.code:'browser_state_missing',spaceId:task?.spaceId}),{mode:0o600});
- ${options.browserSpaceId ? '' : 'if(task) await task.handOff();'}
-}`;
-	try {
-		await writeFile(scriptFile, source, {mode: 0o600});
-		let result;
-		try {
-			result = await runProcess(
-				options.egoBrowserPath ?? 'ego-browser',
-				['nodejs', '-e', `await import(${JSON.stringify(pathToFileURL(scriptFile).href)})`],
-				{
-					signal: options.signal,
-					timeoutMs: Math.min(options.timeoutMs ?? 60000, 60000),
-					maxOutputBytes: 1024 * 1024,
-				},
-			);
-		} catch (error) {
-			if (error.code === 'dependency_missing') error.dependency = 'ego-browser';
-			throw error;
-		}
-		if (result.code !== 0)
-			throw new EngineError(
-				'browser_unavailable',
-				'无法连接浏览器，请检查 Ego Browser 是否已启动。',
-			);
-		let value;
-		try {
-			value = JSON.parse(await readFile(resultFile, 'utf8'));
-		} catch {
-			throw new EngineError('browser_unavailable', '浏览器没有返回媒体信息。');
-		}
-		if (!value.ok) {
-			const error = new EngineError(
-				['identity_mismatch', 'no_formats', 'not_video', 'drm'].includes(value.code)
-					? value.code
-					: 'browser_state_missing',
-				'页面没有提供目标视频的可用媒体信息，请在浏览器确认登录、验证和视频状态。',
-			);
-			error.browserSpaceId = value.spaceId;
-			throw error;
-		}
-		if (value.media?.id !== target.id || value.media?.platform !== target.platform)
-			throw new EngineError('identity_mismatch', '页面视频与输入链接不一致。');
-		return value;
-	} finally {
-		await rm(dir, {recursive: true, force: true});
-	}
+	return checkPageMedia(options.pageMedia, target);
 }
 
 export async function resolveWithBrowser(target, options = {}) {
-	return publicBrowserMetadata((await extract(target, options)).media);
+	return publicBrowserMetadata(pageMediaFor(target, options).media);
 }
 
 export function validateMediaUrl(raw, platform) {
@@ -260,14 +243,14 @@ export async function downloadWithBrowser(target, options = {}) {
 	let directory,
 		successful = false;
 	try {
-		const {media, userAgent} = await extract(target, {...options, signal});
+		const {media, userAgent} = pageMediaFor(target, options);
 		const format = selectBrowserFormat(media.formats, options);
 		const outputRoot = path.resolve(options.outputDir ?? 'downloads');
 		await mkdir(outputRoot, {recursive: true});
 		directory = await mkdtemp(path.join(outputRoot, 'video-'));
 		const temporary = path.join(directory, 'media.part');
 		const headers = {
-			'user-agent': userAgent,
+			...(userAgent ? {'user-agent': userAgent} : {}),
 			referer: `https://www.${target.platform === 'douyin' ? 'douyin' : 'xiaohongshu'}.com/`,
 		};
 		let bytes = 0,

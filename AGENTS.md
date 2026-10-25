@@ -26,16 +26,20 @@ Dependency direction is one-way; never import upwards.
 
 ```
 bin/        CLI                       → src/index.mjs
-extension/  MV3 popup + background    → src/urls.mjs only (copied at build)
+extension/  MV3 popup + background    → src/urls.mjs, src/page-extract.mjs (copied at build)
 native/     messaging host + daemon   → src/index.mjs, src/process.mjs
 src/index.mjs  public API, engine routing, bounded fallbacks
   ├─ yt-dlp.mjs   → mp4.mjs, filenames.mjs, thumbnails.mjs, process.mjs
-  ├─ browser.mjs  → page-extract.mjs, filenames.mjs, thumbnails.mjs, process.mjs
+  ├─ browser.mjs  → filenames.mjs, thumbnails.mjs, process.mjs (downloads caller-supplied page media)
   └─ urls.mjs     link normalisation and content identity (no imports)
 ```
 
-- `src/page-extract.mjs` is serialised and executed inside a browser page.
-  It must stay self-contained: no imports, no closures over module scope.
+- `src/page-extract.mjs` is serialised and injected into the video page by
+  the extension (see `scripts/page-extract-inject.mjs`). It must stay
+  self-contained: no imports, no closures over module scope.
+- The browser engine never opens pages. It takes `options.pageMedia` from the
+  extension and re-validates identity and CDN hosts before downloading.
+- Signed media URLs in `pageMedia` live only in memory in `native/`.
 - `src/process.mjs` is the only place that spawns child processes. Always
   pass argument arrays, never shell strings; always bound time and output.
 - `native/` persists only sanitised task results; raw inputs stay in memory.

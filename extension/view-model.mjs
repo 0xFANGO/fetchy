@@ -38,10 +38,10 @@ export function errorMessage(error, fallback = '暂时无法完成，请稍后�
 		output_invalid: '下载文件校验失败，请重新下载。',
 		no_formats: '没有找到可下载的视频，请确认这是单个视频内容。',
 		unsupported_content: '当前内容暂不支持，请使用单个已发布的视频链接。',
-		browser_state_missing: 'Ego Lite 尚未提供目标视频，请在 Ego Lite 打开视频后重试。',
-		browser_unavailable: '无法连接 Ego Lite，请打开浏览器后重试。',
-		authentication_required: '请在 Ego Lite 中完成登录或验证，然后重试。',
-		login_required: '请在 Ego Lite 中完成登录或验证，然后重试。',
+		browser_state_missing: '页面还没有加载出这个视频，请等它可以播放后重试。',
+		browser_unavailable: '无法读取视频页面，请重新打开视频页后重试。',
+		authentication_required: '请在浏览器中登录后重新打开视频页，然后重试。',
+		login_required: '请在浏览器中登录后重新打开视频页，然后重试。',
 		network_error: '网络连接失败，请检查网络后重试。',
 		timeout: '识别或下载超时，请稍后重试。',
 		interrupted: '上次下载已中断，可以重新下载。',
@@ -164,15 +164,12 @@ export function deriveView(state = {}) {
 			ytDlp: 'yt-dlp',
 			ffmpeg: 'FFmpeg',
 			ffprobe: 'ffprobe',
-			egoBrowser: 'Ego Lite 浏览器组件',
 		};
 		const missing = Object.entries(connection.dependencies ?? {})
 			.filter(([name, value]) => labels[name] && value?.available === false)
 			.map(([name]) => labels[name]);
 		if (missing.length) {
 			view.connectionNotice = `缺少 ${missing.join('、')}，请按安装指引修复。`;
-			if (connection.dependencies?.egoBrowser?.available === false)
-				view.connectionNotice += ' 小红书、抖音需要可连接的 Ego Lite 会话。';
 			view.showConnectionHelp = true;
 		}
 	}
