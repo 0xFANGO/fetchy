@@ -37,11 +37,11 @@
 
 ## 环境要求
 
-| 工具               | 用途               | macOS 安装                                                                     |
-| ------------------ | ------------------ | ------------------------------------------------------------------------------ |
-| Node.js 22+        | 全部               | `brew install node`                                                            |
-| FFmpeg + ffprobe   | 合并、重封装、校验 | `brew install ffmpeg`                                                          |
-| yt-dlp（固定版本） | YouTube、B站       | `python3 -m venv .venv && .venv/bin/python -m pip install -r requirements.txt` |
+| 工具               | 用途                           | macOS 安装                                                                     |
+| ------------------ | ------------------------------ | ------------------------------------------------------------------------------ |
+| Node.js 22+        | 全部                           | `brew install node`                                                            |
+| FFmpeg + ffprobe   | 合并、重封装、校验             | `brew install ffmpeg`                                                          |
+| yt-dlp（固定版本） | YouTube、B站；命令行下所有平台 | `python3 -m venv .venv && .venv/bin/python -m pip install -r requirements.txt` |
 
 随时运行 `npm run doctor` 查看哪些工具已找到、哪些缺失。
 

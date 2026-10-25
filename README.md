@@ -38,10 +38,10 @@ See [docs/limitations.md](docs/limitations.md) for the full list.
 
 ## Requirements
 
-| Tool                    | Needed for                    | macOS install                                                                  |
-| ----------------------- | ----------------------------- | ------------------------------------------------------------------------------ |
-| Node.js 22+             | everything                    | `brew install node`                                                            |
-| FFmpeg + ffprobe        | merging, remuxing, validation | `brew install ffmpeg`                                                          |
+| Tool                    | Needed for                                   | macOS install                                                                  |
+| ----------------------- | -------------------------------------------- | ------------------------------------------------------------------------------ |
+| Node.js 22+             | everything                                   | `brew install node`                                                            |
+| FFmpeg + ffprobe        | merging, remuxing, validation                | `brew install ffmpeg`                                                          |
 | yt-dlp (pinned version) | YouTube, Bilibili; every platform on the CLI | `python3 -m venv .venv && .venv/bin/python -m pip install -r requirements.txt` |
 
 Run `npm run doctor` at any time to see what is found and what is missing.
