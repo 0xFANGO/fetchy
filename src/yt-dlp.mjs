@@ -399,7 +399,7 @@ export async function downloadWithYtDlp(target, options = {}) {
 		let directory;
 		try {
 			await mkdir(outputDir, {recursive: true});
-			directory = await mkdtemp(path.join(outputDir, 'video-'));
+			directory = await mkdtemp(path.join(outputDir, '.fetchy-'));
 		} catch (error) {
 			throw fileWriteError(error) ?? new EngineError('output_invalid', '无法创建下载目录。');
 		}
@@ -460,6 +460,7 @@ export async function downloadWithYtDlp(target, options = {}) {
 				title: info.title,
 				platform: target.platform,
 				id: target.id,
+				outputDir,
 				signal: settings.signal,
 			});
 			successful = true;
@@ -479,8 +480,10 @@ export async function downloadWithYtDlp(target, options = {}) {
 		} catch (error) {
 			throw fileWriteError(error) ?? error;
 		} finally {
-			// A failed/cancelled job is never left looking like a completed media file.
-			if (!successful) await rm(directory, {recursive: true, force: true});
+			await rm(directory, {recursive: true, force: true}).catch((error) => {
+				// A cleanup failure must not invalidate an already delivered video.
+				if (!successful) throw error;
+			});
 		}
 	});
 }

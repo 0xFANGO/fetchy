@@ -247,7 +247,7 @@ export async function downloadWithBrowser(target, options = {}) {
 		const format = selectBrowserFormat(media.formats, options);
 		const outputRoot = path.resolve(options.outputDir ?? 'downloads');
 		await mkdir(outputRoot, {recursive: true});
-		directory = await mkdtemp(path.join(outputRoot, 'video-'));
+		directory = await mkdtemp(path.join(outputRoot, '.fetchy-'));
 		const temporary = path.join(directory, 'media.part');
 		const headers = {
 			...(userAgent ? {'user-agent': userAgent} : {}),
@@ -325,18 +325,11 @@ export async function downloadWithBrowser(target, options = {}) {
 			};
 			throw error;
 		}
-		const filepath = await publishVideoFile(temporary, {
-			title: media.title,
-			platform: target.platform,
-			id: target.id,
-			signal,
-		});
 		const result = {
 			platform: target.platform,
 			id: target.id,
 			engine: 'browser',
-			filepath,
-			bytes: (await stat(filepath)).size,
+			bytes: (await stat(temporary)).size,
 			format: {
 				...publicBrowserMetadata({...media, formats: [format]}).formats[0],
 				vcodec: video.codec_name ?? null,
@@ -352,6 +345,14 @@ export async function downloadWithBrowser(target, options = {}) {
 				fullDecode: false,
 			},
 		};
+		const filepath = await publishVideoFile(temporary, {
+			title: media.title,
+			platform: target.platform,
+			id: target.id,
+			outputDir: outputRoot,
+			signal,
+		});
+		result.filepath = filepath;
 		successful = true;
 		emit(options, 'complete', {filepath, bytes});
 		return result;
@@ -363,6 +364,10 @@ export async function downloadWithBrowser(target, options = {}) {
 		if (error instanceof EngineError) throw error;
 		throw new EngineError('network_error', '浏览器媒体下载失败，请检查网络后重新解析。');
 	} finally {
-		if (directory && !successful) await rm(directory, {recursive: true, force: true});
+		if (directory)
+			await rm(directory, {recursive: true, force: true}).catch((error) => {
+				// A cleanup failure must not invalidate an already delivered video.
+				if (!successful) throw error;
+			});
 	}
 }

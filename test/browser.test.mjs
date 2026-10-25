@@ -1,6 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import {chmod, mkdtemp, readFile, readdir, rm, writeFile} from 'node:fs/promises';
+import {chmod, mkdtemp, readFile, readdir, realpath, rm, writeFile} from 'node:fs/promises';
 import path from 'node:path';
 import {tmpdir} from 'node:os';
 import {
@@ -244,20 +244,40 @@ test('browser engines publish the resolved video title only after media validati
 					headers: {'content-type': 'video/mp4', 'content-length': '15'},
 				}),
 		);
-		const result = await downloadWithBrowser(target, {
+		const outputDir = path.join(root, platform);
+		const options = {
 			pageMedia: {media, userAgent: 'test'},
 			ffprobePath,
-			outputDir: path.join(root, platform),
+			outputDir,
 			onProgress: (event) => stages.push(event),
-		});
-		fetchMock.mock.restore();
+		};
+		const result = await downloadWithBrowser(target, options);
 		assert.equal(path.basename(result.filepath), `${title}.mp4`);
-		assert.deepEqual(await readdir(path.dirname(result.filepath)), [`${title}.mp4`]);
+		assert.equal(path.dirname(result.filepath), await realpath(outputDir));
+		assert.deepEqual(await readdir(outputDir), [`${title}.mp4`]);
 		assert.equal(await readFile(result.filepath, 'utf8'), 'test-media-data');
 		assert.equal(result.validation.video, true);
 		assert.equal(result.validation.audio, true);
 		assert.equal(stages.at(-2).stage, 'validating');
 		assert.equal(stages.at(-1).filepath, result.filepath);
+		await writeFile(result.filepath, 'previous download');
+		const repeated = await downloadWithBrowser(target, options);
+		assert.equal(path.basename(repeated.filepath), `${title} (2).mp4`);
+		assert.equal(await readFile(result.filepath, 'utf8'), 'previous download');
+		assert.equal(await readFile(repeated.filepath, 'utf8'), 'test-media-data');
+		const controller = new AbortController();
+		await assert.rejects(
+			downloadWithBrowser(target, {
+				...options,
+				signal: controller.signal,
+				onProgress({stage}) {
+					if (stage === 'validating') controller.abort();
+				},
+			}),
+			{code: 'cancelled'},
+		);
+		assert.deepEqual((await readdir(outputDir)).sort(), [`${title} (2).mp4`, `${title}.mp4`]);
+		fetchMock.mock.restore();
 	}
 });
 
@@ -285,7 +305,7 @@ test(
 			formats: [{...base, urls: ['https://sns-video.xhscdn.com/media.mp4']}],
 		};
 		t.mock.method(globalThis, 'fetch', async () => {
-			const task = (await readdir(outputDir)).find((name) => name.startsWith('video-'));
+			const task = (await readdir(outputDir)).find((name) => name.startsWith('.fetchy-'));
 			await chmod(path.join(outputDir, task), 0o555);
 			return new Response('test-media-data', {headers: {'content-type': 'video/mp4'}});
 		});

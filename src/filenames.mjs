@@ -76,7 +76,7 @@ async function removeOwned(filename, identity) {
 
 /**
  * Publish a media file after its caller has validated it. Staging files may use
- * any extension; final output is always MP4 in the same canonical directory.
+ * any extension; final output is MP4 in outputDir (or the source directory).
  * Exclusive publication prevents an existing or concurrently-created file from
  * being replaced, including on volumes without hard-link support.
  */
@@ -91,7 +91,13 @@ export async function publishVideoFile(sourcePath, options = {}) {
 	) {
 		throw new EngineError('invalid_options', '需要有效的媒体文件路径和命名选项。');
 	}
-	const {title, platform, id, signal} = options;
+	const {title, platform, id, signal, outputDir} = options;
+	if (
+		outputDir !== undefined &&
+		(typeof outputDir !== 'string' || !outputDir || outputDir.includes('\0'))
+	) {
+		throw new EngineError('invalid_options', '需要有效的保存目录。');
+	}
 	if (
 		signal !== undefined &&
 		(typeof signal?.aborted !== 'boolean' || typeof signal?.addEventListener !== 'function')
@@ -110,9 +116,15 @@ export async function publishVideoFile(sourcePath, options = {}) {
 	} catch (error) {
 		throw fileWriteError(error) ?? new EngineError('output_invalid', '无法读取已校验的媒体文件。');
 	}
+	let directory;
+	try {
+		directory = outputDir === undefined ? path.dirname(source) : await fs.realpath(outputDir);
+		if (!(await fs.stat(directory)).isDirectory()) throw new Error('invalid directory');
+	} catch (error) {
+		throw fileWriteError(error) ?? new EngineError('output_invalid', '无法访问视频保存目录。');
+	}
 	const basename = videoFilename(title, {platform, id});
-	const stem = basename.slice(0, -4),
-		directory = path.dirname(source);
+	const stem = basename.slice(0, -4);
 	let owned;
 	try {
 		for (let index = 1; index <= 1000; index++) {
@@ -133,6 +145,7 @@ export async function publishVideoFile(sourcePath, options = {}) {
 				// On case-insensitive filesystems a title differing only in case can
 				// refer to the source itself. Return its existing spelling unchanged.
 				if (
+					path.dirname(source) === directory &&
 					path.basename(source).normalize('NFC').toLowerCase() ===
 						path.basename(destination).normalize('NFC').toLowerCase() &&
 					sameFile(await fs.lstat(destination), sourceInfo)

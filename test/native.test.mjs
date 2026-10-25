@@ -245,7 +245,8 @@ test('result must validate, exist, match byte count and remain within selected r
 	await controller.downloadPromise;
 	assert.equal(controller.snapshot().task.status, 'failed');
 	assert.equal(controller.snapshot().task.error.code, 'output_invalid');
-	const valid = await output(outputDir);
+	const valid = {...outside, filepath: path.join(outputDir, 'Test video.mp4')};
+	await writeFile(valid.filepath, 'video');
 	const invalidResults = [
 		{...valid, validation: {video: true}},
 		{...valid, filepath: path.join(outputDir, 'missing.mp4')},
@@ -269,6 +270,8 @@ test('result must validate, exist, match byte count and remain within selected r
 		metadata,
 	});
 	await controller.downloadPromise;
+	assert.equal(controller.snapshot().task.status, 'completed');
+	assert.equal(path.dirname(controller.snapshot().task.result.filepath), await realpath(outputDir));
 	await controller.request('reveal', {taskId: 'good-output', filepath: '/etc/passwd'});
 	assert.deepEqual(revealed, {
 		command: '/usr/bin/open',

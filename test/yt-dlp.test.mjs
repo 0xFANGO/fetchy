@@ -2,7 +2,7 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import {existsSync} from 'node:fs';
 import {spawnSync} from 'node:child_process';
-import {chmod, mkdtemp, readFile, readdir, realpath, rm, writeFile} from 'node:fs/promises';
+import {chmod, mkdir, mkdtemp, readFile, readdir, realpath, rm, writeFile} from 'node:fs/promises';
 import path from 'node:path';
 import {tmpdir} from 'node:os';
 import {fileURLToPath} from 'node:url';
@@ -194,9 +194,9 @@ test('download verifies actual tracks and records stages only after success', as
 	assert.equal(result.conversion, 'copy');
 	assert.equal(result.transport, 'hls');
 	assert.equal(result.bytes, 15);
-	assert.equal(path.dirname(path.dirname(result.filepath)), await realpath(options.outputDir));
+	assert.equal(path.dirname(result.filepath), await realpath(options.outputDir));
 	assert.equal(path.basename(result.filepath), 'Test video.mp4');
-	assert.deepEqual(await readdir(path.dirname(result.filepath)), ['Test video.mp4']);
+	assert.deepEqual(await readdir(options.outputDir), ['Test video.mp4']);
 	assert.deepEqual(stages, [
 		'resolving',
 		'downloading',
@@ -226,6 +226,45 @@ test('download verifies actual tracks and records stages only after success', as
 			);
 		}
 	}
+});
+
+test('concurrent downloads keep existing videos and publish directly into the shared output directory', async (t) => {
+	const {options} = await fixture(t);
+	await mkdir(options.outputDir);
+	const previous = path.join(options.outputDir, 'Test video.mp4');
+	await writeFile(previous, 'previous download');
+	const results = await Promise.all([
+		downloadWithYtDlp(target, options),
+		downloadWithYtDlp(target, options),
+	]);
+	const expected = ['Test video (2).mp4', 'Test video (3).mp4'];
+	assert.deepEqual(results.map(({filepath}) => path.basename(filepath)).sort(), expected);
+	assert.deepEqual((await readdir(options.outputDir)).sort(), [...expected, 'Test video.mp4']);
+	assert.equal(await readFile(previous, 'utf8'), 'previous download');
+	for (const {filepath} of results) {
+		assert.equal(path.dirname(filepath), await realpath(options.outputDir));
+		assert.equal(await readFile(filepath, 'utf8'), 'test-media-data');
+	}
+});
+
+test('cancelling a staged download removes temporary files and preserves existing videos', async (t) => {
+	const {options} = await fixture(t);
+	await mkdir(options.outputDir);
+	const previous = path.join(options.outputDir, 'Test video.mp4');
+	await writeFile(previous, 'previous download');
+	const controller = new AbortController();
+	await assert.rejects(
+		downloadWithYtDlp(target, {
+			...options,
+			signal: controller.signal,
+			onProgress({stage}) {
+				if (stage === 'validating') controller.abort();
+			},
+		}),
+		{code: 'cancelled'},
+	);
+	assert.deepEqual(await readdir(options.outputDir), ['Test video.mp4']);
+	assert.equal(await readFile(previous, 'utf8'), 'previous download');
 });
 
 test('a zero exit without final receipt cannot be reported successful', async (t) => {
@@ -591,8 +630,9 @@ test(
 			assert.equal(result.validation.width, 160);
 			assert.equal(result.validation.height, 90);
 			assert.equal(path.extname(result.filepath), '.mp4');
+			assert.equal(path.dirname(result.filepath), await realpath(options.outputDir));
 			assert.deepEqual(
-				await readdir(path.dirname(result.filepath)),
+				await readdir(options.outputDir),
 				['Test video.mp4'],
 				'only the validated title-named final file remains',
 			);

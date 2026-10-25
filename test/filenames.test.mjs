@@ -65,6 +65,19 @@ test('validated staging file becomes title.mp4 in its same directory', async (t)
 	assert.deepEqual(await fs.readdir(directory), ['我的视频 第一期.mp4']);
 });
 
+test('staged media is published directly into the chosen canonical output directory', async (t) => {
+	const {directory, source, contents} = await fixture(t, '视频.mp4');
+	const staging = await fs.mkdtemp(path.join(directory, '.fetchy-'));
+	const staged = path.join(staging, '视频.mp4');
+	await fs.rename(source, staged);
+	const alias = path.join(directory, 'output-alias');
+	await fs.symlink(directory, alias);
+	const result = await publishVideoFile(staged, {title: '视频', outputDir: alias});
+	assert.equal(result, path.join(directory, '视频.mp4'));
+	assert.equal(await fs.readFile(result, 'utf8'), contents);
+	assert.deepEqual(await fs.readdir(staging), []);
+});
+
 test('existing files and symlinks are never overwritten, with numbered collision suffixes', async (t) => {
 	const {directory, source, contents} = await fixture(t);
 	const prior = path.join(directory, '同一个标题.mp4');
@@ -79,18 +92,25 @@ test('existing files and symlinks are never overwritten, with numbered collision
 
 test('concurrent publications with matching titles preserve both videos', async (t) => {
 	const {directory, source} = await fixture(t, 'first.part', 'first');
-	const other = path.join(directory, 'second.part');
+	const staging = await fs.mkdtemp(path.join(directory, '.fetchy-'));
+	const other = path.join(staging, 'second.part');
 	await fs.writeFile(other, 'second');
 	const results = await Promise.all([
-		publishVideoFile(source, {title: '同名'}),
-		publishVideoFile(other, {title: '同名'}),
+		publishVideoFile(source, {title: '同名', outputDir: directory}),
+		publishVideoFile(other, {title: '同名', outputDir: directory}),
 	]);
 	assert.equal(new Set(results).size, 2);
+	assert.ok(results.every((filename) => path.dirname(filename) === directory));
 	assert.deepEqual(
 		new Set(await Promise.all(results.map((name) => fs.readFile(name, 'utf8')))),
 		new Set(['first', 'second']),
 	);
-	assert.deepEqual((await fs.readdir(directory)).sort(), ['同名 (2).mp4', '同名.mp4']);
+	assert.deepEqual(await fs.readdir(staging), []);
+	assert.deepEqual((await fs.readdir(directory)).sort(), [
+		path.basename(staging),
+		'同名 (2).mp4',
+		'同名.mp4',
+	]);
 });
 
 test('matching source name is a no-op and source symlinks are rejected', async (t) => {
@@ -105,7 +125,9 @@ test('matching source name is a no-op and source symlinks are rejected', async (
 
 test('a volume without hard links uses an exclusive copy without overwriting a collision', async (t) => {
 	const {directory, source, contents} = await fixture(t);
-	await fs.writeFile(path.join(directory, '视频.mp4'), 'preserved');
+	const outputDir = path.join(directory, 'output');
+	await fs.mkdir(outputDir);
+	await fs.writeFile(path.join(outputDir, '视频.mp4'), 'preserved');
 	t.mock.method(fs, 'link', async () => {
 		throw Object.assign(new Error('not supported'), {code: 'ENOTSUP'});
 	});
@@ -115,11 +137,47 @@ test('a volume without hard links uses an exclusive copy without overwriting a c
 		flags.push(args[2]);
 		return originalCopy(...args);
 	});
-	const result = await publishVideoFile(source, {title: '视频'});
-	assert.equal(path.basename(result), '视频 (2).mp4');
+	const result = await publishVideoFile(source, {title: '视频', outputDir});
+	assert.equal(result, path.join(outputDir, '视频 (2).mp4'));
 	assert.ok(flags.every((value) => value === constants.COPYFILE_EXCL));
 	assert.equal(await fs.readFile(result, 'utf8'), contents);
-	assert.equal(await fs.readFile(path.join(directory, '视频.mp4'), 'utf8'), 'preserved');
+	assert.equal(await fs.readFile(path.join(outputDir, '视频.mp4'), 'utf8'), 'preserved');
+});
+
+test('cancellation after moving out of staging removes only the newly published video', async (t) => {
+	const {directory, source} = await fixture(t);
+	const outputDir = path.join(directory, 'output');
+	await fs.mkdir(outputDir);
+	await fs.writeFile(path.join(outputDir, '视频.mp4'), 'preserved');
+	const controller = new AbortController(),
+		originalUnlink = fs.unlink;
+	t.mock.method(fs, 'unlink', async (filename) => {
+		await originalUnlink(filename);
+		if (filename === source) controller.abort();
+	});
+	await assert.rejects(
+		publishVideoFile(source, {title: '视频', outputDir, signal: controller.signal}),
+		{code: 'cancelled'},
+	);
+	assert.deepEqual(await fs.readdir(outputDir), ['视频.mp4']);
+	assert.equal(await fs.readFile(path.join(outputDir, '视频.mp4'), 'utf8'), 'preserved');
+	assert.deepEqual(await fs.readdir(directory), ['output']);
+});
+
+test('invalid or missing output directories never consume the validated source', async (t) => {
+	const {directory, source, contents} = await fixture(t);
+	for (const outputDir of [null, '', {}, 'bad\0path']) {
+		await assert.rejects(publishVideoFile(source, {title: '视频', outputDir}), {
+			code: 'invalid_options',
+		});
+	}
+	for (const outputDir of [source, path.join(directory, 'missing')]) {
+		await assert.rejects(publishVideoFile(source, {title: '视频', outputDir}), {
+			code: 'output_invalid',
+		});
+	}
+	assert.equal(await fs.readFile(source, 'utf8'), contents);
+	assert.deepEqual(await fs.readdir(directory), ['media.part']);
 });
 
 test('cancellation before publication preserves source; after publication removes only the new file', async (t) => {

@@ -89,7 +89,7 @@ node bin/fetchy.mjs download <url>   # download
 
 | Option                  | Default       | Description                                                                                     |
 | ----------------------- | ------------- | ----------------------------------------------------------------------------------------------- |
-| `--output <dir>`        | `./downloads` | Target directory; each download gets its own `video-*` subfolder                                |
+| `--output <dir>`        | `./downloads` | Target directory; completed videos are saved directly here, with numbered names on collision    |
 | `--engine auto\|yt-dlp` | `auto`        | The CLI uses yt-dlp for every platform; the browser engine is only reachable from the extension |
 | `--max-height <px>`     | unlimited     | Upper bound on the actual frame height (a 1080×1920 portrait video is 1920)                     |
 | `--transport auto\|hls` | `auto`        | Force HLS on YouTube                                                                            |
