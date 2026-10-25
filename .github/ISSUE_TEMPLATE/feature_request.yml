@@ -1,0 +1,20 @@
+name: Feature request
+description: Suggest a platform, option or workflow
+labels: [enhancement]
+body:
+  - type: textarea
+    id: problem
+    attributes:
+      label: What are you trying to do?
+    validations:
+      required: true
+  - type: textarea
+    id: proposal
+    attributes:
+      label: Proposed behaviour
+  - type: checkboxes
+    id: scope
+    attributes:
+      label: Scope check
+      options:
+        - label: This is not about playlists, live streams, DRM content or watermark removal (out of scope, see README).

@@ -1,0 +1,57 @@
+<!doctype html>
+<html lang="zh-CN">
+	<head>
+		<meta charset="UTF-8" />
+		<meta name="viewport" content="width=device-width, initial-scale=1" />
+		<title>安装 Fetchy 本地组件</title>
+		<link rel="stylesheet" href="help.css" />
+	</head>
+	<body>
+		<main>
+			<p class="eyebrow">FETCHY · 本地视频下载</p>
+			<h1>让浏览器连接你的文件夹。</h1>
+			<p>Fetchy 通过本机组件解析、下载和校验文件。关闭弹窗后，下载仍在这台电脑上继续。</p>
+			<h2>首次安装 · macOS</h2>
+			<ol>
+				<li>
+					安装 Node.js 22+、Python 3.10+、FFmpeg（包含 ffprobe）。可运行
+					<code>npm run doctor</code> 检查。
+				</li>
+				<li>
+					在项目根目录执行：
+					<pre>
+python3 -m venv .venv
+.venv/bin/python -m pip install -r requirements.txt
+npm run extension:build
+npm run native:install -- --browser chrome</pre>
+					<p>
+						Ego Lite 用户将 <code>chrome</code> 换成 <code>ego</code>。移动项目或 Node
+						路径后，请再次运行安装命令。
+					</p>
+				</li>
+				<li>
+					打开浏览器扩展页 <code>chrome://extensions</code>，开启开发者模式，加载项目下的
+					<code>dist/extension</code> 文件夹，再打开 Fetchy 点击“重试连接”。
+				</li>
+			</ol>
+			<h2>浏览器与登录状态</h2>
+			<p>
+				YouTube / B站使用本地 yt-dlp 匿名解析。小红书 /
+				抖音直接读取你当前浏览器里视频页面的播放信息：已经打开的视频页会被直接使用，否则插件会在后台打开一个标签页并在读取后关闭。不会导出你的
+				Cookie。遇到登录或验证提示，请在浏览器里完成后返回插件重试。
+			</p>
+			<h2>保存位置与恢复</h2>
+			<p>
+				默认保存到系统下载目录中的 Fetchy
+				文件夹。可从“设置”选择其他目录并保存；正在下载的任务仍使用启动时的目录。只有视频文件校验通过才显示“已保存”。断开连接时请先重连查询，避免重复下载。
+			</p>
+			<p>
+				电脑或本地进程重启后不提供断点续传；无法恢复的任务会标为中断。首次支持环境为
+				macOS；四个平台的可用性取决于具体内容、网络与会话。
+			</p>
+			<p class="foot">
+				项目安装与实测范围详见仓库的 docs/extension-install.md 与 docs/extension-validation.md。
+			</p>
+		</main>
+	</body>
+</html>

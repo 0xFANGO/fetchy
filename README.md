@@ -1,83 +1,149 @@
-# Fango Video Downloader
+# Fetchy
 
-一个计划支持多个视频平台的浏览器插件：正常浏览视频时，通过右键菜单把想保存的内容下载到本地。
+[![License: AGPL-3.0](docs/assets/badges/license.svg)](LICENSE)
+![Node >= 22](docs/assets/badges/node.svg)
+![Platform: macOS](docs/assets/badges/platform.svg)
 
-**当前状态：需求整理阶段。** 项目目前仅有项目说明与许可证，还没有可安装的插件，也没有经过插件端验证的支持平台。项目名暂用 `fango-video-downloader`。
+Save a single video from **YouTube, Bilibili, Xiaohongshu or Douyin** to a folder on your Mac.
+One toolbar button, one command, or one function call. Everything runs locally.
 
-## 为什么做
+[中文文档](README.zh-CN.md)
 
-从自己实际使用的需求出发，减少浏览视频和保存视频之间的操作，方便留存参考素材。先把一个平台的下载流程做通、亲自试用并修改，再逐步扩展平台支持。
+<p align="center">
+  <img src="docs/assets/popup-states.png" alt="The popup in three states: a detected Bilibili video ready to download, a download at 62%, and the saved file with a Reveal in Finder button">
+</p>
 
-开发过程也会记录下来，分享怎样向 AI 表达需求、检查实际结果，以及根据试用反馈继续修改。
+## Features
 
-## 目标体验
+- **Four platforms, one workflow.** Paste a link or open a video page, click once. Share text with a short link works too.
+- **Local first.** Downloads run on your machine through a native host. No cloud service, no account, no cookie export.
+- **Real, playable files.** Output is an MP4 validated with ffprobe for H.264 / yuv420p / AAC. Files are named after the actual video title and never overwrite existing files.
+- **Keeps going.** Close the popup and the download continues; reopen it to see progress, cancel or reveal the file in Finder.
+- **Same core everywhere.** The extension, the CLI and the Node API share one `resolveVideo` / `downloadVideo` contract with stable error codes.
 
-1. 在浏览器里正常访问视频平台，找到想保存的视频。
-2. 对目标内容使用右键菜单，选择插件提供的下载操作。
-3. 插件识别这次选中的视频，将文件下载到本地，并给出明确的结果反馈。
+## Supported platforms
 
-右键作用于视频画面、内容卡片还是页面链接，以及同一页面有多个视频时如何确定目标，需要结合首个平台的页面实际验证。尚未支持、无法识别或下载失败时，应说明原因。
+| Platform    | Accepted input                                                       | Engine              | Notes                                                                              |
+| ----------- | -------------------------------------------------------------------- | ------------------- | ---------------------------------------------------------------------------------- |
+| YouTube     | `youtube.com/watch`, `youtu.be`, Shorts                              | yt-dlp              | Prefers native H.264/AAC, falls back to HLS on network errors                      |
+| Bilibili    | `bilibili.com/video/BV…`, `av…`, multi-part `?p=`                    | yt-dlp              | DASH video and audio merged into MP4                                               |
+| Xiaohongshu | Full share link with `xsec_token`, or share text containing one link | In-page (extension) | Media is read from the note page in your own browser; the CLI falls back to yt-dlp |
+| Douyin      | `v.douyin.com` short links, `modal_id` links, detail pages           | In-page (extension) | Short links are expanded first; the CLI falls back to yt-dlp                       |
 
-## 功能范围
+Single, finished videos only. Playlists, live streams, image notes, DRM content and watermark removal are out of scope.
+See [docs/limitations.md](docs/limitations.md) for the full list.
 
-| 项目 | 当前约定 |
-| --- | --- |
-| 多平台视频下载 | 项目方向；逐个平台实现与测试后，再列入支持清单 |
-| 右键触发下载 | 已确定的目标操作方式，尚未实现 |
-| 保存到本地 | 首版核心流程；需要验证文件可以正常播放 |
-| 视频片段截取 | 来自最初的参考素材需求，是否进入首版待定 |
-| 支持的浏览器 | 待确定 |
-| 安装与分发 | 待确定，后续补充与实际版本对应的安装说明 |
+## Requirements
 
-**当前已支持平台：无。** 不预先承诺支持所有网站，也不把已有脚本的能力列为本插件的已实现功能。
+| Tool                    | Needed for                                   | macOS install                                                                  |
+| ----------------------- | -------------------------------------------- | ------------------------------------------------------------------------------ |
+| Node.js 22+             | everything                                   | `brew install node`                                                            |
+| FFmpeg + ffprobe        | merging, remuxing, validation                | `brew install ffmpeg`                                                          |
+| yt-dlp (pinned version) | YouTube, Bilibili; every platform on the CLI | `python3 -m venv .venv && .venv/bin/python -m pip install -r requirements.txt` |
 
-## 多平台的维护思路
+Run `npm run doctor` at any time to see what is found and what is missing.
 
-初步按“共用下载流程 + 平台适配”的方式组织后续实现：
+The native host installer currently supports **macOS** only. The download core and CLI also run on Linux and Windows.
 
-- 共用部分处理用户触发、任务状态、本地保存和结果反馈。
-- 平台部分分别处理页面识别、目标视频定位和媒体信息提取。
-- 新增平台时，先用真实页面完成下载验证，再登记支持范围、已知限制和验证日期。
-- 平台页面或下载方式变化后，针对该平台修复，并检查已有平台是否仍能正常使用。
+## Quick start
 
-这些是后续实现的初步安排，当前还没有确定技术框架或代码结构。
+```sh
+git clone https://github.com/0xFANGO/fetchy.git
+cd fetchy
+npm install
+python3 -m venv .venv && .venv/bin/python -m pip install -r requirements.txt
+npm run doctor
 
-## 与现有下载工具的关系
+# download a video into ./downloads
+node bin/fetchy.mjs download 'https://www.bilibili.com/video/BV19Pnb6REhD/'
+```
 
-`fango-media` 仓库中的 [`video-download` skill](https://github.com/0xFANGO/fango-media/tree/main/.agents/skills/video-download) 是已有的本地脚本工具，可作为实现参考。其[架构说明](https://github.com/0xFANGO/fango-media/blob/main/.agents/skills/video-download/references/architecture.md) 记录了平台解析、媒体候选排序和下载执行层的划分。
+The CLI prints a JSON result with the absolute file path, size and validation details. Progress goes to stderr. `Ctrl+C` cancels cleanly and leaves no half-written file behind.
 
-本项目是独立的浏览器插件项目。可以评估复用平台解析和候选排序逻辑；现有依赖 Node、本地浏览器控制及媒体校验工具的执行流程，需要按插件运行环境重新设计与验证。具体复用范围尚未决定。
+## Browser extension
 
-## 接下来怎么做
+Every [release](https://github.com/0xFANGO/fetchy/releases) ships a ready-to-load `fetchy-extension-<version>.zip`. Download it, unzip it, and skip the build step below. The native host still comes from this repository, so clone it either way.
 
-1. 确定首个平台、目标浏览器和首版安装方式，同时决定片段截取是否进入首版。
-2. 做出一个平台的最小可用版本：找到目标视频 → 右键触发 → 下载到本地。
-3. 亲自试用，检查是否下对了视频、文件能否正常播放，以及失败时的提示是否清楚。
-4. 根据反馈修复，补齐实际可用的安装、使用和限制说明。
-5. 再增加其他平台，并持续维护各平台的验证记录。
+```sh
+npm run extension:build                 # writes dist/extension (skip if you downloaded the release zip)
+npm run native:install -- --browser chrome # registers the native host (--browser ego for Ego Lite)
+```
 
-## 安装与开发
+1. Open `chrome://extensions/`, enable Developer mode, click **Load unpacked** and pick `dist/extension` (or the unzipped `extension` folder from the release).
+2. Pin the extension to the toolbar.
+3. Open a video page and click the icon, or paste a link into the popup.
 
-当前没有插件安装包、扩展清单、依赖配置或构建命令。技术方案确定并完成首个原型后，再补充可实际执行的开发与安装步骤。
+Downloads go to `~/Downloads/Fetchy` by default; change it from the popup's settings view.
 
-## 许可证
+For Xiaohongshu and Douyin the extension reads the video's playback data from the page itself: an open tab on that video is used directly, otherwise a background tab is opened and closed again. Your logged-in session is used in place, nothing is exported. Permissions requested: `activeTab`, `storage`, `nativeMessaging`, `scripting`, plus host access to `xiaohongshu.com` and `douyin.com`.
 
-本项目采用 **PolyForm Noncommercial License 1.0.0**，完整条款见 [LICENSE](LICENSE)，版权声明见 [NOTICE](NOTICE)。SPDX 标识为 `PolyForm-Noncommercial-1.0.0`。
+Verified so far on macOS with Ego Lite (a Chromium browser). Chrome registration is available but not yet verified end to end.
+Full installation notes, session requirements and troubleshooting: [docs/extension-install.md](docs/extension-install.md).
 
-项目计划免费公开源码，采用限制商用的源码可用许可（source-available）。由于限制商业用途，它不符合 [OSI 开源定义](https://opensource.org/osd)；不将其宣传为允许自由商用的开源项目。
+## CLI
 
-以下是便于理解的说明，不修改或替代 LICENSE 中的英文条款：
+```sh
+node bin/fetchy.mjs resolve  <url>   # inspect formats without downloading
+node bin/fetchy.mjs download <url>   # download
+```
 
-- 允许无预期商业应用的个人学习、研究、娱乐和兴趣项目，以及其他非商业用途。
-- 允许为许可目的修改代码、制作衍生作品并分享副本；分发时须提供许可条款或其链接，并保留 NOTICE 中的 `Required Notice:` 声明。
-- 商业用途不在一般非商业授权范围内，例如将插件用于收费下载服务，或集成到商业产品中。本项目没有额外授予商业使用许可。
-- 原文对慈善组织、教育机构、公共研究等指定机构另有允许用途条款，且不以资金来源为限制；这些范围须按 LICENSE 判断。
-- 许可证保留法定合理使用权。收费教程、带广告的视频等具体场景，不能只凭是否产生收入判定，也不能承诺通过本许可禁止一切涉及本项目的获利行为。
+| Option                  | Default       | Description                                                                                     |
+| ----------------------- | ------------- | ----------------------------------------------------------------------------------------------- |
+| `--output <dir>`        | `./downloads` | Target directory; completed videos are saved directly here, with numbered names on collision    |
+| `--engine auto\|yt-dlp` | `auto`        | The CLI uses yt-dlp for every platform; the browser engine is only reachable from the extension |
+| `--max-height <px>`     | unlimited     | Upper bound on the actual frame height (a 1080×1920 portrait video is 1920)                     |
+| `--transport auto\|hls` | `auto`        | Force HLS on YouTube                                                                            |
+| `--timeout-ms <ms>`     | 30 min        | Whole-task timeout                                                                              |
+| `--cookies-file <file>` | none          | Netscape cookie file for the yt-dlp engine; a private temporary copy is used                    |
 
-LICENSE 原样采用 [PolyForm 官方文本](https://github.com/polyformproject/polyform-licenses/blob/76a278c402bc43b8d2b561da140b0f3e17263015/PolyForm-Noncommercial-1.0.0.md)。第三方依赖或材料如有独立许可证，仍须遵守各自条款。代码许可也不授予视频内容的使用权；实际支持平台和下载方式确定后，仍需核对相应平台规则与内容授权范围。
+`npm run download -- <url>` and `npm run resolve -- <url>` are shortcuts for the same commands.
 
-## 需求来源
+## Node API
 
-- [fango-media #147：和 AI 做一个视频下载浏览器插件](https://github.com/0xFANGO/fango-media/issues/147)
+```js
+import {resolveVideo, downloadVideo} from './src/index.mjs';
 
-本 README 整理该 Issue 中与插件有关的需求。后续根据实现、测试与用户反馈更新，功能支持以插件实际验证结果为准。
+const url = 'https://www.bilibili.com/video/BV19Pnb6REhD/';
+
+const info = await resolveVideo(url);
+console.log(info.title, info.durationSeconds, info.formats.length);
+
+const result = await downloadVideo(url, {
+	outputDir: './downloads',
+	maxHeight: 1080,
+	onProgress: ({stage}) => console.log(stage),
+});
+console.log(result.filepath, result.validation);
+```
+
+Options: `outputDir`, `engine`, `maxHeight`, `transport`, `timeoutMs`, `signal` (an `AbortSignal`), `onProgress`, `cookiesFile`, plus tool paths `ytDlpPath`, `ffmpegLocation`, `ffprobePath`. `pageMedia` carries the output of `extractPageMedia` from a Xiaohongshu or Douyin page and switches those platforms to the browser engine; the extension fills it in automatically.
+
+`resolveVideo` returns displayable metadata (`platform`, `id`, `title`, `thumbnailUrl`, `durationSeconds`, `formats`) and never exposes signed media URLs.
+`downloadVideo` re-resolves the link, downloads, validates and returns `{filepath, bytes, validation, conversion, …}`.
+Failures throw an `EngineError` with a stable `code` such as `invalid_url`, `unsupported_platform`, `network_error`, `auth_required`, `verification_required`, `drm`, `no_formats`, `dependency_missing`, `timeout` or `cancelled`.
+
+## How it works
+
+```
+extension/   Manifest V3 popup + service worker   ─┐
+bin/         CLI                                   ├─▶ src/index.mjs ─▶ yt-dlp engine (yt-dlp + FFmpeg)
+native/      Native Messaging host + daemon       ─┘                  └─▶ browser engine (media read from the page by the extension)
+```
+
+For Xiaohongshu and Douyin the service worker injects `src/page-extract.mjs` into the video page, which returns only the target video's title, cover and signed media URLs; the native host downloads from those URLs and validates the file. The popup is only a view. A native host hands each task to a standalone daemon that owns the download, so closing the popup, rebuilding the service worker or dropping the port never cancels a transfer. Persisted task records contain no raw inputs, tokens or signed URLs.
+
+## Development
+
+```sh
+npm test              # offline contract tests (FFmpeg required for the MP4 suite)
+npm run check         # oxfmt --check + oxlint
+npm run fmt           # format
+```
+
+See [CONTRIBUTING.md](CONTRIBUTING.md). Design notes, platform research and manual validation logs live in [docs/](docs/).
+
+## License
+
+[AGPL-3.0](LICENSE). You can use, modify and share Fetchy freely; if you distribute a modified version or run one as a service, you must publish your source under the same license.
+
+This tool is for saving content you are allowed to keep, for personal use. Respect each platform's terms of service and the rights of content creators. The license covers the code only, not any downloaded content.

@@ -1,0 +1,38 @@
+name: Bug report
+description: A download, resolve or extension problem
+labels: [bug]
+body:
+  - type: dropdown
+    id: platform
+    attributes:
+      label: Video platform
+      options: [YouTube, Bilibili, Xiaohongshu, Douyin, Other / not platform-specific]
+    validations:
+      required: true
+  - type: dropdown
+    id: surface
+    attributes:
+      label: Where did it happen?
+      options: [Browser extension, CLI, Node API]
+    validations:
+      required: true
+  - type: textarea
+    id: what
+    attributes:
+      label: What happened?
+      description: Paste the error JSON printed by the CLI or shown in the popup. Remove any `xsec_token`, cookies or signed media URLs first.
+    validations:
+      required: true
+  - type: textarea
+    id: steps
+    attributes:
+      label: Steps to reproduce
+      placeholder: |
+        1. Open ...
+        2. Click ...
+  - type: textarea
+    id: env
+    attributes:
+      label: Environment
+      description: Output of `npm run doctor`, plus OS and browser version.
+      render: text

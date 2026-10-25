@@ -1,0 +1,30 @@
+{
+	"$schema": "./node_modules/oxlint/configuration_schema.json",
+	"env": {
+		"node": true,
+		"browser": true,
+		"es2024": true
+	},
+	"categories": {
+		"correctness": "error"
+	},
+	"rules": {
+		"no-unused-vars": [
+			"error",
+			{
+				"argsIgnorePattern": "^_",
+				"varsIgnorePattern": "^_",
+				"ignoreRestSiblings": true
+			}
+		],
+		"eqeqeq": "error",
+		"no-var": "error",
+		"prefer-const": [
+			"error",
+			{
+				"ignoreReadBeforeAssign": true
+			}
+		]
+	},
+	"ignorePatterns": ["dist/", "node_modules/", ".venv/", ".local/", "downloads/"]
+}
