@@ -46,6 +46,7 @@
 		"fmt": "oxfmt",
 		"fmt:check": "oxfmt --check",
 		"check": "npm run fmt:check && npm run lint",
+		"doctor": "node scripts/doctor.mjs",
 		"extension:build": "node scripts/build-extension.mjs",
 		"native:install": "node native/install.mjs",
 		"resolve": "node bin/fango-download.mjs resolve",

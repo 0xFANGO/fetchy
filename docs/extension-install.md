@@ -16,7 +16,7 @@ npm run extension:build
 npm run native:install -- --browser ego
 ```
 
-Node 部分无需安装额外 npm 依赖。安装脚本记录当前 Node、yt-dlp、FFmpeg 和 Ego 命令的绝对路径及运行 PATH，因此从浏览器启动时不依赖终端初始化脚本。`missingDependencies` 应为空；如非空，安装相应依赖后重新执行安装命令。
+随时可以运行 `npm run doctor` 查看哪些工具已找到、哪些缺失以及对应的安装提示。Node 运行时没有额外 npm 依赖，`npm install` 只安装格式化与 lint 工具。安装脚本记录当前 Node、yt-dlp、FFmpeg 和 Ego 命令的绝对路径及运行 PATH，因此从浏览器启动时不依赖终端初始化脚本。`missingDependencies` 应为空；如非空，安装相应依赖后重新执行安装命令。
 
 `--browser ego` 会同时注册 Ego 产品目录和 Chrome 共享目录，兼容本次实测的 Ego Lite 查找路径。Chrome 可使用 `--browser chrome` 只注册共享目录；`--browser all` 同样注册两处。提供 Chrome 注册选项不代表已完成 Chrome 实测。Windows/Linux 不提供首版安装支持。
 
