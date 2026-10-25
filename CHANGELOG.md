@@ -30,6 +30,8 @@ All notable changes to this project are documented here. The format follows
 
 - Reuse browser-resolved Xiaohongshu and Douyin short links without requesting
   the redirect again outside the browser session.
+- Save converted MP4 files on volumes without hard-link support, preserving
+  existing files and cleaning up cancelled publications.
 
 ## [0.2.0] - 2026-10-25
 

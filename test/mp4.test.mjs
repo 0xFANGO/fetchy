@@ -1,6 +1,7 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import {chmod, mkdtemp, readFile, readdir, realpath, rm, writeFile} from 'node:fs/promises';
+import fs, {chmod, mkdtemp, readFile, readdir, realpath, rm, writeFile} from 'node:fs/promises';
+import {constants} from 'node:fs';
 import {tmpdir} from 'node:os';
 import path from 'node:path';
 import {spawnSync} from 'node:child_process';
@@ -129,6 +130,116 @@ test(
 		assert.equal(result.filepath, path.join(directory, 'source.mp4'));
 		assert.equal(result.mode, 'remux');
 		await assertCompatible(result.filepath);
+		assert.deepEqual(await readFile(source), original);
+	},
+);
+
+test(
+	'volumes without hard links publish validated MP4 using exclusive copies',
+	{skip: skipReason(canEncode('libx264', 'aac'))},
+	async (t) => {
+		const directory = await sandbox(t);
+		const source = await synthetic(directory, 'source.mkv');
+		const original = await readFile(source);
+		let code;
+		t.mock.method(fs, 'link', async () => {
+			throw Object.assign(new Error('unsupported hard link'), {code});
+		});
+		const originalCopy = fs.copyFile,
+			flags = [];
+		t.mock.method(fs, 'copyFile', async (...args) => {
+			flags.push(args[2]);
+			return originalCopy(...args);
+		});
+		for (code of ['ENOSYS', 'ENOTSUP', 'EOPNOTSUPP', 'EPERM', 'EXDEV']) {
+			const outputPath = path.join(directory, `${code}.mp4`);
+			const result = await ensureCompatibleMp4(source, {outputPath});
+			assert.equal(result.filepath, outputPath);
+			assert.equal(result.mode, 'remux');
+			await assertCompatible(result.filepath);
+		}
+		assert.deepEqual(flags, Array(5).fill(constants.COPYFILE_EXCL));
+		assert.deepEqual(await readFile(source), original);
+		assert.equal(
+			(await readdir(directory)).some((file) => file.startsWith('.fetchy-mp4-')),
+			false,
+		);
+	},
+);
+
+test(
+	'exclusive-copy fallback preserves a destination created during publication',
+	{skip: skipReason(canEncode('libx264', 'aac'))},
+	async (t) => {
+		const directory = await sandbox(t);
+		const source = await synthetic(directory, 'source.mkv');
+		const original = await readFile(source);
+		const outputPath = path.join(directory, 'source.mp4');
+		t.mock.method(fs, 'link', async (_source, destination) => {
+			await writeFile(destination, 'concurrent user file', {flag: 'wx'});
+			throw Object.assign(new Error('unsupported hard link'), {code: 'ENOTSUP'});
+		});
+		await assert.rejects(ensureCompatibleMp4(source), {code: 'output_exists'});
+		assert.equal(await readFile(outputPath, 'utf8'), 'concurrent user file');
+		assert.deepEqual(await readFile(source), original);
+		assert.deepEqual((await readdir(directory)).sort(), ['source.mkv', 'source.mp4']);
+	},
+);
+
+for (const publication of ['link', 'copy']) {
+	test(
+		`cancellation after ${publication} publication removes only the newly created MP4`,
+		{skip: skipReason(canEncode('libx264', 'aac'))},
+		async (t) => {
+			const directory = await sandbox(t);
+			const source = await synthetic(directory, 'source.mkv');
+			const original = await readFile(source);
+			await writeFile(path.join(directory, 'existing.mp4'), 'preserved');
+			const controller = new AbortController();
+			const originalLink = fs.link,
+				originalCopy = fs.copyFile;
+			t.mock.method(fs, 'link', async (...args) => {
+				if (publication === 'copy')
+					throw Object.assign(new Error('unsupported hard link'), {code: 'ENOTSUP'});
+				await originalLink(...args);
+				controller.abort();
+			});
+			t.mock.method(fs, 'copyFile', async (...args) => {
+				await originalCopy(...args);
+				controller.abort();
+			});
+			await assert.rejects(ensureCompatibleMp4(source, {signal: controller.signal}), {
+				code: 'cancelled',
+			});
+			assert.deepEqual((await readdir(directory)).sort(), ['existing.mp4', 'source.mkv']);
+			assert.equal(await readFile(path.join(directory, 'existing.mp4'), 'utf8'), 'preserved');
+			assert.deepEqual(await readFile(source), original);
+		},
+	);
+}
+
+test(
+	'timeout after exclusive-copy publication cleans the new output and preserves the source',
+	{skip: skipReason(canEncode('libx264', 'aac'))},
+	async (t) => {
+		const directory = await sandbox(t);
+		const source = await synthetic(directory, 'source.mkv');
+		const original = await readFile(source);
+		let now = Date.now(),
+			copied = false;
+		t.mock.method(Date, 'now', () => now);
+		t.mock.method(fs, 'link', async () => {
+			throw Object.assign(new Error('unsupported hard link'), {code: 'ENOTSUP'});
+		});
+		const originalCopy = fs.copyFile;
+		t.mock.method(fs, 'copyFile', async (...args) => {
+			await originalCopy(...args);
+			copied = true;
+			now += 10_000;
+		});
+		await assert.rejects(ensureCompatibleMp4(source, {timeoutMs: 5000}), {code: 'timeout'});
+		assert.equal(copied, true);
+		assert.deepEqual(await readdir(directory), ['source.mkv']);
 		assert.deepEqual(await readFile(source), original);
 	},
 );

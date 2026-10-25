@@ -1,8 +1,11 @@
 import {constants} from 'node:fs';
-import {copyFile, link, lstat, open, realpath, rm, stat} from 'node:fs/promises';
+import fs, {copyFile, lstat, open, realpath, rm, stat} from 'node:fs/promises';
 import {randomUUID} from 'node:crypto';
 import path from 'node:path';
 import {EngineError, fileWriteError, runProcess} from './process.mjs';
+
+const NO_HARDLINK = new Set(['ENOSYS', 'ENOTSUP', 'EOPNOTSUPP', 'EPERM', 'EXDEV']);
+const sameFile = (a, b) => a?.isFile() && b?.isFile() && a.dev === b.dev && a.ino === b.ino;
 
 function fail(code, message) {
 	throw new EngineError(code, message);
@@ -197,7 +200,8 @@ export async function ensureCompatibleMp4(filepath, options = {}) {
 	const mode =
 		compatible && sourceIsMp4 ? 'copy' : selectedStreamsCompatible ? 'remux' : 'transcode';
 	const temporary = path.join(directory, `.fetchy-mp4-${randomUUID()}.mp4`);
-	let ownedTemporary = false;
+	let ownedTemporary = false,
+		ownedOutput;
 	try {
 		remaining();
 		const handle = await open(temporary, 'wx', 0o600);
@@ -264,16 +268,30 @@ export async function ensureCompatibleMp4(filepath, options = {}) {
 		});
 		validateConverted(source, output);
 		remaining();
-		// Atomic no-replace publication: rename() could silently overwrite an existing
-		// user file created during encoding. A same-directory hard link cannot do so.
+		// Both paths exclusively create the output, including on volumes without hard links.
 		try {
-			await link(temporary, finalPath);
+			const temporaryInfo = await lstat(temporary);
+			try {
+				await fs.link(temporary, finalPath);
+				ownedOutput = temporaryInfo;
+			} catch (error) {
+				if (!NO_HARDLINK.has(error.code)) throw error;
+				await fs.copyFile(temporary, finalPath, constants.COPYFILE_EXCL);
+				ownedOutput = await lstat(finalPath);
+			}
+			remaining();
+			const outputInfo = await lstat(finalPath);
+			if (!sameFile(outputInfo, ownedOutput) || outputInfo.size !== temporaryInfo.size)
+				fail('output_invalid', '保存时 MP4 文件发生变化，已停止交付。');
+			remaining();
 		} catch (error) {
+			if (error instanceof EngineError) throw error;
 			if (error.code === 'EEXIST') fail('output_exists', '目标文件已存在，请选择新的输出文件名。');
 			const storageError = fileWriteError(error);
 			if (storageError) throw storageError;
 			fail('output_invalid', '无法保存已验证的 MP4 文件。');
 		}
+		ownedOutput = null;
 		return {
 			filepath: finalPath,
 			mode,
@@ -281,6 +299,10 @@ export async function ensureCompatibleMp4(filepath, options = {}) {
 			audioCodec: output.audio.length ? 'aac' : null,
 		};
 	} catch (error) {
+		if (ownedOutput)
+			await lstat(finalPath)
+				.then((info) => (sameFile(info, ownedOutput) ? rm(finalPath, {force: true}) : undefined))
+				.catch(() => {});
 		const storageError = fileWriteError(error);
 		if (storageError) throw storageError;
 		if (error instanceof EngineError) throw error;
