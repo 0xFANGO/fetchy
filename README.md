@@ -1,9 +1,8 @@
 # Fango Video Downloader
 
-[![CI](https://github.com/0xFANGO/fango-video-downloader/actions/workflows/ci.yml/badge.svg)](https://github.com/0xFANGO/fango-video-downloader/actions/workflows/ci.yml)
-[![License: PolyForm Noncommercial 1.0.0](https://img.shields.io/badge/license-PolyForm%20Noncommercial%201.0.0-blue)](LICENSE)
-[![Node >= 22](https://img.shields.io/badge/node-%3E%3D22-brightgreen)](package.json)
-[![Platform: macOS](https://img.shields.io/badge/platform-macOS-lightgrey)](docs/extension-install.md)
+[![License: MIT](docs/assets/badges/license.svg)](LICENSE)
+![Node >= 22](docs/assets/badges/node.svg)
+![Platform: macOS](docs/assets/badges/platform.svg)
 
 Save a single video from **YouTube, Bilibili, Xiaohongshu or Douyin** to a folder on your Mac.
 One toolbar button, one command, or one function call. Everything runs locally.
@@ -11,9 +10,7 @@ One toolbar button, one command, or one function call. Everything runs locally.
 [中文文档](README.zh-CN.md)
 
 <p align="center">
-  <img src="docs/assets/popup-ready.png" width="30%" alt="Popup showing a detected Bilibili video with a Download button">
-  <img src="docs/assets/popup-downloading.png" width="30%" alt="Popup showing download progress at 62%">
-  <img src="docs/assets/popup-saved.png" width="30%" alt="Popup showing the saved file path and a Reveal in Finder button">
+  <img src="docs/assets/popup-states.png" alt="The popup in three states: a detected Bilibili video ready to download, a download at 62%, and the saved file with a Reveal in Finder button">
 </p>
 
 ## Features
@@ -145,6 +142,6 @@ See [CONTRIBUTING.md](CONTRIBUTING.md). Design notes, platform research and manu
 
 ## License
 
-Source-available under the [PolyForm Noncommercial License 1.0.0](LICENSE). Free for personal, educational, research and other non-commercial use, including modifying and sharing copies with the license and the `Required Notice` from [NOTICE](NOTICE). Commercial use is not granted. This is not an [OSI-approved](https://opensource.org/osd) open source license.
+[MIT](LICENSE).
 
 This tool is for saving content you are allowed to keep, for personal use. Respect each platform's terms of service and the rights of content creators. The license covers the code only, not any downloaded content.

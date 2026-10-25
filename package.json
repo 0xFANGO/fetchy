@@ -18,7 +18,7 @@
 	"bugs": {
 		"url": "https://github.com/0xFANGO/fango-video-downloader/issues"
 	},
-	"license": "PolyForm-Noncommercial-1.0.0",
+	"license": "MIT",
 	"repository": {
 		"type": "git",
 		"url": "git+https://github.com/0xFANGO/fango-video-downloader.git"
@@ -33,7 +33,6 @@
 		"extension",
 		"scripts",
 		"LICENSE",
-		"NOTICE",
 		"README.md",
 		"README.zh-CN.md"
 	],

@@ -1,9 +1,8 @@
 # Fango Video Downloader
 
-[![CI](https://github.com/0xFANGO/fango-video-downloader/actions/workflows/ci.yml/badge.svg)](https://github.com/0xFANGO/fango-video-downloader/actions/workflows/ci.yml)
-[![License: PolyForm Noncommercial 1.0.0](https://img.shields.io/badge/license-PolyForm%20Noncommercial%201.0.0-blue)](LICENSE)
-[![Node >= 22](https://img.shields.io/badge/node-%3E%3D22-brightgreen)](package.json)
-[![Platform: macOS](https://img.shields.io/badge/platform-macOS-lightgrey)](docs/extension-install.md)
+[![License: MIT](docs/assets/badges/license.svg)](LICENSE)
+![Node >= 22](docs/assets/badges/node.svg)
+![Platform: macOS](docs/assets/badges/platform.svg)
 
 把 **YouTube、B站、小红书、抖音** 的单个视频保存到你 Mac 上的文件夹。
 一个工具栏按钮、一条命令或一个函数调用，全部在本机完成。
@@ -11,9 +10,7 @@
 [English](README.md)
 
 <p align="center">
-  <img src="docs/assets/popup-ready.png" width="30%" alt="弹窗识别到 B 站视频并显示下载按钮">
-  <img src="docs/assets/popup-downloading.png" width="30%" alt="弹窗显示下载进度 62%">
-  <img src="docs/assets/popup-saved.png" width="30%" alt="弹窗显示已保存路径和在文件夹中显示按钮">
+  <img src="docs/assets/popup-states.png" alt="弹窗的三个状态：识别到 B 站视频可下载、下载进度 62%、已保存并可在文件夹中显示">
 </p>
 
 ## 特性
@@ -144,6 +141,6 @@ npm run fmt           # 格式化
 
 ## 许可证
 
-本项目以 [PolyForm Noncommercial License 1.0.0](LICENSE) 公开源码。允许个人、教育、研究等非商业用途，包括修改和分发副本，分发时须附带许可条款和 [NOTICE](NOTICE) 中的 `Required Notice`。不授予商业用途。它不是 [OSI 定义](https://opensource.org/osd)的开源许可证，对外介绍时请使用"免费、源码公开、非商用"的说法。常见问题见 [docs/license-faq.md](docs/license-faq.md)。
+[MIT](LICENSE)。
 
 本工具用于保存你有权保留的内容，仅限个人使用。请遵守各平台的服务条款，尊重内容创作者的权利。许可证只覆盖代码，不覆盖任何下载下来的内容。

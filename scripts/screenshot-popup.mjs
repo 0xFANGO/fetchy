@@ -2,11 +2,13 @@
 // the import path (npm i -g playwright works); not part of the test suite.
 // Usage: node scripts/screenshot-popup.mjs <repo root> <output dir>
 import {chromium} from 'playwright';
-import {readFile} from 'node:fs/promises';
+import {mkdtemp, readFile} from 'node:fs/promises';
+import {tmpdir} from 'node:os';
 import path from 'node:path';
 
 const root = process.argv[2];
 const outDir = process.argv[3];
+const frames = await mkdtemp(path.join(tmpdir(), 'popup-frames-'));
 const thumb = `<svg xmlns="http://www.w3.org/2000/svg" width="376" height="312"><defs><linearGradient id="g" x1="0" y1="0" x2="1" y2="1"><stop offset="0" stop-color="#2f6b8f"/><stop offset="1" stop-color="#1b2a3a"/></linearGradient></defs><rect width="376" height="312" fill="url(#g)"/><circle cx="110" cy="120" r="46" fill="#f2b84b" opacity=".9"/><path d="M0 240 Q120 170 220 230 T376 210 V312 H0Z" fill="#1f3f52"/></svg>`;
 const base = {
 	connection: {status: 'connected'},
@@ -110,11 +112,22 @@ for (const [name, state] of Object.entries(states)) {
 	});
 	await page.goto('https://popup.local/popup.html');
 	await page.waitForTimeout(400);
-	const height = Math.ceil(
-		await page.evaluate(() => document.querySelector('.shell').getBoundingClientRect().bottom),
-	);
-	await page.setViewportSize({width: 360, height});
-	await page.screenshot({path: `${outDir}/popup-${name}.png`});
+	await page.setViewportSize({width: 360, height: 430});
+	await page.screenshot({path: `${frames}/popup-${name}.png`});
 	await page.close();
 }
+const compose = await browser.newPage({viewport: {width: 1176, height: 478}, deviceScaleFactor: 2});
+const imgs = (
+	await Promise.all(
+		Object.keys(states).map(
+			async (name) =>
+				`<img src="data:image/png;base64,${(await readFile(`${frames}/popup-${name}.png`)).toString('base64')}" width="360" height="430">`,
+		),
+	)
+).join('');
+await compose.setContent(
+	`<body style="margin:0;background:#ebe7df;display:flex;gap:24px;padding:24px;align-items:flex-start">${imgs.replaceAll('<img', '<img style="border-radius:12px;box-shadow:0 4px 18px rgba(0,0,0,.12);display:block"')}</body>`,
+);
+await compose.waitForTimeout(300);
+await compose.screenshot({path: `${outDir}/popup-states.png`});
 await browser.close();

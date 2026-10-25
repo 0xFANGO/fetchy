@@ -20,6 +20,7 @@ All notable changes to this project are documented here. The format follows
 
 ### Removed
 
+- The PolyForm Noncommercial license and NOTICE file; the project is now MIT.
 - The `ego-browser` dependency, `egoBrowserPath` and `browserSpaceId` options.
 
 ## [0.2.0] - 2026-10-25
