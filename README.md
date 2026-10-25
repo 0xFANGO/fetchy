@@ -66,30 +66,30 @@ node bin/fango-download.mjs --help
 ## 通用方法
 
 ```js
-import { resolveVideo, downloadVideo } from './src/index.mjs';
+import {resolveVideo, downloadVideo} from './src/index.mjs';
 
 const url = 'https://www.bilibili.com/video/BV19Pnb6REhD/';
 const abortController = new AbortController();
 const info = await resolveVideo(url);
 const result = await downloadVideo(url, {
-  outputDir: './downloads',
-  engine: 'auto',
-  maxHeight: 1080,
-  timeoutMs: 30 * 60_000,
-  signal: abortController.signal,
-  onProgress: ({ stage }) => console.log(stage),
+	outputDir: './downloads',
+	engine: 'auto',
+	maxHeight: 1080,
+	timeoutMs: 30 * 60_000,
+	signal: abortController.signal,
+	onProgress: ({stage}) => console.log(stage),
 });
 console.log(result.filepath, result.validation);
 ```
 
 `resolveVideo` 返回可展示的规格以及可选 `thumbnailUrl`（未知为 `null`），不公开签名媒体 URL。`downloadVideo` 接受原始链接并重新解析，避免使用过期地址。失败抛出带 `code` 的错误；也导出 `resolve` / `download` 别名。
 
-| 平台 | auto 路由 | 当前机制 |
-| --- | --- | --- |
-| YouTube | yt-dlp | 优先原生 H.264/AAC，最终输出兼容 MP4；网络错误时有限尝试 HLS |
-| B站 | yt-dlp | 保留分 P，解析 DASH 音视频并输出兼容 MP4 |
-| 小红书 | browser | 读取目标笔记候选与镜像；缺少 Ego 可退到 yt-dlp，规格可能减少 |
-| 抖音 | browser | 分享短链、精选 modal_id 与详情页映射到同一视频，读取页面合流候选 |
+| 平台    | auto 路由 | 当前机制                                                         |
+| ------- | --------- | ---------------------------------------------------------------- |
+| YouTube | yt-dlp    | 优先原生 H.264/AAC，最终输出兼容 MP4；网络错误时有限尝试 HLS     |
+| B站     | yt-dlp    | 保留分 P，解析 DASH 音视频并输出兼容 MP4                         |
+| 小红书  | browser   | 读取目标笔记候选与镜像；缺少 Ego 可退到 yt-dlp，规格可能减少     |
+| 抖音    | browser   | 分享短链、精选 modal_id 与详情页映射到同一视频，读取页面合流候选 |
 
 `--engine yt-dlp` 可显式使用匿名解析路径，`--engine browser` 当前只支持小红书/抖音。浏览器路径使用 `ego-browser` 默认上下文中的独立任务页面，不保证与插件当前标签页属于同一 profile；不导出 Cookie，遇到登录/验证状态需在实际 Ego 目标页面处理。浏览器页面错误会保留可接管空间；取消和超时能停止本地传输，但不承诺已撤销浏览器端动作。
 

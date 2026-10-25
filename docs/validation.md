@@ -13,12 +13,12 @@
 
 本轮使用首版配置，YouTube / B站合并为 MKV。以下保留原始实测结果；当前 yt-dlp 路径已改为交付兼容 MP4，MKV 只可能作为处理中间文件。
 
-| 平台/内容ID | 路径（相对仓库） | 实际规格与大小 | 验证 |
-| --- | --- | --- | --- |
-| 小红书 `6adb92b90000000031037a66` | `.local/validation/video-pmooE1/media.mp4` | 720×1404，H.264 + AAC，146.7秒，19,875,696字节 | 统一API整片；ffprobe通过；额外完整解码通过 |
-| 抖音 `7695202760953793827` | `.local/validation/video-uxQF5w/media.mp4` | 576×1024，H.264 + AAC，2082.066667秒，173,315,309字节 | 统一API整片；ffprobe通过；额外完整解码通过 |
-| B站 `BV19Pnb6REhD` | `.local/validation/video-bPqlGQ/media.mkv` | 640×360，AV1 + AAC，1361.109秒，46,845,477字节 | 统一CLI两轨下载并合并；ffprobe通过；额外完整解码通过 |
-| YouTube `EWvNQjAaOHw` | `.local/validation/video-tx2hYv/media.mkv` | 640×360，VP9 + AAC，7871.797秒，202,099,372字节 | 统一CLI完整HLS两轨下载并合并；ffprobe通过，未额外逐帧解码 |
+| 平台/内容ID                       | 路径（相对仓库）                           | 实际规格与大小                                        | 验证                                                      |
+| --------------------------------- | ------------------------------------------ | ----------------------------------------------------- | --------------------------------------------------------- |
+| 小红书 `6adb92b90000000031037a66` | `.local/validation/video-pmooE1/media.mp4` | 720×1404，H.264 + AAC，146.7秒，19,875,696字节        | 统一API整片；ffprobe通过；额外完整解码通过                |
+| 抖音 `7695202760953793827`        | `.local/validation/video-uxQF5w/media.mp4` | 576×1024，H.264 + AAC，2082.066667秒，173,315,309字节 | 统一API整片；ffprobe通过；额外完整解码通过                |
+| B站 `BV19Pnb6REhD`                | `.local/validation/video-bPqlGQ/media.mkv` | 640×360，AV1 + AAC，1361.109秒，46,845,477字节        | 统一CLI两轨下载并合并；ffprobe通过；额外完整解码通过      |
+| YouTube `EWvNQjAaOHw`             | `.local/validation/video-tx2hYv/media.mkv` | 640×360，VP9 + AAC，7871.797秒，202,099,372字节       | 统一CLI完整HLS两轨下载并合并；ffprobe通过，未额外逐帧解码 |
 
 额外完整解码命令为 `ffmpeg -nostdin -v error -xerror -i <文件> -f null -`，小红书、抖音和B站三条均退出 0。YouTube长视频完成ffprobe结构/轨道/时长校验，没有额外逐帧解码。API 默认仅做 ffprobe 结构验证，所以仍返回 `validation.fullDecode: false`；额外实测不能变成所有未来下载的默认能力声明。
 
@@ -42,12 +42,12 @@ node bin/fango-download.mjs download 'https://www.youtube.com/watch?v=EWvNQjAaOH
 
 本轮使用统一 `downloadVideo` 方法，未设置 `maxHeight` 或手动降低画质。四条输入均完成整片下载；抖音使用原始短链接，修复跳转目标识别后重试成功。下载时 YouTube / B站仍使用首版 MKV 配置，随后对已下载文件调用当前 `ensureCompatibleMp4` 转换。下表为最终交付文件，不能把这两个转换结果表述为修改后从平台重新下载的结果。
 
-| 平台/内容ID | 文件（相对第二轮目录） | 实际规格 | 时长（秒） | 字节数 |
-| --- | --- | --- | --- | --- |
-| YouTube `eA9Zf2-qYYM` | `youtube-eA9Zf2-qYYM/media.mp4` | 1920×1080，H.264 / yuv420p + AAC | 3535.111 | 461,444,713 |
-| 小红书 `6ad9e45b000000003303249c` | `xiaohongshu-6ad9e45b000000003303249c/media.mp4` | 2160×3840，60fps，HEVC + AAC | 14.81288 | 18,772,329 |
-| B站 `BV1TeJ96EE5t` | `bilibili-BV1TeJ96EE5t/media.mp4` | 1920×1080，30fps，H.264 / yuv420p + AAC | 486.766667 | 222,325,796 |
-| 抖音 `7677789451007649658` | `douyin-7677789451007649658/media.mp4` | 1920×1080，30fps，H.264 + AAC | 1451.456009 | 70,659,108 |
+| 平台/内容ID                       | 文件（相对第二轮目录）                           | 实际规格                                | 时长（秒）  | 字节数      |
+| --------------------------------- | ------------------------------------------------ | --------------------------------------- | ----------- | ----------- |
+| YouTube `eA9Zf2-qYYM`             | `youtube-eA9Zf2-qYYM/media.mp4`                  | 1920×1080，H.264 / yuv420p + AAC        | 3535.111    | 461,444,713 |
+| 小红书 `6ad9e45b000000003303249c` | `xiaohongshu-6ad9e45b000000003303249c/media.mp4` | 2160×3840，60fps，HEVC + AAC            | 14.81288    | 18,772,329  |
+| B站 `BV1TeJ96EE5t`                | `bilibili-BV1TeJ96EE5t/media.mp4`                | 1920×1080，30fps，H.264 / yuv420p + AAC | 486.766667  | 222,325,796 |
+| 抖音 `7677789451007649658`        | `douyin-7677789451007649658/media.mp4`           | 1920×1080，30fps，H.264 + AAC           | 1451.456009 | 70,659,108  |
 
 四个最终文件均通过 ffprobe 视频、音频、时长检查；本轮未额外逐帧完整解码。YouTube / B站还检查了实际 MP4 容器、H.264/yuv420p/AAC、源与输出尺寸和时长一致性。原文件分别为 VP9/Opus 的 MKV（1,035,345,843 字节）与 AV1/AAC 的 MKV（64,501,193 字节），原 MKV 保留；本次属于视频重新编码，不能称为无损重封装。H.264 输出的大小可能增加或减少，分辨率不变也不代表画质完全不变。
 

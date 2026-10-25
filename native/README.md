@@ -41,19 +41,19 @@ daemon 持久化目录配置、待保存的目录选择、最近任务的安全�
 
 `state` 包含 `{task, settings: {outputDir}, pendingDirectory, choosingDirectory}`。任务状态包括 `running`、`cancelling`、`completed`、`cancelled`、`failed`、`interrupted`。
 
-| 方法 | 参数 | 结果 |
-| --- | --- | --- |
-| `hello` | 无 | `{version, protocolVersion, dependencies, state}` |
-| `getState` | 无 | 当前完整 state |
-| `resolve` | `{input, requestId}` | 经过筛选的视频元数据 |
-| `cancelResolve` | `{requestId}` | 取消指定解析请求 |
-| `start` | `{input, taskId, metadata?}` | 接受后的完整 state，任务随后发事件 |
-| `cancel` | `{taskId}` | 当前完整 state，确认停止后再发终态 |
-| `getSettings` | 无 | `{outputDir}` |
-| `chooseDirectory` | 无 | 选择器关闭后的完整 state |
-| `saveSettings` | `{outputDir}` | 校验并保存后的完整 state |
-| `reveal` | `{taskId}` | `{revealed: true}` |
-| `acknowledge` | `{taskId}` | 将任务结果标为已查看后的完整 state |
+| 方法              | 参数                         | 结果                                              |
+| ----------------- | ---------------------------- | ------------------------------------------------- |
+| `hello`           | 无                           | `{version, protocolVersion, dependencies, state}` |
+| `getState`        | 无                           | 当前完整 state                                    |
+| `resolve`         | `{input, requestId}`         | 经过筛选的视频元数据                              |
+| `cancelResolve`   | `{requestId}`                | 取消指定解析请求                                  |
+| `start`           | `{input, taskId, metadata?}` | 接受后的完整 state，任务随后发事件                |
+| `cancel`          | `{taskId}`                   | 当前完整 state，确认停止后再发终态                |
+| `getSettings`     | 无                           | `{outputDir}`                                     |
+| `chooseDirectory` | 无                           | 选择器关闭后的完整 state                          |
+| `saveSettings`    | `{outputDir}`                | 校验并保存后的完整 state                          |
+| `reveal`          | `{taskId}`                   | `{revealed: true}`                                |
+| `acknowledge`     | `{taskId}`                   | 将任务结果标为已查看后的完整 state                |
 
 首次连接会立即发送 state 事件。解析、下载启动、目录选择均在本地执行，不因 popup 端口断开而中止。`saveSettings` 只接受已有目录、默认目录或本次系统选择器选中的目录。
 

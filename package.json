@@ -1,17 +1,30 @@
 {
-  "name": "fango-video-downloader",
-  "version": "0.2.0",
-  "private": true,
-  "type": "module",
-  "engines": { "node": ">=22" },
-  "exports": "./src/index.mjs",
-  "bin": { "fango-download": "./bin/fango-download.mjs" },
-  "scripts": {
-    "test": "node --test test/*.test.mjs",
-    "extension:build": "node scripts/build-extension.mjs",
-    "native:install": "node native/install.mjs",
-    "resolve": "node bin/fango-download.mjs resolve",
-    "download": "node bin/fango-download.mjs download"
-  },
-  "license": "PolyForm-Noncommercial-1.0.0"
+	"name": "fango-video-downloader",
+	"version": "0.2.0",
+	"private": true,
+	"license": "PolyForm-Noncommercial-1.0.0",
+	"bin": {
+		"fango-download": "./bin/fango-download.mjs"
+	},
+	"type": "module",
+	"exports": "./src/index.mjs",
+	"scripts": {
+		"test": "node --test test/*.test.mjs",
+		"lint": "oxlint",
+		"lint:fix": "oxlint --fix",
+		"fmt": "oxfmt",
+		"fmt:check": "oxfmt --check",
+		"check": "npm run fmt:check && npm run lint",
+		"extension:build": "node scripts/build-extension.mjs",
+		"native:install": "node native/install.mjs",
+		"resolve": "node bin/fango-download.mjs resolve",
+		"download": "node bin/fango-download.mjs download"
+	},
+	"devDependencies": {
+		"oxfmt": "^0.74.0",
+		"oxlint": "^1.89.0"
+	},
+	"engines": {
+		"node": ">=22"
+	}
 }
