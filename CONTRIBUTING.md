@@ -41,14 +41,15 @@ npm run lint:fix
 ```
 
 Formatting is enforced by [oxfmt](https://oxc.rs) (tabs, single quotes) and
-linting by [oxlint](https://oxc.rs). CI runs `npm run check`, `npm test` and
-the extension build on every pull request; all three must pass.
+linting by [oxlint](https://oxc.rs). Run the relevant checks locally before
+requesting review. The Release workflow checks formatting and lint, then packs
+the extension; there is currently no PR test workflow.
 
 ## Commit messages
 
-Commits follow [Conventional Commits](https://www.conventionalcommits.org/).
-GitHub release notes are generated from them, so the subject line is what
-users read.
+PR titles and commits follow [Conventional Commits](https://www.conventionalcommits.org/).
+Each PR is squash-merged, using its title as the final commit subject and a
+concise description as the body.
 
 ```
 <type>(<scope>): <subject>
@@ -66,8 +67,8 @@ users read.
   cannot explain. Wrap at 72 characters.
 - A breaking change to the API, CLI flags, native protocol or file layout
   gets a `!` after the type and a `BREAKING CHANGE:` paragraph in the body.
-- One logical change per commit. Formatting-only changes go in their own
-  `chore` commit so reviews stay readable.
+- One logical change per PR. Iterative commits are fine on the branch;
+  unrelated formatting or refactoring belongs in a separate PR.
 
 Examples:
 
@@ -78,31 +79,73 @@ chore: adopt oxfmt and oxlint, format the whole codebase
 feat(cli)!: drop --engine browser; the CLI always uses yt-dlp
 ```
 
-Pull request titles follow the same format, since squash merges use them as
-the commit subject.
+## Changelog
+
+`CHANGELOG.md` is the source for release notes, curated for users rather than
+generated from the commit log. Follow [Keep a Changelog](https://keepachangelog.com/en/1.1.0/):
+
+- Keep `Unreleased` at the top, then versions in reverse chronological order
+  with `YYYY-MM-DD` dates and release or comparison links when available.
+- Write one short sentence per change, grouped under relevant Added, Changed,
+  Deprecated, Removed, Fixed or Security headings. Omit empty categories.
+- Describe the user-visible result. Combine related fixes and leave formatting,
+  internal refactoring, test counts and development steps out of the notes.
+- Always preserve breaking changes, removals, migration guidance and license
+  changes. Link to installation docs instead of repeating their instructions.
+- On release, move the shipped entries out of `Unreleased`. GitHub release
+  notes summarize the same changes; documentation-only edits need no entry.
 
 ## Releasing
 
+Prepare a release PR from current `main`:
+
 ```sh
-npm version patch   # or minor / major
+git switch main
+git pull --ff-only
+git switch -c codex/release-X.Y.Z
+npm version X.Y.Z --no-git-tag-version
+npm run fmt
+npm run check
+npm test
+RELEASE_TAG=vX.Y.Z npm run extension:pack
 ```
 
-That one command bumps `package.json`, copies the version into
-`extension/manifest.json`, commits, tags `v<version>` and pushes. The Release
-workflow then builds the extension, checks the tag against the version,
-creates the GitHub release with generated notes and attaches
-`fetchy-extension-<version>.zip`. Add a line to `CHANGELOG.md` beforehand if
-the generated notes are not enough. `npm run extension:pack` produces the same
-zip locally.
+Replace `X.Y.Z` with the intended version. This updates `package.json`, the
+lockfile and extension manifest without creating a commit or tag; the version
+hook stages the manifest. Move the shipped changelog entries into the dated
+version section, update its links, and include these files in the release PR.
+Squash-merge it before tagging. Version commands never push automatically.
+
+After the PR is merged:
+
+```sh
+git switch main
+git pull --ff-only
+git tag -a vX.Y.Z MERGED_RELEASE_SHA -m 'Release vX.Y.Z'
+git push origin refs/tags/vX.Y.Z
+gh release create vX.Y.Z --verify-tag --title 'Fetchy vX.Y.Z' --notes-file .local/release-notes.md
+```
+
+Replace `MERGED_RELEASE_SHA` with the release PR's squash commit on `main`,
+even if newer commits have since landed. Confirm it contains the expected
+version before tagging. Write the short release notes to
+`.local/release-notes.md` first. Publishing the GitHub Release triggers the
+workflow to check and pack the matching version,
+then attach `fetchy-extension-X.Y.Z.zip`; pushing a tag alone does not trigger
+it. Verify the workflow succeeds and the asset appears. Preserve published
+tags; ship corrections in a new version.
 
 ## Pull requests
 
-1. Branch from `main`.
+1. Start a fresh branch from current `main`, including after a previous squash merge.
 2. Keep each PR focused on one fix or feature.
 3. Add or update tests for behaviour you change. Never commit downloaded media,
    cookies, tokens or signed media URLs; validation logs belong in `.local/`.
-4. Run `npm run check` and `npm test` before pushing.
-5. Describe which platforms you verified manually, if any.
+4. Run `npm run check`, relevant tests and the extension build for code changes.
+   Documentation-only changes need formatting and diff checks, not the full suite.
+5. Update `Unreleased` for user-visible changes and describe verification performed.
+6. Use **Squash and merge** only. Check the final title and body; do not include
+   the branch's intermediate commit list. Start the next PR from updated `main`.
 
 By contributing you agree that your contributions are licensed under the
 project's [AGPL-3.0](LICENSE) license.

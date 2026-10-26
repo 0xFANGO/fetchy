@@ -1,57 +1,40 @@
 # Changelog
 
-All notable changes to this project are documented here. The format follows
-[Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
+Notable changes for users, following [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
-
-### Added
-
-- `npm run doctor` to check local dependencies.
-- `npm run extension:pack` and a Release workflow that attaches the packed
-  extension zip to every GitHub release.
-- Code style tooling (oxfmt, oxlint), CI workflow and contributor docs.
-
-### Changed
-
-- Renamed the project, extension, native host and default download folder to Fetchy.
-- Xiaohongshu and Douyin media is now read directly from the video page in the
-  user's own browser by the extension (`scripting` + host permissions). The
-  extension no longer depends on Ego Browser.
-- The CLI uses yt-dlp for every platform; `--engine browser` is gone.
-- Rewrote the README for first-time users; moved design notes into `docs/`.
-
-### Removed
-
-- The PolyForm Noncommercial license and NOTICE file; the project is now AGPL-3.0.
-- The `ego-browser` dependency, `egoBrowserPath` and `browserSpaceId` options.
-
-### Fixed
-
-- Reuse browser-resolved Xiaohongshu and Douyin short links without requesting
-  the redirect again outside the browser session.
-- Save converted MP4 files on volumes without hard-link support, preserving
-  existing files and cleaning up cancelled publications.
-- Reject non-MP4 containers before publishing browser downloads as `.mp4` files.
-- Recover the local daemon when a stale lock's PID belongs to another process.
 
 ## [0.2.0] - 2026-10-25
 
 ### Added
 
-- Manifest V3 browser extension with a toolbar popup, current-page
-  detection, manual link input, download / cancel / retry and a download
-  directory setting.
-- Native Messaging host and a standalone download daemon so downloads keep
-  running after the popup closes.
-- Output filenames based on the real video title, with sanitising and
-  no-overwrite numbering.
+- Browser extension with download controls and background downloads.
+- Prebuilt extension ZIPs and `npm run doctor` for dependency checks.
 
-## [0.1.0] - 2026-10-24
+### Changed
+
+- Renamed the project to Fetchy and changed the license to AGPL-3.0-only.
+- Save videos directly in the selected folder, with title-based names and
+  automatic numbering for duplicates.
+- Read Xiaohongshu and Douyin media from the user's browser; the CLI uses yt-dlp.
+
+### Removed
+
+- CLI `--engine browser` and Node API `egoBrowserPath` / `browserSpaceId` options.
+  Use the extension for browser-based downloads; Ego Browser is no longer required.
+
+### Fixed
+
+- Xiaohongshu and Douyin short-link downloads.
+- Saving to disks without hard-link support; reject non-MP4 files before saving.
+- Background startup after stale locks or simultaneous connection attempts.
+
+## 0.1.0 - 2026-10-24
 
 ### Added
 
-- Unified `resolveVideo` / `downloadVideo` API and CLI for YouTube, Bilibili,
-  Xiaohongshu and Douyin.
-- yt-dlp engine delivering H.264/AAC MP4 with remux or transcode as needed.
-- Browser engine for Xiaohongshu and Douyin.
+- CLI and Node API for single-video downloads from YouTube, Bilibili,
+  Xiaohongshu and Douyin, with MP4 validation.
+
+[Unreleased]: https://github.com/0xFANGO/fetchy/compare/v0.2.0...main
+[0.2.0]: https://github.com/0xFANGO/fetchy/releases/tag/v0.2.0
