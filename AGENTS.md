@@ -23,6 +23,25 @@ no runtime npm dependencies. Tests use `node:test`.
   `fix(core): …`, `chore: …`); see CONTRIBUTING.md. Subject in English,
   imperative, under 72 characters; body explains why.
 
+## Changelog & Git workflow
+
+- Write `CHANGELOG.md` and GitHub release notes in English.
+- Keep `CHANGELOG.md` focused on user-visible changes, grouped by release.
+  Use short entries under relevant Added / Changed / Removed / Fixed sections;
+  include deprecations, security fixes and migration steps when applicable.
+  Omit formatting, refactoring, test counts and development chronology.
+- Put upcoming changes in `Unreleased`; move them into the version section
+  when releasing. Keep GitHub release notes consistent and link to installation
+  docs instead of copying them. Preserve breaking changes and license changes.
+- Use a fresh branch from `main` for each focused PR. Iterative commits on the
+  branch are fine; merge into `main` with **squash merge only**. The PR title
+  follows Conventional Commits and becomes the final commit subject; use a
+  concise PR description rather than a list of intermediate commits.
+- Prepare version and changelog updates in a release PR. Tag the merged `main`
+  commit only after squash merge, then publish the GitHub Release. See
+  CONTRIBUTING.md for commands. Do not rewrite published tags or `main` history
+  unless the user explicitly requests that separate operation.
+
 ## Architecture
 
 Dependency direction is one-way; never import upwards.
