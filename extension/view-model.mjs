@@ -30,6 +30,11 @@ export function safeThumbnail(value) {
 	}
 }
 
+/** Shorten the user's home directory for display; the full path stays in the tooltip. */
+export function displayPath(value) {
+	return typeof value === 'string' ? value.replace(/^(\/Users|\/home)\/[^/]+(?=\/|$)/, '~') : '';
+}
+
 export function errorMessage(error, fallback = '暂时无法完成，请稍后重试。') {
 	const messages = {
 		invalid_url: '请输入一个有效的视频链接；分享文案中请只保留一个链接。',
@@ -136,6 +141,8 @@ export function deriveView(state = {}) {
 		primary: null,
 		secondary: [],
 		outputDir: task?.outputDir || state.settings?.outputDir || '',
+		// A visible task keeps its own pinned directory, so only switch between tasks.
+		canChangeDirectory: connected && !task && !state.choosingDirectory && !state.starting,
 		actualPath: '',
 		progress: null,
 		connectionNotice: '',

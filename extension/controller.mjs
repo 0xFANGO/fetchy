@@ -350,6 +350,15 @@ export class Controller {
 			this.persist.catch(() => {});
 		}
 	}
+	async chooseDirectory() {
+		this.state.choosingDirectory = true;
+		this.publish();
+		try {
+			this.receiveNative(await this.rpc('chooseDirectory', {}, 10 * 60_000));
+		} finally {
+			this.state.choosingDirectory = false;
+		}
+	}
 	async action(action, data = {}) {
 		this.state.notice = null;
 		try {
@@ -406,15 +415,20 @@ export class Controller {
 					this.state.view = 'main';
 					break;
 				case 'chooseDirectory':
-					this.state.choosingDirectory = true;
 					this.state.settingsNotice = null;
-					this.publish();
-					try {
-						this.receiveNative(await this.rpc('chooseDirectory', {}, 10 * 60_000));
-					} finally {
-						this.state.choosingDirectory = false;
-					}
+					await this.chooseDirectory();
 					break;
+				case 'changeDirectory': {
+					// The main-view footer picks and saves in one step. Comparing with the
+					// previous pending choice keeps a cancelled picker from saving it.
+					if (this.state.choosingDirectory) break;
+					const previous = this.state.pendingDirectory;
+					await this.chooseDirectory();
+					const picked = this.state.pendingDirectory;
+					if (picked && picked !== previous)
+						this.receiveNative(await this.rpc('saveSettings', {outputDir: picked}));
+					break;
+				}
 				case 'saveSettings':
 					this.receiveNative(
 						await this.rpc('saveSettings', {

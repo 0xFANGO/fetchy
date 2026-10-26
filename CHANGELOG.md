@@ -4,6 +4,15 @@ Notable changes for users, following [Keep a Changelog](https://keepachangelog.c
 
 ## [Unreleased]
 
+### Added
+
+- Change the download folder from the popup footer; the new folder is saved
+  right away for the next download.
+
+### Changed
+
+- New extension icon and a cleaner, more compact popup layout.
+
 ## [0.2.0] - 2026-10-25
 
 ### Added

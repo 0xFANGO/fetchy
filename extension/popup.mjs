@@ -1,4 +1,4 @@
-import {deriveView, taskIsVisible, withPendingDraft} from './view-model.mjs';
+import {deriveView, displayPath, taskIsVisible, withPendingDraft} from './view-model.mjs';
 
 const byId = (id) => document.getElementById(id);
 let port;
@@ -84,10 +84,6 @@ function render(state = {}) {
 	byId('connection').classList.toggle('is-error', state.connection?.status === 'disconnected');
 	show('help-button', view.showConnectionHelp);
 
-	setText(
-		'section-caption',
-		view.task ? '本次下载' : view.showCard ? '准备好，保存到本地' : '保存一段好内容',
-	);
 	show('empty-state', view.showEmpty);
 	setText('empty-title', view.emptyTitle);
 	show('video-card', view.showCard);
@@ -136,6 +132,7 @@ function render(state = {}) {
 	show('notice', Boolean(view.notice));
 	setText('notice', view.notice);
 	currentPrimary = view.primary;
+	show('actions', Boolean(view.primary || view.secondary.length));
 	show('primary-button', Boolean(view.primary));
 	if (view.primary) {
 		setText('primary-label', view.primary.label);
@@ -159,8 +156,17 @@ function render(state = {}) {
 		);
 	}
 	show('destination', Boolean(view.outputDir) && !view.actualPath);
-	setText('destination-path', view.outputDir);
-	byId('destination-path').title = view.outputDir;
+	setText(
+		'destination-path',
+		view.choosingDirectory ? '正在选择文件夹…' : displayPath(view.outputDir),
+	);
+	byId('change-directory').title = view.outputDir;
+	byId('change-directory').disabled = !view.canChangeDirectory;
+	byId('change-directory').setAttribute(
+		'aria-label',
+		`保存到 ${view.outputDir}${view.canChangeDirectory ? '，点击更改' : ''}`,
+	);
+	show('destination-action', view.canChangeDirectory);
 
 	setText('directory-path', view.directory || '连接后读取保存位置');
 	byId('directory-path').title = view.directory;
@@ -226,6 +232,7 @@ byId('secondary-actions').addEventListener('click', (event) => {
 	if (button.dataset.action === 'changeLink') pendingFocus = true;
 	dispatch(button.dataset.action);
 });
+byId('change-directory').addEventListener('click', () => dispatch('changeDirectory'));
 byId('settings-button').addEventListener('click', () => dispatch('openSettings'));
 byId('back-button').addEventListener('click', () => dispatch('back'));
 byId('help-button').addEventListener('click', () => dispatch('openHelp'));

@@ -249,6 +249,31 @@ test('pending directory survives loss of popup and current task keeps its destin
 	assert.equal(controller.state.task.outputDir, '/old');
 	assert.equal(controller.state.settingsNotice, '已保存');
 });
+test('footer directory change saves a new pick and ignores a cancelled picker', async () => {
+	let pick = '/picked';
+	const {controller, calls} = harness({
+		rpc: async (method, params) => {
+			calls.push({method, params});
+			if (method === 'chooseDirectory') return {pendingDirectory: pick, choosingDirectory: false};
+			if (method === 'saveSettings')
+				return {settings: {outputDir: params.outputDir}, pendingDirectory: null};
+			return {};
+		},
+	});
+	controller.receiveNative({settings: {outputDir: '/old'}, pendingDirectory: null});
+	await controller.action('changeDirectory');
+	assert.equal(controller.state.settings.outputDir, '/picked');
+	assert.equal(controller.state.choosingDirectory, false);
+	assert.equal(controller.state.view, 'main');
+	pick = null;
+	calls.length = 0;
+	await controller.action('changeDirectory');
+	assert.deepEqual(
+		calls.map((c) => c.method),
+		['chooseDirectory'],
+	);
+	assert.equal(controller.state.settings.outputDir, '/picked');
+});
 test('untrusted runtime exceptions do not expose URLs or credentials to popup', () => {
 	assert.doesNotMatch(
 		displayError({message: 'https://example.com/?token=secret'}).message,

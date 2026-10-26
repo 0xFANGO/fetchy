@@ -112,16 +112,20 @@ for (const [name, state] of Object.entries(states)) {
 	});
 	await page.goto('https://popup.local/popup.html');
 	await page.waitForTimeout(400);
-	await page.setViewportSize({width: 360, height: 430});
+	// The real popup sizes to its content; a fixed frame would add blank space.
+	await page.setViewportSize({
+		width: 360,
+		height: await page.evaluate(() => document.body.scrollHeight),
+	});
 	await page.screenshot({path: `${frames}/popup-${name}.png`});
 	await page.close();
 }
-const compose = await browser.newPage({viewport: {width: 1176, height: 478}, deviceScaleFactor: 2});
+const compose = await browser.newPage({viewport: {width: 1176, height: 100}, deviceScaleFactor: 2});
 const imgs = (
 	await Promise.all(
 		Object.keys(states).map(
 			async (name) =>
-				`<img src="data:image/png;base64,${(await readFile(`${frames}/popup-${name}.png`)).toString('base64')}" width="360" height="430">`,
+				`<img src="data:image/png;base64,${(await readFile(`${frames}/popup-${name}.png`)).toString('base64')}" width="360">`,
 		),
 	)
 ).join('');
@@ -129,5 +133,5 @@ await compose.setContent(
 	`<body style="margin:0;background:#ebe7df;display:flex;gap:24px;padding:24px;align-items:flex-start">${imgs.replaceAll('<img', '<img style="border-radius:12px;box-shadow:0 4px 18px rgba(0,0,0,.12);display:block"')}</body>`,
 );
 await compose.waitForTimeout(300);
-await compose.screenshot({path: `${outDir}/popup-states.png`});
+await compose.screenshot({path: `${outDir}/popup-states.png`, fullPage: true});
 await browser.close();

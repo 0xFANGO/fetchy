@@ -2,6 +2,7 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import {
 	deriveView,
+	displayPath,
 	errorMessage,
 	formatDuration,
 	safeThumbnail,
@@ -140,6 +141,23 @@ test('directory selection survives settings display and current task retains pin
 	assert.equal(view.directoryPending, true);
 	assert.equal(view.outputDir, '/original');
 	assert.equal(view.choosingDirectory, true);
+});
+
+test('footer directory shortens home and only switches between tasks', () => {
+	assert.equal(displayPath('/Users/me/Downloads/Fetchy'), '~/Downloads/Fetchy');
+	assert.equal(displayPath('/home/me'), '~');
+	assert.equal(displayPath('/Volumes/Media/Users/me'), '/Volumes/Media/Users/me');
+	const idle = {connection: connected, context, settings: {outputDir: '/a'}};
+	assert.equal(deriveView(idle).canChangeDirectory, true);
+	assert.equal(deriveView({...idle, choosingDirectory: true}).canChangeDirectory, false);
+	assert.equal(
+		deriveView({...idle, connection: {status: 'disconnected'}}).canChangeDirectory,
+		false,
+	);
+	assert.equal(
+		deriveView({...idle, task: {status: 'running', outputDir: '/a'}}).canChangeDirectory,
+		false,
+	);
 });
 
 test('unknown duration and unsafe covers use honest fallbacks', () => {

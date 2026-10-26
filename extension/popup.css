@@ -33,7 +33,13 @@ body {
 	line-height: 1.55;
 }
 .shell {
-	padding: 22px 22px 18px;
+	padding: 0;
+}
+#main-view {
+	padding: 16px 18px;
+}
+#settings-view {
+	padding: 18px 18px 16px;
 }
 button,
 input,
@@ -47,8 +53,7 @@ button:disabled {
 	cursor: default;
 	opacity: 0.45;
 }
-button:focus-visible,
-textarea:focus-visible {
+button:focus-visible {
 	outline: 3px solid #e38f5f;
 	outline-offset: 3px;
 }
@@ -100,37 +105,16 @@ svg {
 	display: flex;
 	align-items: center;
 	justify-content: space-between;
-	margin-bottom: 28px;
-	min-height: 34px;
-}
-.brand {
-	display: flex;
-	align-items: center;
-	gap: 9px;
-}
-.brand-mark {
-	display: grid;
-	place-items: center;
-	width: 30px;
-	height: 30px;
-	background: var(--ink);
-	color: var(--paper);
-	border-radius: 8px;
-}
-.brand-mark svg {
-	width: 20px;
-	height: 20px;
-	stroke-width: 1.9;
+	min-height: 50px;
+	padding: 0 10px 0 18px;
+	border-bottom: 1px solid var(--line);
 }
 .wordmark {
 	font-family: 'Avenir Next', 'Trebuchet MS', sans-serif;
-	font-size: 25px;
+	font-size: 18px;
 	line-height: 1;
-	font-weight: 750;
-	letter-spacing: -1.35px;
-}
-.wordmark-dot {
-	color: var(--accent);
+	font-weight: 700;
+	letter-spacing: -0.5px;
 }
 .icon-button {
 	display: grid;
@@ -162,28 +146,14 @@ svg {
 }
 .back-button {
 	gap: 3px;
+	padding: 5px 8px;
 }
 .back-button svg {
 	width: 16px;
 	height: 16px;
 }
-.section-caption {
-	display: flex;
-	align-items: center;
-	gap: 12px;
-	margin-bottom: 18px;
-	font-size: 10px;
-	font-weight: 600;
-	letter-spacing: 1.5px;
-	color: #7d8178;
-}
-.caption-line {
-	height: 1px;
-	background: var(--line);
-	flex: 1;
-}
 .connection {
-	margin: -5px 0 20px;
+	margin: 14px 18px 0;
 	padding: 12px 13px;
 	background: #f4eee0;
 	border: 1px solid #e7dcc2;
@@ -204,72 +174,90 @@ svg {
 	color: #884d37;
 }
 .empty-state {
-	padding: 0 0 19px;
-}
-.empty-mark {
-	display: grid;
-	place-items: center;
-	width: 36px;
-	height: 36px;
-	border: 1px solid #dfdfd3;
-	background: var(--wash);
-	border-radius: 10px;
-	color: #8b917f;
-	margin-bottom: 15px;
-}
-.empty-mark svg {
-	width: 18px;
-	height: 18px;
-	stroke-width: 1.5;
+	padding: 0 0 16px;
 }
 .empty-state h1 {
-	max-width: 270px;
-	font-size: 19px;
+	font-size: 16px;
 	font-weight: 600;
-	letter-spacing: -0.4px;
-	line-height: 1.55;
+	letter-spacing: -0.2px;
+	line-height: 1.45;
 }
-.input-form {
-	margin-top: 0;
+.empty-hint {
+	margin-top: 5px;
+	color: var(--muted);
+	font-size: 12px;
 }
-.input-form label {
-	display: block;
-	font-size: 11px;
-	color: #777d70;
-	margin-bottom: 7px;
-	font-weight: 600;
+.field {
+	border: 1px solid #dbded3;
+	border-radius: 10px;
+	background: var(--surface);
+	box-shadow: 0 1px 2px #2429230a;
+	transition:
+		border-color 0.14s,
+		box-shadow 0.14s;
 }
-.input-form textarea {
+.field:focus-within {
+	border-color: #c9b9a6;
+	box-shadow: 0 0 0 3px #df593e1f;
+}
+.field textarea {
 	resize: none;
 	display: block;
 	width: 100%;
-	min-height: 72px;
-	border: 1px solid #dbded3;
-	border-radius: 9px;
-	padding: 12px 13px;
-	background: var(--surface);
+	min-height: 64px;
+	border: 0;
+	outline: none;
+	padding: 12px 13px 4px;
+	background: transparent;
 	color: var(--ink);
 	font-size: 12px;
 	line-height: 1.7;
 	overflow: auto;
 	overflow-wrap: anywhere;
 }
-.input-form textarea::placeholder {
+.field textarea::placeholder {
 	color: #999e91;
 }
-.input-form textarea:focus {
-	border-color: #adb5a2;
-	background: #fffefb;
+.field-footer {
+	display: flex;
+	align-items: center;
+	justify-content: space-between;
+	gap: 8px;
+	padding: 6px 10px 9px 13px;
 }
 .platforms {
-	margin-top: 9px;
-	color: var(--muted);
-	font-size: 10px;
-	letter-spacing: 0.1px;
+	display: flex;
+	flex-wrap: wrap;
+	gap: 4px;
 }
 .platforms span {
-	color: #b0b3a7;
-	padding: 0 5px;
+	padding: 1px 6px;
+	border-radius: 5px;
+	background: var(--wash);
+	color: #6f7468;
+	font-size: 10px;
+	line-height: 1.6;
+}
+.enter-hint {
+	display: inline-flex;
+	align-items: center;
+	gap: 4px;
+	color: #9a9e92;
+	font-size: 10px;
+	white-space: nowrap;
+}
+kbd {
+	min-width: 18px;
+	padding: 0 4px;
+	border: 1px solid var(--line);
+	border-bottom-width: 2px;
+	border-radius: 4px;
+	background: var(--paper);
+	color: #7d8178;
+	font: inherit;
+	font-size: 10px;
+	line-height: 14px;
+	text-align: center;
 }
 .video-card {
 	display: flex;
@@ -329,7 +317,7 @@ svg {
 }
 .task-status {
 	margin-top: 16px;
-	margin-bottom: 18px;
+	margin-bottom: 10px;
 }
 .status-row {
 	display: flex;
@@ -426,7 +414,7 @@ svg {
 	overflow: hidden;
 }
 .actions {
-	margin-top: 20px;
+	margin-top: 16px;
 }
 .primary-button {
 	width: 100%;
@@ -469,24 +457,54 @@ svg {
 	font-size: 11px;
 }
 .destination {
-	margin-top: 20px;
-	padding-top: 14px;
+	margin: 16px -18px -16px;
+	padding: 5px 8px;
 	border-top: 1px solid var(--line);
+	background: #f3f1eb;
+}
+.destination-button {
+	width: 100%;
 	display: flex;
 	align-items: center;
-	gap: 6px;
-	font-size: 10px;
+	gap: 7px;
+	padding: 7px 10px;
+	border-radius: 7px;
+	background: transparent;
 	color: #898e80;
-	min-width: 0;
+	font-size: 11px;
+	text-align: left;
 }
-.destination > svg {
-	width: 13px;
-	height: 13px;
+.destination-button:disabled {
+	opacity: 1;
+}
+.destination-button:not(:disabled):hover {
+	background: #e9e6dd;
+	color: #62695e;
+}
+.destination-button > svg {
+	width: 14px;
+	height: 14px;
 }
 .destination-label {
 	white-space: nowrap;
 }
+.destination-action {
+	display: inline-flex;
+	align-items: center;
+	gap: 1px;
+	margin-left: auto;
+	color: var(--accent-dark);
+	font-weight: 600;
+	white-space: nowrap;
+}
+.destination-action svg {
+	width: 12px;
+	height: 12px;
+	stroke-width: 2;
+}
 .destination-path {
+	flex: 1;
+	color: #62695e;
 	direction: rtl;
 	text-align: left;
 	overflow: hidden;
@@ -496,10 +514,9 @@ svg {
 	unicode-bidi: plaintext;
 }
 .settings-title {
-	font-size: 20px;
+	font-size: 17px;
 	font-weight: 600;
-	letter-spacing: -0.5px;
-	margin-top: 4px;
+	letter-spacing: -0.2px;
 }
 .settings-description {
 	margin-top: 7px;
@@ -606,8 +623,7 @@ svg {
 	}
 }
 @media (forced-colors: active) {
-	.primary-button,
-	.brand-mark {
+	.primary-button {
 		border: 1px solid ButtonText;
 	}
 	.status-indicator {
