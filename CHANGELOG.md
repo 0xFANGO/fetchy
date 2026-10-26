@@ -8,10 +8,15 @@ Notable changes for users, following [Keep a Changelog](https://keepachangelog.c
 
 - Change the download folder from the popup footer; the new folder is saved
   right away for the next download.
+- `npm run deps:install` to install the pinned downloader into a project-local environment.
 
 ### Changed
 
 - New extension icon and a cleaner, more compact popup layout.
+
+### Fixed
+
+- Dependency checks now report tools that cannot run and consistently ignore unusable local executables.
 
 ## [0.2.0] - 2026-10-25
 

@@ -40,13 +40,21 @@ See [docs/limitations.md](docs/limitations.md) for the full list.
 
 ## Requirements
 
-| Tool                    | Needed for                                   | macOS install                                                                  |
-| ----------------------- | -------------------------------------------- | ------------------------------------------------------------------------------ |
-| Node.js 22+             | everything                                   | `brew install node`                                                            |
-| FFmpeg + ffprobe        | merging, remuxing, validation                | `brew install ffmpeg`                                                          |
-| yt-dlp (pinned version) | YouTube, Bilibili; every platform on the CLI | `python3 -m venv .venv && .venv/bin/python -m pip install -r requirements.txt` |
+| Tool                    | Needed for                                   | macOS install          |
+| ----------------------- | -------------------------------------------- | ---------------------- |
+| Node.js 22+             | everything                                   | `brew install node`    |
+| FFmpeg + ffprobe        | merging, remuxing, validation                | `brew install ffmpeg`  |
+| Python 3.10+            | running the pinned yt-dlp version            | `brew install python`  |
+| yt-dlp (pinned version) | YouTube, Bilibili; every platform on the CLI | `npm run deps:install` |
 
 Run `npm run doctor` at any time to see what is found and what is missing.
+
+`npm run deps:install` installs the yt-dlp version in `requirements.txt` into
+the project's `.venv`. This is an external downloader used by the Node core;
+`npm install` alone does not install it. The same command works on macOS,
+Linux and Windows and can be rerun to apply dependency updates. To select a
+Python interpreter, use `npm run deps:install -- --python /path/to/python3`.
+Install Node, Python and FFmpeg separately using your system package manager.
 
 The native host installer currently supports **macOS** only. The download core and CLI also run on Linux and Windows.
 
@@ -56,7 +64,7 @@ The native host installer currently supports **macOS** only. The download core a
 git clone https://github.com/0xFANGO/fetchy.git
 cd fetchy
 npm install
-python3 -m venv .venv && .venv/bin/python -m pip install -r requirements.txt
+npm run deps:install
 npm run doctor
 
 # download a video into ./downloads

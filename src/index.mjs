@@ -1,22 +1,15 @@
-import {existsSync} from 'node:fs';
-import {fileURLToPath} from 'node:url';
 import {normalizeUrl, resolveTarget} from './urls.mjs';
 import {resolveWithYtDlp, downloadWithYtDlp} from './yt-dlp.mjs';
 import {resolveWithBrowser, downloadWithBrowser} from './browser.mjs';
 import {EngineError} from './process.mjs';
+import {ytDlpCommand} from './dependencies.mjs';
 
 export {normalizeUrl, resolveTarget} from './urls.mjs';
 export {EngineError} from './process.mjs';
 
 function settings(options) {
-	const local = fileURLToPath(
-		new URL(
-			process.platform === 'win32' ? '../.venv/Scripts/yt-dlp.exe' : '../.venv/bin/yt-dlp',
-			import.meta.url,
-		),
-	);
 	const result = {...options};
-	if (!result.ytDlpPath && existsSync(local)) result.ytDlpPath = local;
+	result.ytDlpPath = ytDlpCommand({ytDlpPath: result.ytDlpPath});
 	if (!['auto', 'yt-dlp', 'browser'].includes(result.engine ?? 'auto'))
 		throw new EngineError('invalid_options', 'engine 必须为 auto、yt-dlp 或 browser。');
 	return result;

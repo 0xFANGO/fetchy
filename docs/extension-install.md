@@ -9,14 +9,15 @@
 在项目根目录运行：
 
 ```bash
-python3 -m venv .venv
-.venv/bin/python -m pip install -r requirements.txt
+npm run deps:install
 npm test
 npm run extension:build
 npm run native:install -- --browser chrome
 ```
 
-随时可以运行 `npm run doctor` 查看哪些工具已找到、哪些缺失以及对应的安装提示。Node 运行时没有额外 npm 依赖，`npm install` 只安装格式化与 lint 工具。安装脚本记录当前 Node、yt-dlp、FFmpeg 命令的绝对路径及运行 PATH，因此从浏览器启动时不依赖终端初始化脚本。`missingDependencies` 应为空；如非空，安装相应依赖后重新执行安装命令。
+`npm run deps:install` 按 `requirements.txt` 将 yt-dlp 安装到项目 `.venv`，不修改全局 Python 环境；依赖更新后可重复执行。默认查找系统 Python，需要指定版本时使用 `npm run deps:install -- --python /path/to/python3`。
+
+随时可以运行 `npm run doctor` 查看哪些工具已找到、哪些缺失或无法运行，以及对应的安装提示。Node 运行时没有额外 npm 依赖，`npm install` 只安装格式化与 lint 工具。安装脚本记录当前 Node、yt-dlp、FFmpeg 命令的绝对路径及运行 PATH，因此从浏览器启动时不依赖终端初始化脚本。`missingDependencies` 应为空；如非空，安装相应依赖后重新执行安装命令。
 
 `--browser chrome` 只注册 Chrome 的共享目录；Ego Lite 用户使用 `--browser ego`，它会同时注册 Ego 产品目录和 Chrome 共享目录，兼容实测到的 Ego Lite 查找路径；`--browser all` 同样注册两处。提供 Chrome 注册选项不代表已完成 Chrome 实测。Windows/Linux 不提供首版安装支持。
 
