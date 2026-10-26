@@ -84,6 +84,7 @@ feat(cli)!: drop --engine browser; the CLI always uses yt-dlp
 `CHANGELOG.md` is the source for release notes, curated for users rather than
 generated from the commit log. Follow [Keep a Changelog](https://keepachangelog.com/en/1.1.0/):
 
+- Write changelog entries and GitHub release notes in English.
 - Keep `Unreleased` at the top, then versions in reverse chronological order
   with `YYYY-MM-DD` dates and release or comparison links when available.
 - Write one short sentence per change, grouped under relevant Added, Changed,

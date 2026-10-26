@@ -25,6 +25,7 @@ no runtime npm dependencies. Tests use `node:test`.
 
 ## Changelog & Git workflow
 
+- Write `CHANGELOG.md` and GitHub release notes in English.
 - Keep `CHANGELOG.md` focused on user-visible changes, grouped by release.
   Use short entries under relevant Added / Changed / Removed / Fixed sections;
   include deprecations, security fixes and migration steps when applicable.
