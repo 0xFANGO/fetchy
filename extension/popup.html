@@ -1,0 +1,176 @@
+<!doctype html>
+<html lang="zh-CN">
+	<head>
+		<meta charset="utf-8" />
+		<meta name="viewport" content="width=device-width, initial-scale=1" />
+		<meta name="color-scheme" content="light" />
+		<title>Fetchy 视频下载</title>
+		<link rel="stylesheet" href="popup.css" />
+		<script src="popup.mjs" type="module"></script>
+	</head>
+	<body>
+		<svg class="icon-library" xmlns="http://www.w3.org/2000/svg" aria-hidden="true">
+			<symbol id="i-logo" viewBox="0 0 128 128">
+				<rect width="128" height="128" rx="30" fill="#232825" stroke="none" />
+				<path
+					d="M42 28h44a6 6 0 0 1 6 6v66l-28-17-28 17V34a6 6 0 0 1 6-6z"
+					fill="#ef6646"
+					stroke="none"
+				/>
+				<path
+					d="M57 44l20 12.5-20 12.5z"
+					fill="#fffaf4"
+					stroke="#fffaf4"
+					stroke-width="6"
+					stroke-linejoin="round"
+				/>
+			</symbol>
+			<symbol id="i-download" viewBox="0 0 24 24">
+				<path d="M12 3v12m-5-5 5 5 5-5M5 16v4h14v-4" />
+			</symbol>
+			<symbol id="i-folder" viewBox="0 0 24 24"><path d="M3 7V5h6l2 2h10v13H3V7Zm0 3h18" /></symbol>
+			<symbol id="i-back" viewBox="0 0 24 24"><path d="m14 5-7 7 7 7M7 12h13" /></symbol>
+			<symbol id="i-retry" viewBox="0 0 24 24">
+				<path d="M20 10a8 8 0 1 0-1.8 7M20 4v6h-6" />
+			</symbol>
+			<symbol id="i-play" viewBox="0 0 24 24"><path d="m9 6 9 6-9 6V6Z" /></symbol>
+			<symbol id="i-check" viewBox="0 0 24 24"><path d="m5 12 4 4L19 6" /></symbol>
+			<symbol id="i-chevron" viewBox="0 0 24 24"><path d="m9 6 6 6-6 6" /></symbol>
+		</svg>
+
+		<div class="shell">
+			<header class="topbar">
+				<div class="brand">
+					<svg class="brand-mark" aria-hidden="true"><use href="#i-logo" /></svg
+					><span class="wordmark">Fetchy</span>
+				</div>
+				<button id="back-button" class="text-button back-button" type="button" hidden>
+					<svg aria-hidden="true"><use href="#i-back" /></svg>返回
+				</button>
+			</header>
+
+			<aside id="connection" class="connection" role="status" aria-live="polite" hidden>
+				<p id="connection-message"></p>
+				<button id="help-button" type="button" class="text-button" hidden>
+					查看安装指引 <span aria-hidden="true">↗</span>
+				</button>
+			</aside>
+
+			<main id="main-view">
+				<section id="empty-state" class="empty-state" hidden>
+					<h1 id="empty-title">当前页面未识别到支持的视频</h1>
+					<p class="empty-hint">打开一个视频页面，或在下方粘贴链接。</p>
+				</section>
+
+				<section id="video-card" class="video-card" aria-label="已识别的视频" hidden>
+					<div id="cover" class="cover">
+						<span id="cover-placeholder" class="cover-placeholder" aria-label="暂无视频封面"
+							><svg aria-hidden="true"><use href="#i-play" /></svg
+						></span>
+						<img id="thumbnail" alt="视频封面" referrerpolicy="no-referrer" hidden />
+					</div>
+					<div class="video-copy">
+						<h1 id="video-title"></h1>
+						<p id="video-meta" class="video-meta"></p>
+					</div>
+				</section>
+
+				<form id="input-form" class="input-form" hidden novalidate>
+					<label for="video-input" class="sr-only">视频链接</label>
+					<div class="field">
+						<textarea
+							id="video-input"
+							name="video-link"
+							rows="2"
+							maxlength="16384"
+							spellcheck="false"
+							autocomplete="off"
+							autocapitalize="off"
+							placeholder="粘贴一个视频链接或分享文案"
+							aria-describedby="supported-platforms input-hint"
+						></textarea>
+						<div class="field-footer">
+							<p
+								id="supported-platforms"
+								class="platforms"
+								aria-label="支持 YouTube、B站、小红书和抖音"
+							>
+								<span>YouTube</span><span>B站</span><span>小红书</span><span>抖音</span>
+							</p>
+							<span class="enter-hint" aria-hidden="true"><kbd>Enter</kbd> 识别</span>
+						</div>
+					</div>
+					<span id="input-hint" class="sr-only"
+						>输入后自动识别，按回车重新识别。识别成功后点击下载视频。</span
+					>
+				</form>
+
+				<section id="task-status" class="task-status" aria-live="polite" aria-atomic="true" hidden>
+					<div class="status-row">
+						<span id="status-indicator" class="status-indicator" aria-hidden="true"></span>
+						<p id="status-text"></p>
+						<span id="progress-label"></span>
+					</div>
+					<div
+						id="progress-track"
+						class="progress-track"
+						role="progressbar"
+						aria-label="当前下载进度"
+						hidden
+					>
+						<span id="progress-fill"></span>
+					</div>
+					<p id="background-hint" class="background-hint" hidden>关闭弹窗后，下载仍会继续。</p>
+				</section>
+
+				<div id="saved-file" class="saved-file" hidden>
+					<svg aria-hidden="true"><use href="#i-folder" /></svg><span id="saved-path"></span>
+				</div>
+				<p id="notice" class="notice" role="status" aria-live="polite" hidden></p>
+
+				<div id="actions" class="actions">
+					<button id="primary-button" class="primary-button" type="button" hidden>
+						<svg aria-hidden="true"><use id="primary-icon" href="#i-download" /></svg
+						><span id="primary-label">下载视频</span>
+					</button>
+					<div id="secondary-actions" class="secondary-actions"></div>
+				</div>
+
+				<footer id="destination" class="destination" hidden>
+					<button id="change-directory" class="destination-button" type="button">
+						<svg aria-hidden="true"><use href="#i-folder" /></svg
+						><span class="destination-label">保存到</span
+						><span id="destination-path" class="destination-path"></span
+						><span id="destination-action" class="destination-action"
+							>更改<svg aria-hidden="true"><use href="#i-chevron" /></svg
+						></span>
+					</button>
+				</footer>
+			</main>
+
+			<main id="settings-view" hidden>
+				<h1 class="settings-title">把视频存在哪里？</h1>
+				<p class="settings-description">选择固定的保存位置，后续下载自动使用。</p>
+				<section class="directory-card" aria-label="下载目录">
+					<p id="directory-label" class="directory-label">当前下载目录</p>
+					<div class="directory-path-row">
+						<svg aria-hidden="true"><use href="#i-folder" /></svg>
+						<p id="directory-path"></p>
+					</div>
+				</section>
+				<button id="choose-directory" class="outline-button" type="button">
+					<svg aria-hidden="true"><use href="#i-folder" /></svg
+					><span id="choose-label">选择文件夹</span>
+				</button>
+				<p id="settings-hint" class="settings-hint">选择文件夹后，点击保存。</p>
+				<p id="settings-notice" class="notice" role="status" aria-live="polite" hidden></p>
+				<button id="save-settings" class="primary-button" type="button">
+					<svg aria-hidden="true"><use href="#i-check" /></svg><span>保存</span>
+				</button>
+				<button id="settings-reconnect" class="text-button settings-reconnect" type="button" hidden>
+					重新连接本地组件
+				</button>
+			</main>
+		</div>
+	</body>
+</html>

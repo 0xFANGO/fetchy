@@ -1,0 +1,65 @@
+{
+	"name": "fetchy",
+	"version": "0.2.0",
+	"private": true,
+	"description": "Fetchy saves single videos from YouTube, Bilibili, Xiaohongshu and Douyin to a local folder, from a browser extension, the CLI or Node.",
+	"keywords": [
+		"bilibili",
+		"browser-extension",
+		"douyin",
+		"downloader",
+		"manifest-v3",
+		"video",
+		"xiaohongshu",
+		"youtube",
+		"yt-dlp"
+	],
+	"homepage": "https://github.com/0xFANGO/fetchy#readme",
+	"bugs": {
+		"url": "https://github.com/0xFANGO/fetchy/issues"
+	},
+	"license": "AGPL-3.0-only",
+	"repository": {
+		"type": "git",
+		"url": "git+https://github.com/0xFANGO/fetchy.git"
+	},
+	"bin": {
+		"fetchy": "./bin/fetchy.mjs"
+	},
+	"files": [
+		"src",
+		"bin",
+		"native",
+		"extension",
+		"scripts",
+		"requirements.txt",
+		"LICENSE",
+		"README.md",
+		"README.zh-CN.md"
+	],
+	"type": "module",
+	"exports": "./src/index.mjs",
+	"scripts": {
+		"test": "node --test test/*.test.mjs",
+		"lint": "oxlint",
+		"lint:fix": "oxlint --fix",
+		"fmt": "oxfmt",
+		"fmt:check": "oxfmt --check",
+		"check": "npm run fmt:check && npm run lint",
+		"doctor": "node scripts/doctor.mjs",
+		"deps:install": "node scripts/install-deps.mjs",
+		"extension:build": "node scripts/build-extension.mjs",
+		"extension:pack": "node scripts/pack-extension.mjs",
+		"version": "node scripts/sync-version.mjs && oxfmt extension/manifest.json && git add extension/manifest.json",
+		"native:install": "node native/install.mjs",
+		"resolve": "node bin/fetchy.mjs resolve",
+		"download": "node bin/fetchy.mjs download"
+	},
+	"devDependencies": {
+		"oxfmt": "^0.74.0",
+		"oxlint": "^1.89.0"
+	},
+	"engines": {
+		"node": ">=22"
+	}
+}

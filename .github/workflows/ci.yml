@@ -1,0 +1,57 @@
+name: CI
+on:
+  pull_request:
+  push:
+    branches: [main]
+permissions:
+  contents: read
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+jobs:
+  check:
+    name: Node ${{ matrix.node }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    strategy:
+      fail-fast: false
+      matrix:
+        node: [22, 24]
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: ${{ matrix.node }}
+          cache: npm
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+          cache: pip
+          cache-dependency-path: requirements.txt
+      - name: Install FFmpeg
+        run: |
+          sudo apt-get update
+          sudo apt-get install --yes ffmpeg
+      - run: npm ci
+      - run: npm run deps:install
+      - name: Verify integration test dependencies
+        run: |
+          node --input-type=module <<'NODE'
+          import assert from 'node:assert/strict';
+          import {runProcess} from './src/process.mjs';
+          for (const [command, args] of [
+            ['.venv/bin/python', ['-c', 'import yt_dlp']],
+            ['ffprobe', ['-version']],
+          ]) {
+            const result = await runProcess(command, args, {timeoutMs: 10_000});
+            assert.equal(result.code, 0, `${command} must be available for integration tests`);
+          }
+          const result = await runProcess('ffmpeg', ['-hide_banner', '-encoders'], {timeoutMs: 10_000});
+          assert.equal(result.code, 0, 'FFmpeg must be available for integration tests');
+          for (const codec of ['libx264', 'libx265', 'libvpx-vp9', 'libsvtav1', 'libopus', 'aac']) {
+            assert.ok(result.stdout.includes(codec), `Missing FFmpeg encoder: ${codec}`);
+          }
+          NODE
+      - run: npm run check
+      - run: npm test
+      - run: npm run extension:pack
