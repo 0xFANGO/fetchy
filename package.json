@@ -32,6 +32,7 @@
 		"native",
 		"extension",
 		"scripts",
+		"requirements.txt",
 		"LICENSE",
 		"README.md",
 		"README.zh-CN.md"
@@ -46,6 +47,7 @@
 		"fmt:check": "oxfmt --check",
 		"check": "npm run fmt:check && npm run lint",
 		"doctor": "node scripts/doctor.mjs",
+		"deps:install": "node scripts/install-deps.mjs",
 		"extension:build": "node scripts/build-extension.mjs",
 		"extension:pack": "node scripts/pack-extension.mjs",
 		"version": "node scripts/sync-version.mjs && oxfmt extension/manifest.json && git add extension/manifest.json",

@@ -4,6 +4,14 @@ Notable changes for users, following [Keep a Changelog](https://keepachangelog.c
 
 ## [Unreleased]
 
+### Added
+
+- `npm run deps:install` to install the pinned downloader into a project-local environment.
+
+### Fixed
+
+- Dependency checks now report tools that cannot run and consistently ignore unusable local executables.
+
 ## [0.2.0] - 2026-10-25
 
 ### Added

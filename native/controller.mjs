@@ -1,10 +1,9 @@
 import {EventEmitter} from 'node:events';
 import {realpath, stat} from 'node:fs/promises';
-import {existsSync} from 'node:fs';
 import path from 'node:path';
-import {fileURLToPath} from 'node:url';
 import {downloadVideo, resolveVideo} from '../src/index.mjs';
 import {runProcess} from '../src/process.mjs';
+import {ytDlpCommand} from '../src/dependencies.mjs';
 import {bridgeError, publicError} from './errors.mjs';
 import {
 	dataDirectory,
@@ -163,12 +162,8 @@ export class NativeController extends EventEmitter {
 		this.broadcast();
 	}
 	async dependencies() {
-		const localYtDlp = fileURLToPath(new URL('../.venv/bin/yt-dlp', import.meta.url));
 		const commands = {
-			ytDlp: [
-				this.engineOptions.ytDlpPath ?? (existsSync(localYtDlp) ? localYtDlp : 'yt-dlp'),
-				['--version'],
-			],
+			ytDlp: [ytDlpCommand({ytDlpPath: this.engineOptions.ytDlpPath}), ['--version']],
 			ffmpeg: [this.engineOptions.ffmpegLocation ?? 'ffmpeg', ['-version']],
 			ffprobe: [this.engineOptions.ffprobePath ?? 'ffprobe', ['-version']],
 		};

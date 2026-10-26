@@ -4,7 +4,7 @@
 
 ## 安装
 
-先按照项目 README 安装 Node.js 22+、项目 `.venv` 中的 yt-dlp、FFmpeg/ffprobe。然后在仓库根目录运行：
+先按照项目 README 安装 Node.js 22+、Python 3.10+ 和 FFmpeg/ffprobe，运行 `npm run deps:install` 安装项目 `.venv` 中的 yt-dlp。然后在仓库根目录运行：
 
 ```sh
 npm run extension:build

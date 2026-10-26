@@ -34,13 +34,19 @@
 
 ## 环境要求
 
-| 工具               | 用途                           | macOS 安装                                                                     |
-| ------------------ | ------------------------------ | ------------------------------------------------------------------------------ |
-| Node.js 22+        | 全部                           | `brew install node`                                                            |
-| FFmpeg + ffprobe   | 合并、重封装、校验             | `brew install ffmpeg`                                                          |
-| yt-dlp（固定版本） | YouTube、B站；命令行下所有平台 | `python3 -m venv .venv && .venv/bin/python -m pip install -r requirements.txt` |
+| 工具               | 用途                           | macOS 安装             |
+| ------------------ | ------------------------------ | ---------------------- |
+| Node.js 22+        | 全部                           | `brew install node`    |
+| FFmpeg + ffprobe   | 合并、重封装、校验             | `brew install ffmpeg`  |
+| Python 3.10+       | 运行固定版本的 yt-dlp          | `brew install python`  |
+| yt-dlp（固定版本） | YouTube、B站；命令行下所有平台 | `npm run deps:install` |
 
 随时运行 `npm run doctor` 查看哪些工具已找到、哪些缺失。
+
+`npm run deps:install` 将 `requirements.txt` 中固定版本的 yt-dlp 安装到项目的 `.venv`。
+它是 Node 核心调用的外部下载器，单独执行 `npm install` 不会安装它。此命令适用于
+macOS、Linux 和 Windows，也可以重复执行以应用依赖更新。需要指定 Python 时，使用
+`npm run deps:install -- --python /path/to/python3`。Node、Python 和 FFmpeg 仍由系统包管理器安装。
 
 native host 安装脚本目前只支持 **macOS**。下载核心和 CLI 也能在 Linux 和 Windows 上运行。
 
@@ -50,7 +56,7 @@ native host 安装脚本目前只支持 **macOS**。下载核心和 CLI 也能�
 git clone https://github.com/0xFANGO/fetchy.git
 cd fetchy
 npm install
-python3 -m venv .venv && .venv/bin/python -m pip install -r requirements.txt
+npm run deps:install
 npm run doctor
 
 # 下载到 ./downloads

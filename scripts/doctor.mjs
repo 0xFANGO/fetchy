@@ -2,45 +2,27 @@
 // Reports which local dependencies the download core and the extension can
 // find, with an install hint for each missing one. Exit code 1 when a
 // required tool is missing so it can gate setup scripts.
-import {execFile} from 'node:child_process';
 import {access, constants} from 'node:fs/promises';
 import {homedir} from 'node:os';
 import path from 'node:path';
-import {fileURLToPath} from 'node:url';
-import {promisify} from 'node:util';
 import {manifestDirectories} from '../native/install-paths.mjs';
+import {findExecutable, ytDlpCommand} from '../src/dependencies.mjs';
+import {runProcess} from '../src/process.mjs';
 
-const run = promisify(execFile);
-const root = fileURLToPath(new URL('../', import.meta.url));
 const mac = process.platform === 'darwin';
-const win = process.platform === 'win32';
 
-async function executable(candidate) {
+async function tool(command, args = ['-version']) {
+	const where = findExecutable(command);
+	if (!where) return null;
 	try {
-		await access(candidate, constants.X_OK);
-		return candidate;
-	} catch {
-		return null;
-	}
-}
-
-async function onPath(name) {
-	const names = win ? [`${name}.exe`, `${name}.cmd`, name] : [name];
-	for (const directory of (process.env.PATH ?? '').split(path.delimiter)) {
-		for (const file of names) {
-			const found = await executable(path.join(directory, file));
-			if (found) return found;
-		}
-	}
-	return null;
-}
-
-async function version(command, args = ['-version']) {
-	try {
-		const {stdout} = await run(command, args, {timeout: 10_000, maxBuffer: 1 << 16});
-		return stdout.split('\n')[0].trim().split(' ').slice(0, 3).join(' ');
-	} catch {
-		return '';
+		const result = await runProcess(where, args, {timeoutMs: 10_000, maxOutputBytes: 1 << 16});
+		if (result.code !== 0) return {error: `${where}: version check failed`};
+		const detail = result.stdout.split('\n')[0].trim().split(' ').slice(0, 3).join(' ');
+		return detail ? {where, detail} : {error: `${where}: no version reported`};
+	} catch (error) {
+		return {
+			error: `${where}: ${error.code === 'timeout' ? 'version check timed out' : 'cannot run'}`,
+		};
 	}
 }
 
@@ -62,26 +44,15 @@ const checks = [
 		name: 'yt-dlp',
 		required: true,
 		async find() {
-			const local = path.join(
-				root,
-				'.venv',
-				win ? 'Scripts' : 'bin',
-				win ? 'yt-dlp.exe' : 'yt-dlp',
-			);
-			const where = (await executable(local)) ?? (await onPath('yt-dlp'));
-			return where ? {where, detail: await version(where, ['--version'])} : null;
+			return tool(ytDlpCommand(), ['--version']);
 		},
-		hint: hint(
-			'yt-dlp',
-			'python3 -m venv .venv && .venv/bin/python -m pip install -r requirements.txt',
-		),
+		hint: 'npm run deps:install',
 	},
 	{
 		name: 'FFmpeg',
 		required: true,
 		async find() {
-			const where = await onPath('ffmpeg');
-			return where ? {where, detail: await version(where)} : null;
+			return tool('ffmpeg');
 		},
 		hint: hint('ffmpeg', 'https://ffmpeg.org/download.html'),
 	},
@@ -89,8 +60,7 @@ const checks = [
 		name: 'ffprobe',
 		required: true,
 		async find() {
-			const where = await onPath('ffprobe');
-			return where ? {where, detail: await version(where)} : null;
+			return tool('ffprobe');
 		},
 		hint: hint('ffmpeg', 'ships with FFmpeg'),
 	},
