@@ -70,8 +70,12 @@ src/index.mjs  public API, engine routing, bounded fallbacks
 
 ## Build & test
 
+- `npm run deps:install` installs the external yt-dlp downloader into `.venv`.
+  Keep its tested version in `requirements.txt`; local setup and CI share it.
 - `npm test` runs offline contract tests; FFmpeg is required for the MP4
   suite and `.venv` yt-dlp for two integration tests (skipped otherwise).
+- PR CI checks Node 22 and 24 with media-test dependencies installed, then
+  runs format/lint, tests and extension packaging.
 - `npm run check` = `oxfmt --check` + `oxlint`. Style: tabs, single quotes,
   no bracket spacing. Run `npm run fmt` before committing.
 - `npm run extension:build` writes the loadable extension to `dist/extension`.

@@ -1,1 +1,3 @@
+# External downloader used by the Node core; keep local installs and CI on this version.
+# Install into the project .venv with: npm run deps:install
 yt-dlp[default]==2026.10.21

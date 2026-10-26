@@ -1,11 +1,11 @@
 #!/usr/bin/env node
-import {access, chmod, mkdir, readFile, writeFile} from 'node:fs/promises';
-import {constants} from 'node:fs';
+import {chmod, mkdir, readFile, writeFile} from 'node:fs/promises';
 import {homedir} from 'node:os';
 import path from 'node:path';
 import {fileURLToPath} from 'node:url';
 import {dataDirectory, privateDirectory, writeJson} from './settings.mjs';
 import {extensionIdFromKey, manifestDirectories} from './install-paths.mjs';
+import {findExecutable, ytDlpCommand} from '../src/dependencies.mjs';
 
 const args = process.argv.slice(2);
 function option(name, fallback) {
@@ -13,16 +13,6 @@ function option(name, fallback) {
 	if (index < 0) return fallback;
 	if (!args[index + 1] || args[index + 1].startsWith('--')) throw new Error(`${name} 缺少参数`);
 	return args[index + 1];
-}
-async function executable(name) {
-	for (const directory of (process.env.PATH ?? '').split(path.delimiter)) {
-		const candidate = path.join(directory, name);
-		try {
-			await access(candidate, constants.X_OK);
-			return path.resolve(candidate);
-		} catch {}
-	}
-	return null;
 }
 const quote = (value) => `'${String(value).replaceAll("'", "'\\''")}'`;
 try {
@@ -57,15 +47,9 @@ try {
 	);
 	await chmod(launcher, 0o700);
 	const engineOptions = {};
-	const localYtDlp = path.join(root, '.venv', 'bin', 'yt-dlp');
-	try {
-		await access(localYtDlp, constants.X_OK);
-		engineOptions.ytDlpPath = localYtDlp;
-	} catch {
-		engineOptions.ytDlpPath = await executable('yt-dlp');
-	}
-	engineOptions.ffmpegLocation = await executable('ffmpeg');
-	engineOptions.ffprobePath = await executable('ffprobe');
+	engineOptions.ytDlpPath = findExecutable(ytDlpCommand());
+	engineOptions.ffmpegLocation = findExecutable('ffmpeg');
+	engineOptions.ffprobePath = findExecutable('ffprobe');
 	for (const name of Object.keys(engineOptions))
 		if (!engineOptions[name]) delete engineOptions[name];
 	await writeJson(path.join(directory, 'runtime.json'), {

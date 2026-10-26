@@ -9,7 +9,7 @@ documentation improvements are all welcome.
 - FFmpeg (with `ffprobe`)
 - Python 3.10+ for the pinned yt-dlp in `requirements.txt`
 
-See the [README](README.md#requirements) for the one-line install per platform.
+See the [README](README.md#requirements) for installation instructions.
 
 ## Getting started
 
@@ -17,7 +17,7 @@ See the [README](README.md#requirements) for the one-line install per platform.
 git clone https://github.com/0xFANGO/fetchy.git
 cd fetchy
 npm install
-python3 -m venv .venv && .venv/bin/python -m pip install -r requirements.txt
+npm run deps:install
 npm run doctor
 ```
 
@@ -32,6 +32,12 @@ Tests never hit a real platform or launch a real browser. Tests that need the
 project yt-dlp are skipped when `.venv` is missing. Manual end-to-end checks
 against real sites are recorded in `docs/extension-validation.md`.
 
+PRs and pushes to `main` run CI on Node 22 and 24 with the pinned yt-dlp,
+Python 3.12 and FFmpeg. CI verifies media-test dependencies before running
+formatting, lint, tests and extension packaging. Keep `requirements.txt` as
+the shared yt-dlp version source; after updating it, rerun `npm run deps:install`
+and the tests.
+
 ## Code style
 
 ```sh
@@ -42,8 +48,8 @@ npm run lint:fix
 
 Formatting is enforced by [oxfmt](https://oxc.rs) (tabs, single quotes) and
 linting by [oxlint](https://oxc.rs). Run the relevant checks locally before
-requesting review. The Release workflow checks formatting and lint, then packs
-the extension; there is currently no PR test workflow.
+requesting review. The Release workflow also checks formatting and lint before
+packing the extension.
 
 ## Commit messages
 
