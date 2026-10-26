@@ -109,26 +109,21 @@ svg {
 	padding: 0 10px 0 18px;
 	border-bottom: 1px solid var(--line);
 }
+.brand {
+	display: flex;
+	align-items: center;
+	gap: 8px;
+}
+.brand-mark {
+	width: 24px;
+	height: 24px;
+}
 .wordmark {
 	font-family: 'Avenir Next', 'Trebuchet MS', sans-serif;
 	font-size: 18px;
 	line-height: 1;
 	font-weight: 700;
 	letter-spacing: -0.5px;
-}
-.icon-button {
-	display: grid;
-	place-items: center;
-	background: transparent;
-	border: 1px solid transparent;
-	color: #62695e;
-	border-radius: 8px;
-	width: 34px;
-	height: 34px;
-}
-.icon-button:hover {
-	background: var(--wash);
-	color: var(--ink);
 }
 .text-button {
 	display: inline-flex;

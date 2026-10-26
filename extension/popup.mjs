@@ -77,7 +77,6 @@ function render(state = {}) {
 	const view = deriveView(presented);
 	show('main-view', !view.isSettings);
 	show('settings-view', view.isSettings);
-	show('settings-button', !view.isSettings);
 	show('back-button', view.isSettings);
 	show('connection', Boolean(view.connectionNotice));
 	setText('connection-message', view.connectionNotice);
@@ -233,7 +232,6 @@ byId('secondary-actions').addEventListener('click', (event) => {
 	dispatch(button.dataset.action);
 });
 byId('change-directory').addEventListener('click', () => dispatch('changeDirectory'));
-byId('settings-button').addEventListener('click', () => dispatch('openSettings'));
 byId('back-button').addEventListener('click', () => dispatch('back'));
 byId('help-button').addEventListener('click', () => dispatch('openHelp'));
 byId('choose-directory').addEventListener('click', () => dispatch('chooseDirectory'));

@@ -10,11 +10,25 @@
 	</head>
 	<body>
 		<svg class="icon-library" xmlns="http://www.w3.org/2000/svg" aria-hidden="true">
+			<symbol id="i-logo" viewBox="0 0 128 128">
+				<rect width="128" height="128" rx="30" fill="#232825" stroke="none" />
+				<path
+					d="M42 28h44a6 6 0 0 1 6 6v66l-28-17-28 17V34a6 6 0 0 1 6-6z"
+					fill="#ef6646"
+					stroke="none"
+				/>
+				<path
+					d="M57 44l20 12.5-20 12.5z"
+					fill="#fffaf4"
+					stroke="#fffaf4"
+					stroke-width="6"
+					stroke-linejoin="round"
+				/>
+			</symbol>
 			<symbol id="i-download" viewBox="0 0 24 24">
 				<path d="M12 3v12m-5-5 5 5 5-5M5 16v4h14v-4" />
 			</symbol>
 			<symbol id="i-folder" viewBox="0 0 24 24"><path d="M3 7V5h6l2 2h10v13H3V7Zm0 3h18" /></symbol>
-			<symbol id="i-settings" viewBox="0 0 24 24"><path d="M4 7h16M4 17h16M8 4v6m8 4v6" /></symbol>
 			<symbol id="i-back" viewBox="0 0 24 24"><path d="m14 5-7 7 7 7M7 12h13" /></symbol>
 			<symbol id="i-retry" viewBox="0 0 24 24">
 				<path d="M20 10a8 8 0 1 0-1.8 7M20 4v6h-6" />
@@ -26,16 +40,10 @@
 
 		<div class="shell">
 			<header class="topbar">
-				<span class="wordmark">Fetchy</span>
-				<button
-					id="settings-button"
-					class="icon-button"
-					type="button"
-					title="目录设置"
-					aria-label="目录设置"
-				>
-					<svg aria-hidden="true"><use href="#i-settings" /></svg>
-				</button>
+				<div class="brand">
+					<svg class="brand-mark" aria-hidden="true"><use href="#i-logo" /></svg
+					><span class="wordmark">Fetchy</span>
+				</div>
 				<button id="back-button" class="text-button back-button" type="button" hidden>
 					<svg aria-hidden="true"><use href="#i-back" /></svg>返回
 				</button>
