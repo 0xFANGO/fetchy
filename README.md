@@ -9,9 +9,14 @@ One toolbar button, one command, or one function call. Everything runs locally.
 
 [中文文档](README.zh-CN.md)
 
-<p align="center">
-  <img src="docs/assets/popup-states.png" alt="The popup in three states: a detected Bilibili video ready to download, a download at 62%, and the saved file with a Reveal in Finder button">
-</p>
+<table align="center">
+  <tr>
+    <td align="center" width="150"><img src="docs/assets/platforms/youtube.svg" width="48" height="48" alt=""><br><b>YouTube</b><br><sub>Video download</sub></td>
+    <td align="center" width="150"><img src="docs/assets/platforms/bilibili.svg" width="48" height="48" alt=""><br><b>Bilibili</b><br><sub>Video download</sub></td>
+    <td align="center" width="150"><img src="docs/assets/platforms/xiaohongshu.svg" width="48" height="48" alt=""><br><b>Xiaohongshu</b><br><sub>Video download</sub></td>
+    <td align="center" width="150"><img src="docs/assets/platforms/douyin.svg" width="48" height="48" alt=""><br><b>Douyin</b><br><sub>Video download</sub></td>
+  </tr>
+</table>
 
 ## Features
 
@@ -147,3 +152,5 @@ See [CONTRIBUTING.md](CONTRIBUTING.md). Design notes, platform research and manu
 [AGPL-3.0](LICENSE). You can use, modify and share Fetchy freely; if you distribute a modified version or run one as a service, you must publish your source under the same license.
 
 This tool is for saving content you are allowed to keep, for personal use. Respect each platform's terms of service and the rights of content creators. The license covers the code only, not any downloaded content.
+
+Platform names and logos are trademarks of their respective owners. Fetchy is not affiliated with or endorsed by them. Logos from [Simple Icons](https://simpleicons.org) (CC0).

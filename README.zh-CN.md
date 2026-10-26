@@ -9,9 +9,14 @@
 
 [English](README.md)
 
-<p align="center">
-  <img src="docs/assets/popup-states.png" alt="弹窗的三个状态：识别到 B 站视频可下载、下载进度 62%、已保存并可在文件夹中显示">
-</p>
+<table align="center">
+  <tr>
+    <td align="center" width="150"><img src="docs/assets/platforms/youtube.svg" width="48" height="48" alt=""><br><b>YouTube</b><br><sub>支持视频下载</sub></td>
+    <td align="center" width="150"><img src="docs/assets/platforms/bilibili.svg" width="48" height="48" alt=""><br><b>B站</b><br><sub>支持视频下载</sub></td>
+    <td align="center" width="150"><img src="docs/assets/platforms/xiaohongshu.svg" width="48" height="48" alt=""><br><b>小红书</b><br><sub>支持视频下载</sub></td>
+    <td align="center" width="150"><img src="docs/assets/platforms/douyin.svg" width="48" height="48" alt=""><br><b>抖音</b><br><sub>支持视频下载</sub></td>
+  </tr>
+</table>
 
 ## 特性
 
@@ -146,3 +151,5 @@ npm run fmt           # 格式化
 [AGPL-3.0](LICENSE)。可以自由使用、修改和分享；分发修改版或以服务形式提供时，必须以相同许可证公开源码。
 
 本工具用于保存你有权保留的内容，仅限个人使用。请遵守各平台的服务条款，尊重内容创作者的权利。许可证只覆盖代码，不覆盖任何下载下来的内容。
+
+平台名称和标志归各自所有者所有，Fetchy 与这些平台无关联，也未获其认可。图标来自 [Simple Icons](https://simpleicons.org)（CC0）。
