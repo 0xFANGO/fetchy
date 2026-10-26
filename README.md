@@ -22,7 +22,7 @@ One toolbar button, one command, or one function call. Everything runs locally.
 
 - **Four platforms, one workflow.** Paste a link or open a video page, click once. Share text with a short link works too.
 - **Local first.** Downloads run on your machine through a native host. No cloud service, no account, no cookie export.
-- **Real, playable files.** Output is an MP4 validated with ffprobe for H.264 / yuv420p / AAC. Files are named after the actual video title and never overwrite existing files.
+- **Validated MP4 files.** ffprobe checks every output. YouTube and Bilibili use H.264 / yuv420p / AAC; browser downloads retain the source codec, including HEVC. Files use the video title and never overwrite existing files.
 - **Keeps going.** Close the popup and the download continues; reopen it to see progress, cancel or reveal the file in Finder.
 - **Same core everywhere.** The extension, the CLI and the Node API share one `resolveVideo` / `downloadVideo` contract with stable error codes.
 
@@ -86,9 +86,9 @@ npm run native:install -- --browser chrome # registers the native host (--browse
 2. Pin the extension to the toolbar.
 3. Open a video page and click the icon, or paste a link into the popup.
 
-Downloads go to `~/Downloads/Fetchy` by default; change it from the popup's settings view.
+Downloads go to `~/Downloads/Fetchy` by default. Click the folder at the bottom of the popup to change it; your selection is saved automatically. Folder changes are disabled while a task is displayed.
 
-For Xiaohongshu and Douyin the extension reads the video's playback data from the page itself: an open tab on that video is used directly, otherwise a background tab is opened and closed again. Your logged-in session is used in place, nothing is exported. Permissions requested: `activeTab`, `storage`, `nativeMessaging`, `scripting`, plus host access to `xiaohongshu.com` and `douyin.com`.
+For Xiaohongshu and Douyin the extension reads the video's playback data from the page itself: an open tab on that video is used directly, otherwise a background tab is opened and closed again. Your logged-in session is used in place, nothing is exported. Permissions requested: `activeTab`, `storage`, `nativeMessaging`, `scripting`, plus host access to `xiaohongshu.com`, `douyin.com` and `iesdouyin.com`.
 
 Verified so far on macOS with Ego Lite (a Chromium browser). Chrome registration is available but not yet verified end to end.
 Full installation notes, session requirements and troubleshooting: [docs/extension-install.md](docs/extension-install.md).

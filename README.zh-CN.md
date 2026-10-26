@@ -22,7 +22,7 @@
 
 - **四个平台，同一套流程。** 打开视频页点一下，或粘贴链接、粘贴带短链的分享文案。
 - **本地优先。** 下载由本机 native host 执行，没有云端服务，不需要账号，不导出 Cookie。
-- **真正能播的文件。** 输出 MP4 并用 ffprobe 校验 H.264 / yuv420p / AAC；文件名使用真实视频标题，重名自动加序号，不覆盖已有文件。
+- **经过校验的 MP4。** 每个输出都经 ffprobe 校验。YouTube 和 B站使用 H.264 / yuv420p / AAC；浏览器下载保留源编码，包括 HEVC。文件名使用视频标题，重名自动加序号，不覆盖已有文件。
 - **关掉弹窗也继续。** 下载由独立本地进程持有，重新打开弹窗即可查看进度、取消或在 Finder 中定位文件。
 - **一套核心。** 扩展、CLI 和 Node API 共用同一个 `resolveVideo` / `downloadVideo` 契约和稳定的错误码。
 
@@ -83,9 +83,9 @@ npm run native:install -- --browser chrome # 注册 native host；Ego Lite 用 -
 2. 把扩展固定到工具栏。
 3. 打开视频页点击图标，或在弹窗里粘贴链接。
 
-默认保存到 `~/Downloads/Fetchy`，可在弹窗的设置页修改。
+默认保存到 `~/Downloads/Fetchy`。点击弹窗底部的目录即可更改，选中后自动保存。显示任务期间不可更改目录。
 
-小红书和抖音的媒体信息由扩展直接从视频页面读取：已经打开的视频页会被直接使用，否则扩展在后台打开一个标签页，读完就关闭。用的是你当前浏览器的登录态，不导出任何东西。申请的权限：`activeTab`、`storage`、`nativeMessaging`、`scripting`，以及 `xiaohongshu.com` 和 `douyin.com` 的站点访问权限。
+小红书和抖音的媒体信息由扩展直接从视频页面读取：已经打开的视频页会被直接使用，否则扩展在后台打开一个标签页，读完就关闭。用的是你当前浏览器的登录态，不导出任何东西。申请的权限：`activeTab`、`storage`、`nativeMessaging`、`scripting`，以及 `xiaohongshu.com`、`douyin.com` 和 `iesdouyin.com` 的站点访问权限。
 
 目前在 macOS + Ego Lite（一款 Chromium 浏览器）上完成了真实验证；Chrome 的注册选项可用，但尚未端到端验证。
 完整安装说明、登录态要求和故障排查见 [docs/extension-install.md](docs/extension-install.md)。

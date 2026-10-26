@@ -249,7 +249,7 @@ test('pending directory survives loss of popup and current task keeps its destin
 	assert.equal(controller.state.task.outputDir, '/old');
 	assert.equal(controller.state.settingsNotice, '已保存');
 });
-test('footer directory change saves a new pick and ignores a cancelled picker', async () => {
+test('footer directory change supports hosts without an explicit picker confirmation', async () => {
 	let pick = '/picked';
 	const {controller, calls} = harness({
 		rpc: async (method, params) => {
@@ -274,6 +274,26 @@ test('footer directory change saves a new pick and ignores a cancelled picker', 
 	);
 	assert.equal(controller.state.settings.outputDir, '/picked');
 });
+for (const confirmed of [true, false]) {
+	test(`footer ${confirmed ? 'saves' : 'preserves'} an existing pending directory when the picker is ${confirmed ? 'confirmed' : 'cancelled'}`, async () => {
+		const {controller, calls} = harness({
+			rpc: async (method, params) => {
+				calls.push({method, params});
+				if (method === 'chooseDirectory')
+					return {pendingDirectory: '/pending', selectionConfirmed: confirmed};
+				return {settings: {outputDir: params.outputDir}, pendingDirectory: null};
+			},
+		});
+		controller.receiveNative({settings: {outputDir: '/old'}, pendingDirectory: '/pending'});
+		await controller.action('changeDirectory');
+		assert.equal(controller.state.settings.outputDir, confirmed ? '/pending' : '/old');
+		assert.equal(controller.state.pendingDirectory, confirmed ? null : '/pending');
+		assert.deepEqual(
+			calls.map((call) => call.method),
+			confirmed ? ['chooseDirectory', 'saveSettings'] : ['chooseDirectory'],
+		);
+	});
+}
 test('untrusted runtime exceptions do not expose URLs or credentials to popup', () => {
 	assert.doesNotMatch(
 		displayError({message: 'https://example.com/?token=secret'}).message,

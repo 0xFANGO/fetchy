@@ -354,7 +354,9 @@ export class Controller {
 		this.state.choosingDirectory = true;
 		this.publish();
 		try {
-			this.receiveNative(await this.rpc('chooseDirectory', {}, 10 * 60_000));
+			const result = await this.rpc('chooseDirectory', {}, 10 * 60_000);
+			this.receiveNative(result);
+			return result;
 		} finally {
 			this.state.choosingDirectory = false;
 		}
@@ -419,13 +421,16 @@ export class Controller {
 					await this.chooseDirectory();
 					break;
 				case 'changeDirectory': {
-					// The main-view footer picks and saves in one step. Comparing with the
-					// previous pending choice keeps a cancelled picker from saving it.
 					if (this.state.choosingDirectory) break;
 					const previous = this.state.pendingDirectory;
-					await this.chooseDirectory();
+					const result = await this.chooseDirectory();
 					const picked = this.state.pendingDirectory;
-					if (picked && picked !== previous)
+					// Older running hosts do not report whether the picker was confirmed.
+					const confirmed =
+						typeof result.selectionConfirmed === 'boolean'
+							? result.selectionConfirmed
+							: picked !== previous;
+					if (picked && confirmed)
 						this.receiveNative(await this.rpc('saveSettings', {outputDir: picked}));
 					break;
 				}

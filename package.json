@@ -1,6 +1,6 @@
 {
 	"name": "fetchy",
-	"version": "0.2.0",
+	"version": "0.3.0",
 	"private": true,
 	"description": "Fetchy saves single videos from YouTube, Bilibili, Xiaohongshu and Douyin to a local folder, from a browser extension, the CLI or Node.",
 	"keywords": [

@@ -396,7 +396,8 @@ export class NativeController extends EventEmitter {
 		return this.snapshot();
 	}
 	chooseDirectory() {
-		if (this.choosingDirectory) return Promise.resolve(this.snapshot());
+		if (this.choosingDirectory)
+			return Promise.resolve({...this.snapshot(), selectionConfirmed: false});
 		const controller = (this.pickerController = new AbortController());
 		this.choosingDirectory = true;
 		this.broadcast();
@@ -404,6 +405,7 @@ export class NativeController extends EventEmitter {
 		return this.pickerPromise;
 	}
 	async pickDirectory(controller) {
+		let selectionConfirmed = false;
 		try {
 			// Script text is constant; no filename or page text becomes AppleScript.
 			// A detached native daemon has no foreground app. Standard Additions'
@@ -422,13 +424,14 @@ export class NativeController extends EventEmitter {
 			if (selected) {
 				this.pendingDirectory = await validateDirectory(selected);
 				await this.persist();
+				selectionConfirmed = true;
 			}
 		} finally {
 			this.choosingDirectory = false;
 			if (this.pickerController === controller) this.pickerController = null;
 			this.broadcast();
 		}
-		return this.snapshot();
+		return {...this.snapshot(), selectionConfirmed};
 	}
 	async saveSettings({outputDir}) {
 		// Only a picker-selected directory or the existing/default directory is accepted.
