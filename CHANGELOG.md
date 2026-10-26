@@ -4,6 +4,8 @@ Notable changes for users, following [Keep a Changelog](https://keepachangelog.c
 
 ## [Unreleased]
 
+## [0.3.0] - 2026-10-26
+
 ### Added
 
 - Change the download folder from the popup footer; the new folder is saved
@@ -16,6 +18,7 @@ Notable changes for users, following [Keep a Changelog](https://keepachangelog.c
 
 ### Fixed
 
+- Reselecting a previously unsaved download folder now saves it correctly.
 - Dependency checks now report tools that cannot run and consistently ignore unusable local executables.
 
 ## [0.2.0] - 2026-10-25
@@ -50,5 +53,6 @@ Notable changes for users, following [Keep a Changelog](https://keepachangelog.c
 - CLI and Node API for single-video downloads from YouTube, Bilibili,
   Xiaohongshu and Douyin, with MP4 validation.
 
-[Unreleased]: https://github.com/0xFANGO/fetchy/compare/v0.2.0...main
+[Unreleased]: https://github.com/0xFANGO/fetchy/compare/v0.3.0...main
+[0.3.0]: https://github.com/0xFANGO/fetchy/releases/tag/v0.3.0
 [0.2.0]: https://github.com/0xFANGO/fetchy/releases/tag/v0.2.0

@@ -24,6 +24,9 @@ Things that are in scope and that we especially want to hear about:
 ## What this project deliberately does not do
 
 - It never exports browser cookies or session storage.
-- It never injects scripts into arbitrary pages; the extension requests only
-  `activeTab`, `storage` and `nativeMessaging`.
+- The extension uses `activeTab` to identify the current video page, `storage`
+  for local task state, and `nativeMessaging` to communicate with the local host.
+- `scripting` and host access to `xiaohongshu.com`, `douyin.com` and
+  `iesdouyin.com` let it read video playback data on those supported sites;
+  it never injects scripts into arbitrary pages.
 - Child processes are spawned with argument arrays, never shell strings.

@@ -7,6 +7,7 @@ import path from 'node:path';
 import {once} from 'node:events';
 import {fileURLToPath} from 'node:url';
 import {NativeController} from '../native/controller.mjs';
+import {Controller as ExtensionController} from '../extension/controller.mjs';
 import {MessageDecoder, encodeMessage, MAX_MESSAGE_BYTES} from '../native/protocol.mjs';
 import {startServer} from '../native/server.mjs';
 import {publicError} from '../native/errors.mjs';
@@ -196,9 +197,20 @@ test('directory picker result persists across clients, cancelled choice preserve
 	let state = await controller.request('chooseDirectory');
 	assert.equal(state.pendingDirectory, next);
 	assert.equal(state.choosingDirectory, false);
+	assert.equal(state.selectionConfirmed, true);
 	selected = '';
-	await controller.request('chooseDirectory');
+	state = await controller.request('chooseDirectory');
+	assert.equal(state.selectionConfirmed, false);
 	assert.equal(controller.snapshot().pendingDirectory, next);
+	selected = next;
+	state = await controller.request('chooseDirectory');
+	assert.equal(state.selectionConfirmed, true);
+	assert.equal(state.pendingDirectory, next);
+	assert.equal('selectionConfirmed' in controller.snapshot(), false);
+	assert.equal(
+		'selectionConfirmed' in JSON.parse(await readFile(path.join(directory, 'state.json'), 'utf8')),
+		false,
+	);
 	await controller.request('start', {
 		input: 'https://youtu.be/test-video',
 		taskId: 'job-path',
@@ -223,6 +235,39 @@ test('directory picker result persists across clients, cancelled choice preserve
 	await assert.rejects(controller.request('saveSettings', {outputDir: '/tmp'}), {
 		code: 'directory_invalid',
 	});
+});
+
+test('footer retries the same directory after it disappears before saving', async (t) => {
+	let selected = '';
+	const {controller, directory, outputDir} = await fixture(t, {
+		runProcess: async () => ({code: 0, stdout: selected}),
+	});
+	const next = path.join(directory, 'chosen');
+	await mkdir(next);
+	selected = next;
+	let removeBeforeSave = true;
+	const popup = new ExtensionController({
+		rpc: async (method, params) => {
+			if (method === 'saveSettings' && removeBeforeSave) {
+				removeBeforeSave = false;
+				await rm(next, {recursive: true});
+			}
+			return controller.request(method, params);
+		},
+	});
+	popup.receiveNative(controller.snapshot());
+	await popup.action('changeDirectory');
+	assert.equal(controller.snapshot().settings.outputDir, outputDir);
+	assert.equal(popup.state.settings.outputDir, outputDir);
+	assert.equal(popup.state.pendingDirectory, next);
+	assert.ok(popup.state.notice);
+	await mkdir(next);
+	await popup.action('changeDirectory');
+	assert.equal(controller.snapshot().settings.outputDir, next);
+	assert.equal(popup.state.settings.outputDir, next);
+	assert.equal(popup.state.pendingDirectory, null);
+	assert.equal(popup.state.notice, null);
+	await popup.persist;
 });
 
 test('result must validate, exist, match byte count and remain within selected root; reveal uses only recorded file', async (t) => {
@@ -502,6 +547,9 @@ test('directory chooser activates itself and shutdown aborts its process and cle
 	assert.match(called.args[1], /^activate\ntry\n/);
 	assert.doesNotMatch(called.args[1], /System Events/);
 	assert.ok(called.options.signal instanceof AbortSignal);
+	const duplicate = await controller.request('chooseDirectory');
+	assert.equal(duplicate.selectionConfirmed, false);
+	assert.equal(duplicate.choosingDirectory, true);
 	await controller.close();
 	await rejection;
 	assert.equal(abortObserved, true);
