@@ -18,6 +18,12 @@ One toolbar button, one command, or one function call. Everything runs locally.
   </tr>
 </table>
 
+## Demo
+
+A quick walkthrough (Chinese audio).
+
+https://github.com/user-attachments/assets/e5ebb617-7dd1-4369-b044-b7e8900cb662
+
 ## Features
 
 - **Four platforms, one workflow.** Paste a link or open a video page, click once. Share text with a short link works too.

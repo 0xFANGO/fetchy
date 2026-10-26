@@ -18,6 +18,10 @@
   </tr>
 </table>
 
+## 演示
+
+https://github.com/user-attachments/assets/e5ebb617-7dd1-4369-b044-b7e8900cb662
+
 ## 特性
 
 - **四个平台，同一套流程。** 打开视频页点一下，或粘贴链接、粘贴带短链的分享文案。
