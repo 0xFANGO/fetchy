@@ -10,6 +10,7 @@ const STAGES = Object.freeze({
 	postprocessing: '正在处理音视频…',
 	validating: '正在校验文件…',
 	retrying: '正在重试…',
+	refreshing: '文件校验失败，正在刷新视频地址并自动重试…',
 });
 
 export function formatDuration(value) {

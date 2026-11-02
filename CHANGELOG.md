@@ -4,6 +4,11 @@ Notable changes for users, following [Keep a Changelog](https://keepachangelog.c
 
 ## [Unreleased]
 
+### Fixed
+
+- Automatically refresh the page media and retry once when a Xiaohongshu or Douyin download fails file validation.
+- Read Douyin media from an already open video page without opening an extra tab.
+
 ## [0.3.0] - 2026-10-26
 
 ### Added

@@ -168,6 +168,23 @@ test('media URL validation preserves signatures but rejects cross-platform and d
 	assert.throws(() => validateMediaUrl(url, 'youtube'), {code: 'invalid_media_url'});
 });
 
+test('media URL validation allows only verified Douyin zjcdn hosts', () => {
+	for (const host of ['v5-dy-ov-experiment.zjcdn.com', 'v3-dy-o.zjcdn.com']) {
+		const url = `https://${host}/media.mp4?sign=example%2B123`;
+		assert.equal(validateMediaUrl(url, 'douyin'), url);
+		assert.throws(() => validateMediaUrl(url, 'xiaohongshu'), {code: 'invalid_media_url'});
+	}
+	for (const url of [
+		'https://unverified.zjcdn.com/video.mp4',
+		'https://v3-dy-o.zjcdn.com.evil.test/video.mp4',
+		'https://fake-v3-dy-o.zjcdn.com/video.mp4',
+		'http://v3-dy-o.zjcdn.com/video.mp4',
+		'https://user:pass@v3-dy-o.zjcdn.com/video.mp4',
+		'https://v3-dy-o.zjcdn.com:444/video.mp4',
+	])
+		assert.throws(() => validateMediaUrl(url, 'douyin'), {code: 'invalid_media_url'});
+});
+
 test('invalid browser options and unsupported platforms fail before launching a browser', async () => {
 	const target = {
 		platform: 'xiaohongshu',

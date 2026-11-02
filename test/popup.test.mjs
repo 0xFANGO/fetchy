@@ -216,3 +216,17 @@ test('dependency repair is visible without preventing unrelated platform downloa
 	assert.equal(view.primary.action, 'start');
 	assert.equal(view.primary.disabled, false);
 });
+
+test('refreshing video addresses stays busy and cancellable without offering another start', () => {
+	const view = deriveView({
+		connection: connected,
+		task: {id: 'refresh', status: 'running', stage: 'refreshing'},
+	});
+	assert.match(view.status, /刷新视频地址.*自动重试/);
+	assert.equal(view.busy, true);
+	assert.equal(view.primary, null);
+	assert.deepEqual(
+		view.secondary.map((a) => a.action),
+		['cancel'],
+	);
+});

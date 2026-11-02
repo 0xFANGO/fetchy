@@ -35,6 +35,8 @@ daemon 持久化目录配置、待保存的目录选择、最近任务的安全�
 
 下载成功必须同时满足核心返回有效视频校验和正时长、实际文件存在、文件大小匹配、真实文件路径在本次目标目录之内。只有已完成任务记录中的文件可以通过 Finder 定位。
 
+扩展发起小红书和抖音下载时，使用 `start` 的 `refreshOnValidationFailure: true` 开启一次自动重试。核心首次返回 `output_invalid` 后，任务保持 `running`，阶段变为 `refreshing`；扩展在临时后台标签页重新读取原视频，再通过 `refreshMedia` 提交媒体信息。重试沿用同一任务 ID 和保存目录，可随时取消；第二次失败直接结束。刷新等待最多 60 秒，旧扩展未开启此选项时仍按原流程处理。已返回保存结果后的路径或大小校验失败不会触发重试，避免重复保存。
+
 ## 消息协议
 
 请求：`{id, method, params}`。成功响应：`{id, ok: true, result}`；失败响应：`{id, ok: false, error: {code, message}}`。错误消息为固定中文映射，不转发工具原始输出。事件：`{event: "state", state}`。
@@ -48,6 +50,7 @@ daemon 持久化目录配置、待保存的目录选择、最近任务的安全�
 | `resolve`         | `{input, requestId, pageMedia?}`         | 经过筛选的视频元数据                              |
 | `cancelResolve`   | `{requestId}`                            | 取消指定解析请求                                  |
 | `start`           | `{input, taskId, metadata?, pageMedia?}` | 接受后的完整 state，任务随后发事件                |
+| `refreshMedia`    | `{taskId, pageMedia?, errorCode?}`       | `{accepted}`；仅接收当前任务等待中的一次刷新结果  |
 | `cancel`          | `{taskId}`                               | 当前完整 state，确认停止后再发终态                |
 | `getSettings`     | 无                                       | `{outputDir}`                                     |
 | `chooseDirectory` | 无                                       | 选择器关闭后的完整 state                          |

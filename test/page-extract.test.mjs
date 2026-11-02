@@ -204,6 +204,120 @@ test('Douyin uses playAddr only with no bitRateList; never falls back from split
 	);
 });
 
+test('Douyin hydrated muxed rates accept undefined audio markers but exclude separate tracks', () => {
+	const result = extractPageMedia(
+		dy({
+			awemeId,
+			video: {
+				bitRateList: [
+					{audioFileId: undefined, format: 'mp4', playAddr: [{src: dyCdn}]},
+					{audioFileId: 'separate-track', format: 'dash', playAddr: [{src: dyCdn}]},
+					{audioFileId: null, playAddr: [{src: dyCdn}]},
+				],
+			},
+		}),
+	);
+	assert.equal(result.formats.length, 1);
+	assert.equal(result.formats[0].id, 'play-0');
+});
+
+test('Douyin accepts only the verified zjcdn hosts over HTTPS', () => {
+	const accepted = [
+		'https://v5-dy-ov-experiment.zjcdn.com/video.mp4',
+		'https://v3-dy-o.zjcdn.com/video.mp4',
+	];
+	const rejected = [
+		'https://unverified.zjcdn.com/video.mp4',
+		'https://v3-dy-o.zjcdn.com.evil.test/video.mp4',
+		'https://fake-v3-dy-o.zjcdn.com/video.mp4',
+		'http://v3-dy-o.zjcdn.com/video.mp4',
+		'https://user:pass@v3-dy-o.zjcdn.com/video.mp4',
+		'https://v3-dy-o.zjcdn.com:444/video.mp4',
+	];
+	const result = extractPageMedia(
+		dy({
+			awemeId,
+			video: {
+				playAddr: [...accepted, ...rejected].map((src) => ({src})),
+			},
+		}),
+	);
+	assert.deepEqual(result.formats[0].urls, accepted);
+	assert.throws(
+		() =>
+			extractPageMedia(
+				xhs({
+					noteId,
+					video: {
+						media: {
+							stream: {
+								mp4: [{masterUrl: accepted[0], backupUrls: accepted.slice(1)}],
+							},
+						},
+					},
+				}),
+			),
+		{code: 'no_formats'},
+	);
+});
+
+test('serialized Douyin extractor uses only matching initialized player ancestor props', () => {
+	const detail = {awemeId, desc: 'target', video: {playAddr: [{src: dyCdn}]}};
+	const fiber = {
+		memoizedProps: {awemeInfo: {awemeId: '7695202760953793828'}},
+		return: {
+			memoizedProps: {
+				awemeInfo: detail,
+				userInfo: {secret: 'private'},
+				nextVideoInfo: {secret: 'neighbor'},
+			},
+		},
+	};
+	const videos = [
+		{readyState: 0, __reactFiber$test: {memoizedProps: {awemeInfo: {...detail, desc: 'unloaded'}}}},
+		{readyState: 4, parentElement: {__reactFiber$test: fiber}},
+	];
+	for (const raw of [
+		null,
+		'%invalid',
+		encodeURIComponent(JSON.stringify({app: {}})),
+		encodeURIComponent(JSON.stringify({app: {videoDetail: {awemeId: '7695202760953793828'}}})),
+	]) {
+		const result = vm.runInNewContext(
+			`(${extractPageMedia.toString()})(${JSON.stringify({platform: 'douyin', expectedId: awemeId})})`,
+			{
+				URL,
+				document: {getElementById: () => raw && {textContent: raw}, querySelectorAll: () => videos},
+			},
+		);
+		assert.equal(result.id, awemeId);
+		assert.equal(result.title, 'target');
+		assert.equal(result.formats[0].urls[0], dyCdn);
+		assert.doesNotMatch(JSON.stringify(result), /private|neighbor|unloaded/);
+	}
+});
+
+test('Douyin player fallback rejects unrelated and numeric IDs and bounds cyclic ancestry', () => {
+	for (const id of ['7695202760953793828', Number(awemeId)]) {
+		const fiber = {memoizedProps: {awemeInfo: {awemeId: id, video: {playAddr: [{src: dyCdn}]}}}};
+		fiber.return = fiber;
+		const video = {readyState: 4, __reactFiber$test: fiber};
+		video.parentElement = video;
+		assert.throws(
+			() =>
+				vm.runInNewContext(
+					`(${extractPageMedia.toString()})(${JSON.stringify({platform: 'douyin', expectedId: awemeId})})`,
+					{
+						URL,
+						document: {getElementById: () => null, querySelectorAll: () => [video]},
+					},
+					{timeout: 1000},
+				),
+			{code: 'browser_state_missing'},
+		);
+	}
+});
+
 test('Douyin videoFormat is a container; codec comes only from an explicit isH265 flag', () => {
 	const result = extractPageMedia(
 		dy({

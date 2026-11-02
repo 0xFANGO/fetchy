@@ -13,6 +13,7 @@ import {startServer} from '../native/server.mjs';
 import {publicError} from '../native/errors.mjs';
 import {shouldStopIdle} from '../native/lifecycle.mjs';
 import {manifestDirectories} from '../native/install-paths.mjs';
+import {setImmediate as nextTurn} from 'node:timers/promises';
 
 const metadata = {
 	platform: 'youtube',
@@ -606,4 +607,261 @@ test('page media reaches the core for resolve and start but never a snapshot or 
 		controller.request('resolve', {input: 'https://youtu.be/x', requestId: 'r2', pageMedia: []}),
 		{code: 'invalid_request'},
 	);
+});
+
+const refreshInput = 'https://www.xiaohongshu.com/explore/6adb92b90000000031037a66';
+const refreshMetadata = {
+	...metadata,
+	platform: 'xiaohongshu',
+	id: '6adb92b90000000031037a66',
+	engine: 'browser',
+};
+const refreshMedia = (token) => ({
+	media: {
+		...refreshMetadata,
+		formats: [{urls: [`https://sns-video.xhscdn.com/video.mp4?sign=${token}`]}],
+	},
+});
+async function waitingForMedia(controller) {
+	const signal = AbortSignal.timeout(2000);
+	while (controller.task?.stage !== 'refreshing') await once(controller, 'state', {signal});
+}
+
+for (const failAgain of [false, true]) {
+	test(`validation refresh keeps one task and ${failAgain ? 'stops after the second failure' : 'saves the second download'}`, async (t) => {
+		const attempts = [],
+			collects = [],
+			saves = [];
+		const {controller, directory, outputDir} = await fixture(t, {
+			core: {
+				downloadVideo: async (input, options) => {
+					attempts.push({input, media: options.pageMedia, outputDir: options.outputDir});
+					if (attempts.length === 1 || failAgain)
+						throw Object.assign(new Error('private diagnostic'), {code: 'output_invalid'});
+					return output(options.outputDir);
+				},
+			},
+		});
+		const nextDirectory = path.join(directory, 'next');
+		await mkdir(nextDirectory);
+		const popup = new ExtensionController({
+			rpc: (method, params) => controller.request(method, params),
+			collectPageMedia: async (input, options) => {
+				collects.push({input, fresh: options?.fresh});
+				if (options?.fresh) {
+					controller.settings.outputDir = nextDirectory;
+					await nextTurn();
+				}
+				return refreshMedia(options?.fresh ? 'FRESH_SECRET' : 'OLD_SECRET');
+			},
+			saveSession: async (value) => saves.push(value),
+		});
+		controller.on('state', (state) => popup.receiveNative(state));
+		await popup.start(refreshInput, refreshMetadata);
+		await controller.downloadPromise;
+		await popup.persist;
+		assert.equal(attempts.length, 2);
+		assert.deepEqual(
+			attempts.map((a) => a.input),
+			[refreshInput, refreshInput],
+		);
+		assert.deepEqual(
+			attempts.map((a) => a.outputDir),
+			[outputDir, outputDir],
+		);
+		assert.deepEqual(
+			attempts.map((a) => a.media),
+			[refreshMedia('OLD_SECRET'), refreshMedia('FRESH_SECRET')],
+		);
+		assert.deepEqual(collects, [
+			{input: refreshInput, fresh: undefined},
+			{input: refreshInput, fresh: true},
+		]);
+		assert.equal(controller.recentTaskIds.length, 1);
+		assert.equal(controller.task.status, failAgain ? 'failed' : 'completed');
+		if (failAgain) assert.equal(controller.task.error.code, 'output_invalid');
+		else
+			assert.ok(controller.task.result.filepath.startsWith((await realpath(outputDir)) + path.sep));
+		assert.equal(controller.taskPageMedia, null);
+		assert.equal(controller.mediaRefresh, null);
+		assert.doesNotMatch(JSON.stringify(saves), /OLD_SECRET|FRESH_SECRET|private diagnostic/);
+		assert.doesNotMatch(
+			await readFile(path.join(directory, 'state.json'), 'utf8'),
+			/OLD_SECRET|FRESH_SECRET|private diagnostic/,
+		);
+		assert.deepEqual(
+			await controller.request('refreshMedia', {
+				taskId: controller.task.id,
+				pageMedia: refreshMedia('LATE_SECRET'),
+			}),
+			{accepted: false},
+		);
+		assert.equal(attempts.length, 2);
+	});
+}
+
+test('refresh waits for the same video, survives a client reconnect, and accepts only one reply', async (t) => {
+	const attempts = [];
+	const {controller, directory} = await fixture(t, {
+		core: {
+			downloadVideo: async (input, options) => {
+				attempts.push(options.pageMedia);
+				if (attempts.length === 1) throw Object.assign(new Error(), {code: 'output_invalid'});
+				return output(options.outputDir);
+			},
+		},
+	});
+	await controller.start({
+		input: refreshInput,
+		taskId: 'refresh-reconnect',
+		metadata: refreshMetadata,
+		pageMedia: refreshMedia('OLD_SECRET'),
+		refreshOnValidationFailure: true,
+	});
+	await waitingForMedia(controller);
+	assert.equal(controller.task.status, 'running');
+	await assert.rejects(controller.request('start', {input: refreshInput, taskId: 'other'}), {
+		code: 'task_busy',
+	});
+	await assert.rejects(
+		controller.request('refreshMedia', {taskId: 'other', pageMedia: refreshMedia('FRESH_SECRET')}),
+		{code: 'task_not_found'},
+	);
+	await assert.rejects(
+		controller.request('refreshMedia', {
+			taskId: controller.task.id,
+			pageMedia: {media: {...refreshMetadata, id: 'different'}},
+		}),
+		{code: 'identity_mismatch'},
+	);
+	const restart = await new NativeController({directory, core: {}}).initialize();
+	assert.equal(restart.task.status, 'interrupted');
+	await restart.close();
+	const popup = new ExtensionController({
+		rpc: (method, params) => controller.request(method, params),
+		collectPageMedia: async () => refreshMedia('FRESH_SECRET'),
+	});
+	popup.receiveNative(await controller.request('getState'), {authoritative: true});
+	await controller.downloadPromise;
+	assert.equal(controller.task.status, 'completed');
+	assert.equal(attempts.length, 2);
+	assert.deepEqual(
+		await controller.request('refreshMedia', {
+			taskId: controller.task.id,
+			pageMedia: refreshMedia('DUPLICATE_SECRET'),
+		}),
+		{accepted: false},
+	);
+});
+
+test('cancel during media refresh prevents a second attempt and ignores late replies', async (t) => {
+	let attempts = 0;
+	const {controller} = await fixture(t, {
+		core: {
+			downloadVideo: async () => {
+				attempts++;
+				throw Object.assign(new Error(), {code: 'output_invalid'});
+			},
+		},
+	});
+	await controller.start({
+		input: refreshInput,
+		taskId: 'refresh-cancel',
+		pageMedia: refreshMedia('OLD_SECRET'),
+		refreshOnValidationFailure: true,
+	});
+	await waitingForMedia(controller);
+	await controller.cancel({taskId: 'refresh-cancel'});
+	await controller.downloadPromise;
+	assert.equal(controller.task.status, 'cancelled');
+	assert.equal(controller.mediaRefresh, null);
+	assert.deepEqual(
+		await controller.request('refreshMedia', {
+			taskId: 'refresh-cancel',
+			pageMedia: refreshMedia('FRESH_SECRET'),
+		}),
+		{accepted: false},
+	);
+	assert.equal(attempts, 1);
+});
+
+test('failed page refresh ends the task without another download', async (t) => {
+	let attempts = 0;
+	const {controller} = await fixture(t, {
+		core: {
+			downloadVideo: async () => {
+				attempts++;
+				throw Object.assign(new Error(), {code: 'output_invalid'});
+			},
+		},
+	});
+	await controller.start({
+		input: refreshInput,
+		taskId: 'refresh-error',
+		pageMedia: refreshMedia('OLD_SECRET'),
+		refreshOnValidationFailure: true,
+	});
+	await waitingForMedia(controller);
+	await controller.request('refreshMedia', {
+		taskId: 'refresh-error',
+		errorCode: 'browser_state_missing',
+	});
+	await controller.downloadPromise;
+	assert.equal(controller.task.status, 'failed');
+	assert.equal(controller.task.error.code, 'browser_state_missing');
+	assert.equal(attempts, 1);
+});
+
+test('media refresh has a bounded wait when the browser never replies', async (t) => {
+	const {controller} = await fixture(t, {
+		core: {
+			downloadVideo: async () => {
+				throw Object.assign(new Error(), {code: 'output_invalid'});
+			},
+		},
+	});
+	t.mock.timers.enable({apis: ['setTimeout']});
+	await controller.start({
+		input: refreshInput,
+		taskId: 'refresh-timeout',
+		pageMedia: refreshMedia('OLD_SECRET'),
+		refreshOnValidationFailure: true,
+	});
+	await nextTurn();
+	assert.equal(controller.task.stage, 'refreshing');
+	t.mock.timers.tick(60_000);
+	await controller.downloadPromise;
+	assert.equal(controller.task.error.code, 'timeout');
+	assert.equal(controller.mediaRefresh, null);
+});
+
+test('automatic refresh is opt-in, limited to browser media and never repeats a published result', async (t) => {
+	for (const scenario of [
+		{code: 'network_error', optedIn: true, media: refreshMedia('SECRET')},
+		{code: 'output_invalid', optedIn: false, media: refreshMedia('SECRET')},
+		{code: 'output_invalid', optedIn: true},
+		{code: 'output_invalid', optedIn: true, media: {media: metadata}},
+		{published: true, optedIn: true, media: refreshMedia('SECRET')},
+	]) {
+		let attempts = 0;
+		const {controller} = await fixture(t, {
+			core: {
+				downloadVideo: async (_input, options) => {
+					attempts++;
+					if (scenario.published) return {...(await output(options.outputDir)), bytes: 99};
+					throw Object.assign(new Error(), {code: scenario.code});
+				},
+			},
+		});
+		await controller.start({
+			input: refreshInput,
+			taskId: 'no-refresh',
+			pageMedia: scenario.media,
+			refreshOnValidationFailure: scenario.optedIn,
+		});
+		await controller.downloadPromise;
+		assert.equal(controller.task.status, 'failed');
+		assert.equal(attempts, 1);
+		assert.equal(controller.mediaRefresh, null);
+	}
 });

@@ -371,3 +371,67 @@ test('page media collected from the tab travels with resolve and start; collecti
 	assert.match(controller.state.notice, /页面还没有加载出/);
 	assert.equal(controller.state.starting, false);
 });
+
+test('fresh media is requested once while pending and cancelled replies never reach native', async () => {
+	const gate = deferred();
+	const requests = [];
+	const {controller, calls, saves} = harness({
+		collectPageMedia: async (input, options) => {
+			requests.push({input, ...options});
+			return gate.promise;
+		},
+	});
+	const task = {
+		id: 'refresh',
+		input: 'https://www.xiaohongshu.com/explore/6adb92b90000000031037a66',
+		status: 'running',
+		stage: 'refreshing',
+	};
+	controller.receiveNative({task});
+	controller.receiveNative({task}, {authoritative: true});
+	assert.equal(requests.length, 1);
+	assert.equal(requests[0].input, task.input);
+	assert.equal(requests[0].fresh, true);
+	assert.equal(requests[0].signal.aborted, false);
+	controller.receiveNative({task: {...task, status: 'cancelling'}});
+	assert.equal(requests[0].signal.aborted, true);
+	gate.resolve({media: {urls: ['SECRET']}});
+	await new Promise(setImmediate);
+	assert.equal(calls.length, 0);
+	assert.equal(controller.mediaRefresh, null);
+	assert.doesNotMatch(JSON.stringify(saves), /SECRET/);
+});
+
+test('a new task ignores the previous refresh even if collection finishes late', async () => {
+	const gate = deferred();
+	const {controller, calls} = harness({collectPageMedia: () => gate.promise});
+	controller.receiveNative({task: {id: 'old', input: A, status: 'running', stage: 'refreshing'}});
+	controller.receiveNative({task: {id: 'new', input: B, status: 'running', stage: 'downloading'}});
+	gate.resolve({media: {}});
+	await new Promise(setImmediate);
+	assert.equal(controller.state.task.id, 'new');
+	assert.equal(calls.length, 0);
+});
+
+test('reconnect resumes a pending native refresh while discarding the old collection', async () => {
+	const gates = [deferred(), deferred()];
+	const signals = [];
+	let count = 0;
+	const {controller, calls} = harness({
+		collectPageMedia: (_input, {signal}) => {
+			signals.push(signal);
+			return gates[count++].promise;
+		},
+	});
+	const task = {id: 'refresh', input: A, status: 'running', stage: 'refreshing'};
+	controller.receiveNative({task});
+	controller.setConnection({status: 'disconnected'});
+	assert.equal(signals[0].aborted, true);
+	controller.receiveNative({task}, {authoritative: true});
+	assert.equal(signals[1].aborted, false);
+	gates[0].resolve({media: {title: 'stale'}});
+	gates[1].resolve({media: {title: 'fresh'}});
+	await new Promise(setImmediate);
+	assert.equal(calls.length, 1);
+	assert.equal(calls[0].params.pageMedia.media.title, 'fresh');
+});

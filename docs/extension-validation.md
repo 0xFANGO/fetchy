@@ -8,9 +8,21 @@ Manifest V3 弹窗、后台任务控制、本地 Native Messaging 桥接、目�
 
 用户已在 Ego Lite 的原生目录选择窗口完成导入。已验证扩展 ID 为 `hmgmpigkcmalkhcmjfikpkeabbfbhdoh`，版本 0.2.0。首次真实连接暴露 Ego 产品目录注册不足的问题；补充 Chrome 共享注册目录后连接成功，安装脚本已修复。
 
-最新完整 `npm test`：**122 项通过、0 失败、0 跳过**，约 22.8 秒；`git diff --check` 和扩展 JavaScript 语法检查通过。日志只保留在忽略目录 `.local/extension-final-tests.log`。
+2026-10-25 完整 `npm test`：**122 项通过、0 失败、0 跳过**，约 22.8 秒；`git diff --check` 和扩展 JavaScript 语法检查通过。日志只保留在忽略目录 `.local/extension-final-tests.log`。
 
 已完成四个平台各一条真实插件下载样例，均得到实际文件并通过音视频/时长校验；关闭重开、后台重建、取消/重试及目录选择恢复也已验证。下表仍保留未逐项完成的专项，不将样例成功等同于所有验收场景或平台所有视频均通过。
+
+## 校验失败重试与抖音标签页复用（2026-11-02）
+
+本地 0.3.0 开发构建已重新加载到 Ego Lite，空闲的本地组件也已重启以载入修改。
+
+- 抖音 `/video/7695202760953793827` 可播放，但 `RENDER_DATA` 不含 `app.videoDetail`。从已初始化播放器的祖先 React props 取得匹配字符串 ID 的 `awemeInfo`，不读取相邻推荐视频或用户资料。
+- 实际播放器数据中的合流码率包含 `audioFileId: undefined`，分离流包含独立音轨 ID；已保留后者的排除规则。播放器请求使用 `v5-dy-ov-experiment.zjcdn.com`，匹配视频数据另提供 `v3-dy-o.zjcdn.com` 镜像；仅增加这两个精确主机，不开放整个域名。
+- 在已打开上述详情页时，通过扩展 popup 文档填入同一链接、识别并点击下载。完整过程监听 `chrome.tabs.onCreated/onRemoved`，两者均为 0；原页面未被导航或刷新。
+- 下载完成：285,236,470 字节，1080×1920 H.264 + 双声道 AAC，2082.066667 秒。核心校验和独立 ffprobe 均通过；没有额外逐帧完整解码。脱敏结果保存在 `.local/douyin-no-tab-result.json` 和 `.local/douyin-no-tab-browser.json`。
+- 小红书真实样例在调查中下载并校验成功，但未再次触发间歇性校验失败。自动刷新后的一次重试、取消、超时、重连、身份校验和迟到回复由离线故障注入测试验证。
+
+本次 `npm test` 在 Node.js 24.22.1 上 **195 项通过、0 失败、0 跳过**；`npm run check` 和 `npm run extension:pack` 通过。无可用目标页、短链解析及校验失败后刷新媒体时仍可能使用临时后台标签页；本次真实验收覆盖已打开抖音详情页的复用。
 
 ## 自动化验证范围
 

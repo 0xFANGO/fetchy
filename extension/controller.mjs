@@ -77,6 +77,7 @@ export class Controller {
 		this.timer = null;
 		this.starting = false;
 		this.pendingStart = null;
+		this.mediaRefresh = null;
 		this.tabId = null;
 		this.autoUrl = null;
 		this.detection = 0;
@@ -109,6 +110,10 @@ export class Controller {
 	}
 	setConnection(connection) {
 		this.state.connection = connection;
+		if (connection.status === 'disconnected') {
+			this.mediaRefresh?.controller.abort();
+			this.mediaRefresh = null;
+		}
 		this.publish();
 	}
 	receiveNative(remote, {authoritative = false} = {}) {
@@ -148,6 +153,30 @@ export class Controller {
 			this.pendingStart = null;
 		}
 		this.publish();
+		const task = this.state.task;
+		const needsMedia = task?.status === 'running' && task.stage === 'refreshing';
+		if (this.mediaRefresh && (!needsMedia || this.mediaRefresh.taskId !== task.id)) {
+			this.mediaRefresh.controller.abort();
+			this.mediaRefresh = null;
+		}
+		if (needsMedia && task.input && !this.mediaRefresh) void this.refreshPageMedia(task);
+	}
+	async refreshPageMedia(task) {
+		const refresh = {taskId: task.id, controller: new AbortController()};
+		this.mediaRefresh = refresh;
+		const {signal} = refresh.controller;
+		try {
+			const pageMedia = await this.collectPageMedia(task.input, {fresh: true, signal});
+			if (!signal.aborted) await this.rpc('refreshMedia', {taskId: task.id, pageMedia});
+		} catch (error) {
+			if (!signal.aborted)
+				await this.rpc('refreshMedia', {
+					taskId: task.id,
+					errorCode: error?.code || 'browser_unavailable',
+				}).catch(() => {});
+		} finally {
+			if (this.mediaRefresh === refresh) this.mediaRefresh = null;
+		}
 	}
 	invalidate() {
 		clearTimeout(this.timer);
@@ -325,7 +354,15 @@ export class Controller {
 		try {
 			await this.persist;
 			sent = true;
-			this.receiveNative(await this.rpc('start', {taskId, input, metadata, pageMedia}));
+			const state = await this.rpc('start', {
+				taskId,
+				input,
+				metadata,
+				pageMedia,
+				refreshOnValidationFailure: pageMediaNeeded(input),
+			});
+			// State events can advance the task before its start receipt arrives.
+			if (this.state.task?.id !== taskId) this.receiveNative(state);
 			this.pendingStart = null;
 		} catch (error) {
 			this.state.notice = null;

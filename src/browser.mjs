@@ -196,13 +196,17 @@ export function validateMediaUrl(raw, platform) {
 	}
 	const suffix =
 		platform === 'xiaohongshu' ? '.xhscdn.com' : platform === 'douyin' ? '.douyinvod.com' : null;
+	const permittedHost =
+		(suffix && url.hostname.endsWith(suffix)) ||
+		(platform === 'douyin' &&
+			['v5-dy-ov-experiment.zjcdn.com', 'v3-dy-o.zjcdn.com'].includes(url.hostname));
 	if (
 		!suffix ||
 		url.protocol !== 'https:' ||
 		url.username ||
 		url.password ||
 		url.port ||
-		!url.hostname.endsWith(suffix)
+		!permittedHost
 	)
 		throw new EngineError('invalid_media_url', '媒体地址不在该平台已验证的 CDN 范围内。');
 	return url.href;
