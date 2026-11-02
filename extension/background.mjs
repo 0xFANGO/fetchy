@@ -147,6 +147,9 @@ const PAGE_PLATFORMS = ['xiaohongshu', 'douyin'];
 const PAGE_HOSTS = ['https://*.xiaohongshu.com/*', 'https://*.douyin.com/*'];
 const RETRYABLE = ['browser_state_missing', 'browser_unavailable'];
 const delay = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
+function checkCancelled(signal) {
+	if (signal?.aborted) throw {code: 'cancelled'};
+}
 // Douyin's /video/<id> page does not carry app.videoDetail; the modal page does.
 const pageUrl = (target) =>
 	target.platform === 'douyin'
@@ -179,24 +182,28 @@ async function extractOnce(tabId, target) {
 	});
 	return injection?.result ?? {ok: false, code: 'browser_state_missing'};
 }
-async function extractFromTab(tabId, target, attempts) {
+async function extractFromTab(tabId, target, attempts, signal) {
 	let last = {ok: false, code: 'browser_state_missing'};
 	for (let attempt = 0; attempt < attempts; attempt++) {
+		checkCancelled(signal);
 		try {
 			last = await extractOnce(tabId, target);
 		} catch {
 			last = {ok: false, code: 'browser_unavailable'};
 		}
+		checkCancelled(signal);
 		if (last.ok) return {media: last.media, userAgent: last.userAgent, resolvedUrl: target.url};
 		if (!RETRYABLE.includes(last.code)) break;
 		await delay(500);
 	}
 	throw {code: typeof last.code === 'string' ? last.code : 'browser_state_missing'};
 }
-async function waitForTarget(tabId, expected, timeoutMs) {
+async function waitForTarget(tabId, expected, timeoutMs, signal) {
 	const deadline = Date.now() + timeoutMs;
 	while (Date.now() < deadline) {
+		checkCancelled(signal);
 		const tab = await chrome.tabs.get(tabId).catch(() => null);
+		checkCancelled(signal);
 		if (!tab) throw {code: 'browser_unavailable'};
 		const url = tab.url || tab.pendingUrl || '';
 		const target = targetOf(url);
@@ -210,7 +217,8 @@ async function waitForTarget(tabId, expected, timeoutMs) {
 	}
 	throw {code: 'timeout'};
 }
-async function collectPageMedia(input) {
+async function collectPageMedia(input, {fresh = false, signal} = {}) {
+	checkCancelled(signal);
 	let expected;
 	try {
 		expected = normalizeUrl(input);
@@ -218,29 +226,30 @@ async function collectPageMedia(input) {
 		return undefined;
 	}
 	if (!PAGE_PLATFORMS.includes(expected.platform)) return undefined;
-	if (!expected.needsRedirect) {
+	if (!fresh && !expected.needsRedirect) {
 		const tabs = await chrome.tabs.query({url: PAGE_HOSTS}).catch(() => []);
 		for (const tab of tabs) {
 			if (!sameTarget(targetOf(tab.url), expected)) continue;
 			try {
-				return await extractFromTab(tab.id, expected, 3);
+				return await extractFromTab(tab.id, expected, 3, signal);
 			} catch (error) {
 				if (!RETRYABLE.includes(error.code)) throw error;
 			}
 		}
 	}
+	checkCancelled(signal);
 	const tab = await chrome.tabs.create({
 		url: expected.needsRedirect ? expected.url : pageUrl(expected),
 		active: false,
 	});
 	try {
-		let {target, url} = await waitForTarget(tab.id, expected, 20000);
+		let {target, url} = await waitForTarget(tab.id, expected, 20000, signal);
 		if (target.platform === 'douyin' && !url.includes('modal_id=')) {
 			await chrome.tabs.update(tab.id, {url: pageUrl(target)});
 			await delay(250);
-			({target, url} = await waitForTarget(tab.id, target, 20000));
+			({target, url} = await waitForTarget(tab.id, target, 20000, signal));
 		}
-		return await extractFromTab(tab.id, target, 40);
+		return await extractFromTab(tab.id, target, 40, signal);
 	} finally {
 		chrome.tabs.remove(tab.id).catch(() => {});
 	}

@@ -96,6 +96,7 @@ export class NativeController extends EventEmitter {
 		// Signed media URLs extracted by the extension live here only; they are
 		// never part of a snapshot or the persisted state file.
 		this.taskPageMedia = null;
+		this.mediaRefresh = null;
 		this.pendingDirectory = null;
 		this.choosingDirectory = false;
 		this.resolvers = new Map();
@@ -212,6 +213,8 @@ export class NativeController extends EventEmitter {
 			}
 			case 'start':
 				return this.start(params);
+			case 'refreshMedia':
+				return this.refreshMedia(params);
 			case 'cancel':
 				return this.cancel(params);
 			case 'chooseDirectory':
@@ -253,7 +256,7 @@ export class NativeController extends EventEmitter {
 			if (this.resolvers.get(requestId) === controller) this.resolvers.delete(requestId);
 		}
 	}
-	async start({input, taskId, metadata, pageMedia}) {
+	async start({input, taskId, metadata, pageMedia, refreshOnValidationFailure}) {
 		taskId = checkedId(taskId);
 		input = checkedInput(input);
 		pageMedia = checkedPageMedia(pageMedia);
@@ -292,37 +295,99 @@ export class NativeController extends EventEmitter {
 			await this.changed();
 			return this.snapshot();
 		}
-		this.downloadPromise = this.download(task, controller);
+		this.downloadPromise = this.download(
+			task,
+			controller,
+			refreshOnValidationFailure === true &&
+				['xiaohongshu', 'douyin'].includes(pageMedia?.media?.platform),
+		);
 		return this.snapshot();
 	}
-	async download(task, controller) {
+	requestMediaRefresh(task, signal) {
+		return new Promise((resolve, reject) => {
+			const finish = (media, error) => {
+				clearTimeout(timer);
+				signal.removeEventListener('abort', cancel);
+				this.mediaRefresh = null;
+				if (error) reject(error);
+				else resolve(media);
+			};
+			const cancel = () => finish(null, bridgeError('cancelled'));
+			const timer = setTimeout(() => finish(null, bridgeError('timeout')), 60_000);
+			this.mediaRefresh = {taskId: task.id, finish};
+			signal.addEventListener('abort', cancel, {once: true});
+			if (signal.aborted) return cancel();
+			task.stage = 'refreshing';
+			task.progress = null;
+			task.updatedAt = Date.now();
+			this.broadcast();
+		});
+	}
+	refreshMedia({taskId, pageMedia, errorCode}) {
+		if (this.task?.id !== checkedId(taskId)) throw bridgeError('task_not_found');
+		// Replayed replies after reconnect cannot start another download.
+		if (this.task.status !== 'running' || this.mediaRefresh?.taskId !== taskId)
+			return {accepted: false};
+		if (errorCode) this.mediaRefresh.finish(null, bridgeError(errorCode));
+		else {
+			const media = checkedPageMedia(pageMedia);
+			if (!media) throw bridgeError('invalid_request');
+			if (
+				media.media.platform !== this.taskPageMedia?.media?.platform ||
+				media.media.id !== this.taskPageMedia?.media?.id
+			)
+				throw bridgeError('identity_mismatch');
+			this.mediaRefresh.finish(media);
+		}
+		return {accepted: true};
+	}
+	async download(task, controller, refreshOnValidationFailure = false) {
 		try {
-			const result = await this.core.downloadVideo(task.input, {
-				...this.engineOptions,
-				pageMedia: this.taskPageMedia ?? undefined,
-				outputDir: task.outputDir,
-				signal: controller.signal,
-				onProgress: ({stage, bytes, totalBytes}) => {
-					if (
-						!active(task) ||
-						!['resolving', 'downloading', 'postprocessing', 'validating', 'retrying'].includes(
-							stage,
+			const attempt = () =>
+				this.core.downloadVideo(task.input, {
+					...this.engineOptions,
+					pageMedia: this.taskPageMedia ?? undefined,
+					outputDir: task.outputDir,
+					signal: controller.signal,
+					onProgress: ({stage, bytes, totalBytes}) => {
+						if (
+							!active(task) ||
+							!['resolving', 'downloading', 'postprocessing', 'validating', 'retrying'].includes(
+								stage,
+							)
 						)
-					)
-						return;
-					task.stage = stage;
-					task.updatedAt = Date.now();
-					task.progress =
-						Number.isFinite(bytes) &&
-						bytes >= 0 &&
-						Number.isFinite(totalBytes) &&
-						totalBytes > 0 &&
-						bytes <= totalBytes
-							? {downloadedBytes: bytes, totalBytes}
-							: null;
-					this.broadcast();
-				},
-			});
+							return;
+						task.stage = stage;
+						task.updatedAt = Date.now();
+						task.progress =
+							Number.isFinite(bytes) &&
+							bytes >= 0 &&
+							Number.isFinite(totalBytes) &&
+							totalBytes > 0 &&
+							bytes <= totalBytes
+								? {downloadedBytes: bytes, totalBytes}
+								: null;
+						this.broadcast();
+					},
+				});
+			let result;
+			try {
+				result = await attempt();
+			} catch (error) {
+				if (
+					!refreshOnValidationFailure ||
+					error.code !== 'output_invalid' ||
+					controller.signal.aborted
+				)
+					throw error;
+				// Only retry a core failure, after its temporary-file cleanup. A returned
+				// result may already be published and must never cause a second save.
+				this.taskPageMedia = await this.requestMediaRefresh(task, controller.signal);
+				if (controller.signal.aborted) throw bridgeError('cancelled');
+				task.stage = 'retrying';
+				this.broadcast();
+				result = await attempt();
+			}
 			if (
 				!result?.filepath ||
 				!path.isAbsolute(result.filepath) ||
