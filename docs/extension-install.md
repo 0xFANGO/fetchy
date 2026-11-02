@@ -1,6 +1,6 @@
 # Fetchy 扩展安装与使用
 
-版本：0.3.0。首版实现环境为 macOS + Chromium Manifest V3；真实验证在 Ego Lite 上完成，Chrome 走同样的流程。真实验收进度见 [扩展验证记录](extension-validation.md)，不能将离线测试等同于四个平台真实下载均通过。
+版本：0.3.1。首版实现环境为 macOS + Chromium Manifest V3；真实验证在 Ego Lite 上完成，Chrome 走同样的流程。真实验收进度见 [扩展验证记录](extension-validation.md)，不能将离线测试等同于四个平台真实下载均通过。
 
 ## 1. 安装依赖与构建
 

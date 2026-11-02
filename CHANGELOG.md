@@ -4,6 +4,8 @@ Notable changes for users, following [Keep a Changelog](https://keepachangelog.c
 
 ## [Unreleased]
 
+## [0.3.1] - 2026-11-02
+
 ### Fixed
 
 - Automatically refresh the page media and retry once when a Xiaohongshu or Douyin download fails file validation.
@@ -58,6 +60,7 @@ Notable changes for users, following [Keep a Changelog](https://keepachangelog.c
 - CLI and Node API for single-video downloads from YouTube, Bilibili,
   Xiaohongshu and Douyin, with MP4 validation.
 
-[Unreleased]: https://github.com/0xFANGO/fetchy/compare/v0.3.0...main
+[Unreleased]: https://github.com/0xFANGO/fetchy/compare/v0.3.1...main
+[0.3.1]: https://github.com/0xFANGO/fetchy/releases/tag/v0.3.1
 [0.3.0]: https://github.com/0xFANGO/fetchy/releases/tag/v0.3.0
 [0.2.0]: https://github.com/0xFANGO/fetchy/releases/tag/v0.2.0
