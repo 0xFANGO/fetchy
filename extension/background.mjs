@@ -150,7 +150,8 @@ const delay = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
 function checkCancelled(signal) {
 	if (signal?.aborted) throw {code: 'cancelled'};
 }
-// Douyin's /video/<id> page does not carry app.videoDetail; the modal page does.
+// Prefer the modal's SSR detail when a temporary page is needed. Existing
+// /video tabs can also supply detail through their hydrated player state.
 const pageUrl = (target) =>
 	target.platform === 'douyin'
 		? `https://www.douyin.com/jingxuan?modal_id=${target.id}`

@@ -44,14 +44,11 @@ export function extractPageMedia({platform, expectedId, snapshot} = {}) {
 			if (typeof value !== 'string') continue;
 			try {
 				const url = new URL(value);
-				if (
-					value !== value.trim() ||
-					url.username ||
-					url.password ||
-					url.port ||
-					!url.hostname.endsWith(suffix) ||
-					url.hostname.length <= suffix.length
-				)
+				const permittedHost =
+					(url.hostname.endsWith(suffix) && url.hostname.length > suffix.length) ||
+					(platform === 'douyin' &&
+						['v5-dy-ov-experiment.zjcdn.com', 'v3-dy-o.zjcdn.com'].includes(url.hostname));
+				if (value !== value.trim() || url.username || url.password || url.port || !permittedHost)
 					continue;
 				// XHS SSR can publish HTTP addresses for CDN resources observed over HTTPS.
 				// Upgrade only this verified CDN family; retain the signed query byte-for-byte.
@@ -126,7 +123,33 @@ export function extractPageMedia({platform, expectedId, snapshot} = {}) {
 					: null;
 			selected = raw ? JSON.parse(decodeURIComponent(raw))?.app?.videoDetail : null;
 		} catch {
-			fail('browser_state_missing', '抖音页面状态不可解析，请打开目标视频后重试。');
+			/* Hydrated detail pages can provide player state without usable SSR data. */
+		}
+		if (selected?.awemeId !== expectedId && typeof document !== 'undefined') {
+			// /video pages omit app.videoDetail. Inspect only initialized players'
+			// ancestor props, never the whole React tree or neighboring recommendations.
+			const videos = Array.from(document.querySelectorAll?.('video') || []).slice(0, 8);
+			players: for (const video of videos) {
+				if (!(video.readyState >= 1)) continue;
+				for (
+					let element = video, depth = 0;
+					element && depth < 8;
+					element = element.parentElement, depth++
+				) {
+					const key = Object.keys(element).find((name) => name.startsWith('__reactFiber$'));
+					for (
+						let fiber = element[key], level = 0;
+						fiber && level < 24;
+						fiber = fiber.return, level++
+					) {
+						const detail = fiber.memoizedProps?.awemeInfo;
+						if (detail?.awemeId === expectedId) {
+							selected = detail;
+							break players;
+						}
+					}
+				}
+			}
 		}
 	}
 	if (!selected || typeof selected !== 'object' || Array.isArray(selected)) {
@@ -171,7 +194,8 @@ export function extractPageMedia({platform, expectedId, snapshot} = {}) {
 			if (
 				!item ||
 				typeof item !== 'object' ||
-				Object.prototype.hasOwnProperty.call(item, 'audioFileId')
+				// Hydrated muxed rates include audioFileId: undefined; split rates have an ID.
+				item.audioFileId !== undefined
 			)
 				return;
 			const urls = permittedUrls(

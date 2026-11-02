@@ -1,7 +1,10 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
+import vm from 'node:vm';
 import {resolveVideo} from '../src/index.mjs';
 import {normalizeUrl} from '../src/urls.mjs';
+import {extractPageMedia} from '../src/page-extract.mjs';
+import {pageExtractInjection} from '../scripts/page-extract-inject.mjs';
 
 function event() {
 	return {
@@ -11,7 +14,7 @@ function event() {
 	};
 }
 
-test('background forwards the browser-confirmed URL on resolve and start without persisting it', async () => {
+test('background resolves and starts using an existing target tab or a temporary short-link tab', async () => {
 	for (const target of [
 		{
 			platform: 'xiaohongshu',
@@ -26,6 +29,14 @@ test('background forwards the browser-confirmed URL on resolve and start without
 			input: 'https://v.douyin.com/example/',
 			url: 'https://www.douyin.com/jingxuan?modal_id=7695202760953793827',
 			cdn: 'https://v3.douyinvod.com/a.mp4',
+		},
+		{
+			platform: 'douyin',
+			id: '7695202760953793827',
+			input: 'https://www.douyin.com/video/7695202760953793827',
+			url: 'https://www.douyin.com/video/7695202760953793827',
+			cdn: 'https://v3-dy-o.zjcdn.com/a.mp4',
+			reuse: true,
 		},
 	]) {
 		const media = {
@@ -80,6 +91,7 @@ test('background forwards the browser-confirmed URL on resolve and start without
 			tabs: {
 				onUpdated: event(),
 				onActivated: event(),
+				query: async () => [{id: 42, url: target.url}],
 				create: async (options) => {
 					created.push(options);
 					return {id: 42};
@@ -90,14 +102,53 @@ test('background forwards the browser-confirmed URL on resolve and start without
 				},
 			},
 			scripting: {
-				executeScript: async ({files}) =>
-					files ? [{result: {ok: true, media, userAgent: 'fixture'}}] : [],
+				executeScript: async ({files, target: injectionTarget}) => {
+					if (!files) return [];
+					assert.equal(injectionTarget.tabId, 42);
+					if (!target.reuse) return [{result: {ok: true, media, userAgent: 'fixture'}}];
+					return [
+						{
+							result: vm.runInNewContext(pageExtractInjection(extractPageMedia), {
+								URL,
+								navigator: {userAgent: 'fixture'},
+								__fetchyPageExtractArgs: {platform: target.platform, expectedId: target.id},
+								document: {
+									getElementById: () => null,
+									querySelectorAll: () => [
+										{
+											readyState: 4,
+											parentElement: {
+												__reactFiber$fixture: {
+													memoizedProps: {
+														awemeInfo: {
+															awemeId: target.id,
+															video: {
+																bitRateList: [
+																	{
+																		audioFileId: undefined,
+																		width: 720,
+																		height: 1280,
+																		playAddr: [{src: target.cdn}],
+																	},
+																],
+															},
+														},
+													},
+												},
+											},
+										},
+									],
+								},
+							}),
+						},
+					];
+				},
 			},
 		};
 		const previous = globalThis.chrome;
 		globalThis.chrome = chrome;
 		try {
-			await import(`../extension/background.mjs?shortlink-test=${target.platform}`);
+			await import(`../extension/background.mjs?tab-test=${target.platform}-${target.reuse}`);
 			chrome.runtime.onConnect.listener(popup);
 			const action = (name, data = {}) =>
 				popup.onMessage.listener({type: 'action', action: name, ...data});
@@ -116,10 +167,15 @@ test('background forwards the browser-confirmed URL on resolve and start without
 			}
 			assert.deepEqual(
 				created,
-				Array.from({length: 2}, () => ({url: normalizeUrl(target.input).url, active: false})),
+				target.reuse
+					? []
+					: Array.from({length: 2}, () => ({url: normalizeUrl(target.input).url, active: false})),
 			);
-			assert.deepEqual(removed, [42, 42]);
-			assert.doesNotMatch(JSON.stringify(saves), /resolvedUrl|BROWSER_ONLY_TOKEN|xhscdn|douyinvod/);
+			assert.deepEqual(removed, target.reuse ? [] : [42, 42]);
+			assert.doesNotMatch(
+				JSON.stringify(saves),
+				/resolvedUrl|BROWSER_ONLY_TOKEN|xhscdn|douyinvod|zjcdn/,
+			);
 		} finally {
 			globalThis.chrome = previous;
 		}
