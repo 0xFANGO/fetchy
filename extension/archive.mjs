@@ -6,6 +6,7 @@ import {
 	hydrateOriginal,
 	listVisibleMedia,
 } from './archive-source.mjs';
+import {ArchiveTransfer} from './archive-transfer.mjs';
 import {libraryRpc, submitArchive} from './archive-rpc.mjs';
 
 const el = (id) => document.getElementById(id);
@@ -29,6 +30,7 @@ const statuses = {
 	added: '已保存',
 };
 const errors = {
+	metadata_limit: '作品正文与收藏夹清单超过 48 MiB，请分批选择作品。',
 	invalid_url: '媒体地址无法由本机公开访问。',
 	auth_required: '此媒体需要站点授权。',
 	network_error: '本机无法读取此媒体。',
@@ -316,21 +318,37 @@ async function loadSource() {
 	updateSave();
 }
 async function save() {
-	let manifest, keys;
+	let manifest, keys, transfer;
 	if (source?.type === 'post') {
 		message('正在原页面读取附件…');
 		const fresh = await readArchiveSource(tabId);
 		if (fresh.type !== 'post' || key(fresh.entry) !== key(source.entry))
 			throw new Error('identity_mismatch');
-		manifest = {version: 1, items: [await hydrateOriginal(tabId, fresh.entry)]};
+		transfer = new ArchiveTransfer();
+		const read = await hydrateOriginal(tabId, fresh.entry, transfer.readLimit);
+		manifest = {version: 1, items: [transfer.record({}, fresh.entry, read)]};
 	} else {
 		await permit();
 		keys = [...selected];
 		const folders = [];
-		for (const group of collections) {
-			if (!group.items.some((row) => selected.has(key(row)))) continue;
-			const data = await hydrateArchivePages(group, keys, origin, (n, t) =>
-				message('正在读取原帖 ' + n + ' / ' + t + '…'),
+		const groups = collections.filter((c) => c.items.some((row) => selected.has(key(row))));
+		transfer = new ArchiveTransfer(groups, keys);
+		for (const group of groups) {
+			const data = await hydrateArchivePages(
+				group,
+				keys,
+				origin,
+				(n, t, urls) =>
+					message(
+						'正在读取原帖 ' +
+							n +
+							' / ' +
+							t +
+							'…' +
+							(urls ? ' · ' + urls + ' 个附件使用原地址' : ''),
+					),
+				undefined,
+				transfer,
 			);
 			folders.push(...data.folders);
 		}
@@ -343,6 +361,11 @@ async function save() {
 	activeId = task.id;
 	setView('tasks');
 	await loadTasks();
+	const details = [];
+	if (transfer.urlCount) details.push(transfer.urlCount + ' 个附件交由本机从原地址读取');
+	if (transfer.missingCount)
+		details.push(transfer.missingCount + ' 个仅有页面内数据的附件超出容量，保留为缺项');
+	if (details.length) message(details.join('。') + '。结果以任务状态为准。');
 }
 function itemRow(title, meta, btn) {
 	const row = node('div', undefined, 'row'),

@@ -152,3 +152,110 @@ test('runtime media discovery keeps relevant HTTPS files and manifests from the 
 	assert.equal(capture.items[0].host, 'cdn.example');
 	assert.equal(capture.page, 'https://example.org/read');
 });
+
+test('one transfer keeps every selected row while replacing excess inline media with original URLs', async () => {
+	const {ArchiveTransfer, manifestFolder} = await import('../extension/archive-transfer.mjs');
+	const one = (id) => ({
+		platform: 'x',
+		id,
+		title: 'item ' + id,
+		sourceUrl: 'https://x.com/archive/status/' + id,
+		attachments: [],
+	});
+	const rows = ['1', '2', '3'].map(one),
+		group = {
+			folder: {id: 'fav', platform: 'x', name: 'F'},
+			pages: [rows],
+			items: rows,
+			total: 3,
+			complete: true,
+		};
+	const chosen = rows.map((i) => 'x:' + i.id);
+	const budget = new ArchiveTransfer([group], chosen, {wireLimit: 2500, inlineLimit: 600});
+	const entries = new Map();
+	for (const row of rows) {
+		const url = 'https://example.org/' + row.id + '.png',
+			original = {...row, body: '原文', attachments: [{kind: 'image', url}]};
+		const filled = {
+			...original,
+			attachments: [{kind: 'image', data: 'A'.repeat(600), mimeType: 'image/png'}],
+		};
+		entries.set('x:' + row.id, budget.record(row, original, filled));
+	}
+	const output = manifestFolder(group, entries).pages[0].items;
+	assert.equal(output.length, 3);
+	assert.ok(output[0].attachments[0].data);
+	assert.equal(output[1].attachments[0].url, 'https://example.org/2.png');
+	assert.equal(output[2].attachments[0].url, 'https://example.org/3.png');
+	assert.equal(budget.urlCount, 2);
+	assert.equal(budget.missingCount, 0);
+	assert.ok(output.every((v) => v.body === '原文'));
+});
+
+test('late text reclaims inline media space, and data-only slots report missing explicitly', async () => {
+	const {ArchiveTransfer} = await import('../extension/archive-transfer.mjs');
+	const first = {
+		platform: 'x',
+		id: '1',
+		body: '',
+		attachments: [{kind: 'image', url: 'https://example.org/one'}],
+	};
+	const second = {platform: 'x', id: '2', body: 'b'.repeat(600), attachments: []};
+	const q = new ArchiveTransfer([], undefined, {wireLimit: 1200, inlineLimit: 1000});
+	const original = q.record({}, first, {
+		...first,
+		attachments: [{kind: 'image', data: 'A'.repeat(650)}],
+	});
+	q.record({}, second, second);
+	assert.equal(original.attachments[0].url, first.attachments[0].url);
+	assert.equal(q.urlCount, 1);
+	const noUrl = {platform: 'x', id: '3', attachments: [{kind: 'image', data: 'A'.repeat(2000)}]};
+	assert.equal(q.record({}, noUrl, noUrl).attachments[0].missing, true);
+	assert.equal(q.missingCount, 1);
+});
+
+test('virtualized collections return to the top and keep moving through overlapping viewports', async (t) => {
+	const {advanceArchivePage} = await import('../extension/capture-page.mjs');
+	const {collectArchivePages} = await import('../extension/archive-source.mjs');
+	const folder = {id: 'album', platform: 'xiaohongshu'},
+		calls = [];
+	let offset = 4;
+	const snapshot = () => ({
+		type: 'collection',
+		folder,
+		total: 4,
+		complete: false,
+		items: [{platform: 'xiaohongshu', id: String([1, 1, 1, 1, 2, 3, 4][offset])}],
+	});
+	const original = snapshot();
+	const realSetTimeout = setTimeout;
+	t.mock.method(globalThis, 'setTimeout', (callback) => realSetTimeout(callback, 0));
+	const mockChrome = {
+		scripting: {
+			async executeScript({func, args}) {
+				if (func === advanceArchivePage) {
+					const before = offset;
+					if (args?.[0]) {
+						calls.push('top');
+						offset = 0;
+					} else offset = Math.min(6, offset + 1);
+					return [{result: {before: before * 100, position: offset * 100}}];
+				}
+				return [{result: snapshot()}];
+			},
+		},
+	};
+	const previous = globalThis.chrome;
+	globalThis.chrome = mockChrome;
+	t.after(() => {
+		if (previous === undefined) delete globalThis.chrome;
+		else globalThis.chrome = previous;
+	});
+	const result = await collectArchivePages(1, 'https://www.xiaohongshu.com', original);
+	assert.deepEqual(calls, ['top']);
+	assert.equal(result.complete, true);
+	assert.deepEqual(
+		result.items.map((x) => x.id),
+		['1', '2', '3', '4'],
+	);
+});

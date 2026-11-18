@@ -6,6 +6,8 @@ import {
 	readBilibiliCollectionPage,
 } from './capture-page.mjs';
 
+import {manifestFolder, ArchiveTransfer} from './archive-transfer.mjs';
+
 const pause = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
 const error = (code) => Object.assign(new Error(code), {code});
 const key = (item) => item.platform + ':' + item.id;
@@ -80,8 +82,9 @@ async function withTab(url, action) {
 export async function listVisibleMedia(tabId) {
 	return inject(tabId, discoverArchiveMedia);
 }
-export async function hydrateOriginal(tabId, entry) {
-	return inject(tabId, hydrateArchiveEntry, [entry]);
+export async function hydrateOriginal(tabId, entry, byteBudget = 24 * 1024 * 1024) {
+	if (!byteBudget || !entry.attachments?.some((a) => a.url)) return entry;
+	return inject(tabId, hydrateArchiveEntry, [entry, byteBudget]);
 }
 export async function readArchiveSource(tabId) {
 	const result = await capture(tabId);
@@ -108,7 +111,13 @@ export async function collectArchivePages(tabId, sourceOrigin, initial, onProgre
 		stalled = 0;
 	let page = initial;
 	let tempTab;
+	let moved = false;
 	try {
+		if (!initial.nextUrl && initial.provider !== 'bilibili') {
+			await inject(tabId, advanceArchivePage, [true]);
+			await pause(350);
+			page = await capture(tabId);
+		}
 		for (let turn = 0; turn < 300; turn++) {
 			signal?.throwIfAborted();
 			if (page.type !== 'collection' || key(page.folder) !== key(initial.folder)) {
@@ -165,14 +174,15 @@ export async function collectArchivePages(tabId, sourceOrigin, initial, onProgre
 				}
 				page = await capture(tempTab.id);
 			} else {
-				if (!added.length) stalled++;
+				if (!added.length && !moved) stalled++;
 				else stalled = 0;
 				if (stalled >= 3) {
 					complete = Number.isSafeInteger(total) && items.size === total;
 					reason = complete ? null : 'end_unconfirmed';
 					break;
 				}
-				await inject(tempTab?.id || tabId, advanceArchivePage);
+				const scroll = await inject(tempTab?.id || tabId, advanceArchivePage);
+				moved = scroll.position > scroll.before + 1;
 				await pause(850);
 				page = await capture(tempTab?.id || tabId, 2);
 			}
@@ -193,20 +203,30 @@ export async function collectArchivePages(tabId, sourceOrigin, initial, onProgre
 	};
 }
 
-export async function hydrateArchivePages(collection, selected, origin, onProgress, signal) {
+export async function hydrateArchivePages(
+	collection,
+	selected,
+	origin,
+	onProgress,
+	signal,
+	transfer = new ArchiveTransfer([collection], selected),
+) {
 	const chosen = new Set(selected),
 		byKey = new Map();
 	let count = 0;
 	for (const item of collection.items) {
-		if (!chosen.has(key(item))) continue;
+		if (!chosen.has(key(item)) || transfer.originals.has(key(item))) continue;
 		signal?.throwIfAborted();
-		let entry = item;
+		let entry = item,
+			original = item;
 		if (item.visitUrl && mayVisit(item.visitUrl, item.platform, origin)) {
 			try {
 				const data = await withTab(item.visitUrl, async (tabId) => {
 					const snap = await capture(tabId);
-					if (snap.type === 'post' && key(snap.entry) === key(item))
-						snap.entry = await hydrateOriginal(tabId, snap.entry);
+					if (snap.type === 'post' && key(snap.entry) === key(item)) {
+						original = snap.entry;
+						snap.entry = await hydrateOriginal(tabId, original, transfer.readLimit);
+					}
 					return snap;
 				});
 				if (data.type === 'post' && key(data.entry) === key(item))
@@ -216,21 +236,10 @@ export async function hydrateArchivePages(collection, selected, origin, onProgre
 				entry = {...item, missing: ['original post unavailable']};
 			}
 		}
-		const {visitUrl, ...safe} = entry;
-		byKey.set(key(item), safe);
-		onProgress?.(++count, chosen.size);
+		byKey.set(key(item), transfer.record(item, original, entry));
+		onProgress?.(++count, chosen.size, transfer.urlCount, transfer.missingCount);
 	}
-	const pages = collection.pages.map((list, i) => ({
-		cursor: i ? 'page-' + i : null,
-		nextCursor:
-			i + 1 < collection.pages.length ? 'page-' + (i + 1) : collection.complete ? null : 'unread',
-		items: list.map((item) => {
-			if (byKey.has(key(item))) return byKey.get(key(item));
-			const {visitUrl, ...safe} = item;
-			return safe;
-		}),
-	}));
-	return {version: 1, folders: [{...collection.folder, total: collection.total, pages}]};
+	return {version: 1, folders: [manifestFolder(collection, byKey)]};
 }
 export async function captureFolderLink(folder, origin, action) {
 	if (!mayVisit(folder.url, folder.platform, origin)) throw error('identity_mismatch');

@@ -501,7 +501,7 @@ export function captureArchivePage(allowLoopback = false) {
 	return {type: 'post', entry};
 }
 
-export function advanceArchivePage() {
+export function advanceArchivePage(fromTop = false) {
 	const width = window.innerWidth;
 	const panels = Array.from(document.querySelectorAll('.tab-content-item'))
 		.map((panel) => {
@@ -510,12 +510,31 @@ export function advanceArchivePage() {
 		})
 		.sort((a, b) => b.overlap - a.overlap);
 	const root = panels[0]?.overlap > width / 2 ? panels[0].panel : document;
-	const items = root.querySelectorAll('.note-item,article[data-testid="tweet"]');
-	const last = items[items.length - 1];
-	if (last) last.scrollIntoView({block: 'end', behavior: 'instant'});
-	const scrolling = document.scrollingElement || document.documentElement;
-	window.scrollBy(0, Math.max(700, window.innerHeight));
-	return {height: scrolling.scrollHeight, position: scrolling.scrollTop};
+	let scrolling = document.scrollingElement || document.documentElement;
+	for (
+		let parent =
+			root.querySelector(
+				'.feeds-container,.note-item,[data-testid="primaryColumn"],ytd-playlist-video-list-renderer',
+			) || root;
+		parent && parent.nodeType === 1;
+		parent = parent.parentElement
+	) {
+		if (
+			parent.scrollHeight > parent.clientHeight + 2 &&
+			parent.clientHeight > 0 &&
+			/^(?:scroll|auto|overlay)$/.test(getComputedStyle(parent).overflowY)
+		) {
+			scrolling = parent;
+			break;
+		}
+	}
+	const before = scrolling.scrollTop,
+		viewport = Math.min(window.innerHeight, scrolling.clientHeight || window.innerHeight);
+	scrolling.scrollTo({
+		top: fromTop ? 0 : before + Math.max(1, Math.floor(viewport * 0.8)),
+		behavior: 'instant',
+	});
+	return {before, position: scrolling.scrollTop, height: scrolling.scrollHeight, viewport};
 }
 
 // Bilibili's authorized browser session stays inside its own HTTPS page.
@@ -589,7 +608,7 @@ export async function readBilibiliCollectionPage(folderId, page = 1, ownerId = n
 }
 
 // Run in the original document. Only fetch files that belong to this precise post.
-export async function hydrateArchiveEntry(entry) {
+export async function hydrateArchiveEntry(entry, byteBudget = 24 * 1024 * 1024) {
 	if (!entry || !Array.isArray(entry.attachments) || !entry.attachments.some((a) => a.url))
 		return entry;
 	const current = new URL(location.href);
@@ -655,7 +674,10 @@ export async function hydrateArchiveEntry(entry) {
 			for (const raw of [el.currentSrc, el.src, el.dataset.original, el.dataset.src])
 				if (raw) add(raw);
 	}
-	let budget = 24 * 1024 * 1024;
+	let budget = Math.min(
+		24 * 1024 * 1024,
+		Math.max(0, Number.isSafeInteger(byteBudget) ? byteBudget : 0),
+	);
 	const result = [];
 	for (const a of entry.attachments) {
 		const inlineBytes = typeof a.data === 'string' ? Math.ceil((a.data.length * 3) / 4) : 0;
