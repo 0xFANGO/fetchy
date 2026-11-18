@@ -60,14 +60,32 @@ export const videoHosts = [
 		path: /^\/(?:share|embed)\/([\da-f]{32})\/?$/,
 		canonical: (id) => `https://www.loom.com/share/${id}`,
 	}),
-	singleVideo({
+	{
 		id: 'rumble',
 		label: 'Rumble',
 		hosts: ['rumble.com', 'www.rumble.com'],
 		extractor: 'RumbleEmbed',
-		path: /^\/embed\/(v[0-9a-z]+)\/?$/,
-		canonical: (id) => `https://rumble.com/embed/${id}/`,
-	}),
+		receiptFields: ['webpage_url'],
+		parse(url) {
+			const embed = /^\/embed\/(v[0-9a-z]+)\/?$/i.exec(url.pathname);
+			if (embed)
+				return {
+					id: embed[1].toLowerCase(),
+					url: `https://rumble.com/embed/${embed[1].toLowerCase()}/`,
+				};
+			const page = /^\/(v[0-9a-z]+)(?:-[a-z0-9][a-z0-9.-]*\.html)?\/?$/i.exec(url.pathname);
+			if (!page) invalidUrl('请使用单条 Rumble 视频或嵌入链接。');
+			return {
+				id: page[1].toLowerCase(),
+				url: 'https://rumble.com' + url.pathname.replace(/\/$/, ''),
+				extractorName: 'Rumble,RumbleEmbed',
+			};
+		},
+		matchesSource(target, info) {
+			if (!target.extractorName) return target.id === info.id;
+			return /^v[a-z0-9]+$/.test(info.id) && info.webpage_url === target.url;
+		},
+	},
 	singleVideo({
 		id: 'archive',
 		label: 'Internet Archive',
@@ -97,6 +115,26 @@ export const videoHosts = [
 	}),
 ];
 
+// PeerTube's share links encode the same UUID with the Flickr base58 alphabet.
+function peerTubeUuid(shortId) {
+	const alphabet = '123456789abcdefghijkmnopqrstuvwxyzABCDEFGHJKLMNPQRSTUVWXYZ';
+	let value = 0n;
+	for (const character of shortId) {
+		const digit = alphabet.indexOf(character);
+		if (digit === -1) invalidUrl('PeerTube 视频短 ID 无效。');
+		value = value * 58n + BigInt(digit);
+	}
+	const hex = value.toString(16).padStart(32, '0');
+	if (hex.length !== 32) invalidUrl('PeerTube 视频短 ID 超出范围。');
+	return [
+		hex.slice(0, 8),
+		hex.slice(8, 12),
+		hex.slice(12, 16),
+		hex.slice(16, 20),
+		hex.slice(20),
+	].join('-');
+}
+
 export const peerTube = {
 	id: 'peertube',
 	label: 'PeerTube',
@@ -108,8 +146,9 @@ export const peerTube = {
 			/^\/videos\/(?:watch|embed)\/([\da-f]{8}-(?:[\da-f]{4}-){3}[\da-f]{12})\/?$/i.exec(
 				url.pathname,
 			);
-		if (!match) invalidUrl('请使用已支持实例的 PeerTube 视频 UUID 链接。');
-		const uuid = match[1].toLowerCase();
+		const short = /^\/w\/([a-zA-Z0-9]{22})\/?$/.exec(url.pathname);
+		if (!match && !short) invalidUrl('请使用已支持实例的 PeerTube 视频或分享链接。');
+		const uuid = match ? match[1].toLowerCase() : peerTubeUuid(short[1]);
 		return {id: `${url.hostname}/${uuid}`, url: `https://${url.hostname}/videos/watch/${uuid}`};
 	},
 	matchesSource(target, info) {

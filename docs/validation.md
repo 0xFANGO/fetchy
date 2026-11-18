@@ -2,6 +2,15 @@
 
 本页记录实际保存结果、输入条件和复测日期。平台当前支持范围见[逐站能力表](platforms.md)。
 
+## 2026-11-18 多平台单链复测
+
+同一版本通过 CLI 重跑了 YouTube、B 站、抖音和小红书。YouTube 的两份 MP4 均由 FFmpeg 解码到结尾。B 站两个样例在传输阶段返回 `network_error`。抖音公开链接返回 `session_required`。小红书两个不带分享参数的链接均返回 `no_formats`，其中一条是旧浏览器实测中缺少预期音轨的作品。新批次只对实际文件计入保存成功。[逐站成品、音频规格与受限样例](platform-validation.md) · [浏览器当前页验收](platform-validation.md#current-page-capture)
+
+| YouTube 样例                                                                        | MP4 成品                                             |
+| ----------------------------------------------------------------------------------- | ---------------------------------------------------- |
+| [Me at the zoo](https://www.youtube.com/watch?v=jNQXAC9IVRw)                        | 320×240，H.264 + AAC，18.947483 秒，629,172 字节     |
+| [Blender Foundation 的 Big Buck Bunny](https://www.youtube.com/watch?v=aqz-KE-bpKQ) | 640×360，H.264 + AAC，634.578141 秒，28,523,658 字节 |
+
 ## 2026-11-18 Instagram Reels
 
 用 `node bin/fetchy.mjs resolve <Reel 链接>` 和 `node bin/fetchy.mjs download <Reel 链接> --output .local/validation` 保存了两条 NASA 官方账号的公开视频。匿名调用，未限制高度。yt-dlp 的 `Instagram` 提取器返回的媒体 ID 和显示 ID 都与 Reel 链接中的短码相同。两条来源在解析时均未提供时长，表中时长来自成品。Fetchy 完成转码后，两条 MP4 都通过独立 ffprobe 检查及 FFmpeg 全片解码。

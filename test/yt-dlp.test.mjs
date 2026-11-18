@@ -448,6 +448,12 @@ test('unbounded process output is stopped instead of accumulating in memory', as
 test('format and stale-session errors keep their specific meaning', () => {
 	assert.equal(classifyEngineError('Requested format is not available').code, 'no_formats');
 	assert.equal(classifyEngineError('No video could be found in this tweet').code, 'no_formats');
+	assert.equal(classifyEngineError('A recording with this ID does not exist').code, 'unavailable');
+	assert.equal(
+		classifyEngineError('This item is not a video or animated image').code,
+		'no_formats',
+	);
+	assert.equal(classifyEngineError('Access restricted').code, 'auth_required');
 	assert.equal(classifyEngineError('Fresh cookies are needed').code, 'session_required');
 });
 

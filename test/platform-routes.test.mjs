@@ -58,6 +58,27 @@ test('platform URLs have stable identity across canonical and shared forms', () 
 	}
 });
 
+test('PeerTube share IDs and Rumble video pages bind to the requested item', () => {
+	const canonical = normalizeUrl(
+		'https://framatube.org/videos/watch/9c9de5e8-0a1e-484a-b099-e80766180a6d',
+	);
+	assert.deepEqual(normalizeUrl('https://framatube.org/w/kkGMgK9ZtnKfYAgnEtQxbv'), canonical);
+	assert.throws(() => normalizeUrl('https://framatube.org/w/ZZZZZZZZZZZZZZZZZZZZZZ'), {
+		code: 'invalid_url',
+	});
+	const target = normalizeUrl(
+		'https://rumble.com/vdmum1-moose-the-dog-helps-girls-dig-a-snow-fort.html?ref=tracking',
+	);
+	const site = siteForPlatform('rumble');
+	assert.equal(target.id, 'vdmum1');
+	assert.equal(target.extractorName, 'Rumble,RumbleEmbed');
+	assert.ok(site.matchesSource(target, {id: 'vb0ofn', webpage_url: target.url}));
+	assert.equal(
+		site.matchesSource(target, {id: 'vb0ofn', webpage_url: 'https://rumble.com/vother'}),
+		false,
+	);
+});
+
 test('user libraries, live channels, boards, albums and unrelated subdomains stay distinct', () => {
 	for (const url of [
 		'https://www.tiktok.com/@example/photo/12345',

@@ -2,48 +2,53 @@
 
 Choose the row for the platform and the column for the kind of content you want to keep. A video file, images in their original order, and a readable offline copy of the post are separate outputs. “Folder URL” means importing the items in one specified collection. “All folders” means discovering the signed-in user's collections. “History” means reading a collection through its last page.
 
-| Platform         | Examples to test                    | Video  | Images | Post text | Folder URL | All folders | History |
-| ---------------- | ----------------------------------- | ------ | ------ | --------- | ---------- | ----------- | ------- |
-| Bilibili         | Video; named favorites folder       | Saved¹ | —      | —         | —          | —           | —       |
-| Douyin           | Video post; album                   | Saved² | —      | —         | —          | —           | —       |
-| Facebook         | Video post                          | —      | —      | —         | —          | —           | —       |
-| Instagram        | Reel; carousel                      | Saved⁴ | —      | —         | —          | —           | —       |
-| Kuaishou         | Video post                          | —      | —      | —         | —          | —           | —       |
-| Pinterest        | Pin; board                          | —      | —      | —         | —          | —           | —       |
-| Reddit           | Video post; gallery                 | —      | —      | —         | —          | —           | —       |
-| Threads          | Post; carousel                      | —      | —      | —         | —          | —           | —       |
-| TikTok           | Video; photo post                   | —      | —      | —         | —          | —           | —       |
-| Weibo            | Video post                          | —      | —      | —         | —          | —           | —       |
-| X (Twitter)      | Video post; text-only post          | Saved³ | —      | —         | —          | —           | —       |
-| Xiaohongshu      | Video note; photo note with caption | Saved² | —      | —         | —          | —           | —       |
-| YouTube          | Video; playlist                     | Saved  | —      | —         | —          | —           | —       |
-| Zhihu            | Article; answer                     | —      | —      | —         | —          | —           | —       |
-| Bandcamp         | Track; album                        | —      | —      | —         | —          | —           | —       |
-| Bluesky          | Media post                          | —      | —      | —         | —          | —           | —       |
-| Dailymotion      | Video                               | —      | —      | —         | —          | —           | —       |
-| Imgur            | Image; album                        | —      | —      | —         | —          | —           | —       |
-| Internet Archive | Item containing a video file        | —      | —      | —         | —          | —           | —       |
-| Kick             | Clip; recorded broadcast            | —      | —      | —         | —          | —           | —       |
-| Loom             | Recording                           | —      | —      | —         | —          | —           | —       |
-| Mixcloud         | Track; set                          | —      | —      | —         | —          | —           | —       |
-| Odysee           | Video                               | —      | —      | —         | —          | —           | —       |
-| PeerTube         | Video on a public instance          | —      | —      | —         | —          | —           | —       |
-| Rumble           | Video                               | —      | —      | —         | —          | —           | —       |
-| SoundCloud       | Track; set                          | —      | —      | —         | —          | —           | —       |
-| Streamable       | Video                               | —      | —      | —         | —          | —           | —       |
-| TED              | Talk                                | —      | —      | —         | —          | —           | —       |
-| Tumblr           | Media post                          | —      | —      | —         | —          | —           | —       |
-| Twitch           | Clip; recorded broadcast            | —      | —      | —         | —          | —           | —       |
-| Vimeo            | Video; showcase                     | —      | —      | —         | —          | —           | —       |
-| VK               | Video                               | —      | —      | —         | —          | —           | —       |
+| Platform         | Examples to test                    | Video      | Audio    | Images    | Post text | Folder URL | All folders | History  |
+| ---------------- | ----------------------------------- | ---------- | -------- | --------- | --------- | ---------- | ----------- | -------- |
+| Bilibili         | Video; named favorites folder       | Saved¹     | —        | —         | —         | —          | —           | —        |
+| Douyin           | Video post; album                   | Saved²     | —        | —         | —         | —          | —           | —        |
+| Facebook         | Video post                          | Saved      | —        | —         | —         | —          | —           | —        |
+| Instagram        | Reel; carousel                      | Saved⁴     | —        | Untested  | Partial⁶  | —          | —           | —        |
+| Kuaishou         | Video post                          | Partial⁶   | —        | Untested⁶ | Partial⁶  | —          | —           | —        |
+| Pinterest        | Pin; board                          | Resolved   | —        | —         | —         | —          | —           | —        |
+| Reddit           | Video post; gallery                 | Restricted | —        | —         | —         | —          | —           | —        |
+| Threads          | Post; carousel                      | Saved⁶     | —        | Partial⁶  | Saved⁶    | —          | —           | —        |
+| TikTok           | Video; photo post                   | Saved      | —        | —         | —         | —          | —           | —        |
+| Weibo            | Video post                          | Saved      | —        | —         | —         | —          | —           | —        |
+| X (Twitter)      | Video post; text-only post          | Saved³     | —        | —         | —         | —          | —           | —        |
+| Xiaohongshu      | Video note; photo note with caption | Saved²     | —        | Saved⁵    | Saved⁵    | Browser⁵   | Counted⁵    | Partial⁵ |
+| YouTube          | Video; playlist                     | Saved      | —        | —         | —         | —          | —           | —        |
+| Zhihu            | Article; answer                     | —          | —        | —         | —         | —          | —           | —        |
+| Bandcamp         | Track; album                        | —          | Saved    | —         | —         | —          | —           | —        |
+| Bluesky          | Media post                          | Saved      | —        | —         | —         | —          | —           | —        |
+| Dailymotion      | Video                               | Saved      | —        | —         | —         | —          | —           | —        |
+| Imgur            | Image; album                        | Untested   | —        | —         | —         | —          | —           | —        |
+| Internet Archive | Item containing a video file        | Saved      | —        | —         | —         | —          | —           | —        |
+| Kick             | Clip; recorded broadcast            | —          | —        | —         | —         | —          | —           | —        |
+| Loom             | Recording                           | Saved      | —        | —         | —         | —          | —           | —        |
+| Mixcloud         | Track; set                          | —          | Resolved | —         | —         | —          | —           | —        |
+| Odysee           | Video or audio claim                | Untested   | Saved    | —         | —         | —          | —           | —        |
+| PeerTube         | Video on a public instance          | Saved      | —        | —         | —         | —          | —           | —        |
+| Rumble           | Video                               | Restricted | —        | —         | —         | —          | —           | —        |
+| SoundCloud       | Track; set                          | —          | Saved    | —         | —         | —          | —           | —        |
+| Streamable       | Video                               | Resolved   | —        | —         | —         | —          | —           | —        |
+| TED              | Talk                                | Saved      | —        | —         | —         | —          | —           | —        |
+| Tumblr           | Media post                          | Restricted | —        | —         | —         | —          | —           | —        |
+| Twitch           | Clip; recorded broadcast            | Saved      | —        | —         | —         | —          | —           | —        |
+| Vimeo            | Video; showcase                     | Restricted | —        | —         | —         | —          | —           | —        |
+| VK               | Video                               | Saved      | —        | —         | —         | —          | —           | —        |
 
-**Saved** means Fetchy produced a video file that passed checks for its video track, expected audio and duration. Each result covers the recorded sample and entry point. **Untested** means Fetchy has a path for the operation and still needs a real-file check. A dash (—) means Fetchy has no implementation for that operation. Use **Restricted** only when the platform or session prevents an implemented operation, and **N/A** only when the service itself is known to lack the feature.
+**Saved** means a sample produced a local file and passed its media checks. **Resolved** means a real page returned media metadata and formats. **Untested** means an adapter exists but the example did not establish that the output works. **Restricted** means access to the sample prevented validation. A dash (—) marks an operation without a dedicated implementation. See the individual sources, checks and limits before relying on a particular platform. [Single-link validation](platform-validation.md)
 
 1. Bilibili produced verified files in previous CLI and extension runs. On November 18, 2026, two anonymous CLI attempts reached the download stage and returned `network_error`. Repeat the download and verify the resulting MP4 before reporting the anonymous CLI path as working again. [CLI validation](validation.md) · [Extension validation](extension-validation.md)
 2. Xiaohongshu and Douyin have verified extension downloads from a readable video page. In the November 18 anonymous CLI run, the Xiaohongshu note without share parameters returned `no_formats` and the Douyin URL returned `session_required`. To retest current-page saving, open a playable post in the browser and use the extension. [CLI validation](validation.md) · [Extension validation](extension-validation.md)
 3. Fetchy accepts an X post when the Twitter extractor returns one video. On a quote post, this may be the quoted post’s video. The CLI and the Chrome toolbar each saved both USGS posts, which contain their own footage. Both toolbar outputs played offline. [CLI validation](validation.md) · [Extension validation](extension-validation.md)
 4. Instagram supports individual video Reels. The CLI and the Chrome toolbar each saved both NASA Reels. Both toolbar outputs played offline. [CLI validation](validation.md) · [Extension validation](extension-validation.md)
 
-The comparison includes the sites named by Downbit 0.2.8 and adds Zhihu for saved articles and answers. Downbit documents support for tracks and sets on Bandcamp, Mixcloud and SoundCloud, and for declared media on other pages. Fetchy's single-video command currently produces MP4. Standalone audio, arbitrary media and playlist imports each need their own implementation and file checks. [Downbit's site list](https://downbit.app/docs/sites) · [Fetchy site registry](../src/sites/index.mjs)
+Earlier Bilibili, Douyin and Xiaohongshu video saves came from the October 24, 2026 tests or the browser-extension runs. The November 18, 2026 single-link rerun produced two complete YouTube files. Anonymous downloads for two Bilibili videos failed during transfer, Douyin required a session and two Xiaohongshu public URLs returned no formats. [Earlier platform rerun](validation.md)
+
+5. A signed-in reader opened their own Xiaohongshu collections. The number of named folders matched the platform’s displayed total. Some folders exposed fewer visible items than their displayed counts. One note’s complete text and three original image files were checked byte-for-byte in display order. **Browser** means the folder was opened in the browser. **Partial** records the visible history when the source withholds entries.
+6. The browser captured two public Threads posts using their own permalinks. Both texts and their visible video attachments were checked offline. The full original carousel inventory remains unconfirmed. An Instagram Reel yielded partial text through the current-page capture path. Earlier Instagram Reel video checks used the separate media downloader. The Kuaishou sample rendered, but the page reader could not verify its text or obtain a video URL. [Current-page checks](platform-validation.md#current-page-capture)
+
+The comparison covers the 31 services in Downbit’s list plus Zhihu. The named adapters accept individual items. Bandcamp, Mixcloud and SoundCloud route individual tracks or shows to M4A. Odysee can route a claim to either video or audio after inspecting the formats. Albums, sets, boards, channels and live streams have separate semantics. PeerTube accepts UUID and /w/ share links on FramaTube and Blender Video. Rumble accepts single-video and embed pages. Internet Archive accepts a single-video item or a named video file within an item. [Downbit’s site list](https://downbit.app/docs/sites) · [Fetchy site registry](../src/sites/index.mjs) · [Single-link validation](platform-validation.md)
 
 When adding a platform, test each claimed output with public material you can save. Open images and text offline and check their order and completeness. For collection history, check at least two pages against the visible count or an early saved item, then confirm the final page. Report an interrupted or access-limited read as partial and record where it stopped. [Validation records](validation.md)

@@ -55,7 +55,7 @@ export function classifyEngineError(text = '') {
 	if (/captcha|verify you|verification|not a bot|sign in to confirm|验证码|验证/i.test(text))
 		return new EngineError('verification_required', '平台要求验证，请在浏览器完成验证后重试。');
 	if (
-		/login|log in|sign in|authentication|cookies|members.only|premium|purchase|会员|登录/i.test(
+		/login|log in|sign in|authentication|access restricted|cookies|members.only|premium|purchase|会员|登录/i.test(
 			text,
 		)
 	)
@@ -67,13 +67,13 @@ export function classifyEngineError(text = '') {
 	)
 		return new EngineError('dependency_missing', '缺少下载所需的本地依赖。');
 	if (
-		/requested format is not available|no video (?:formats|could be found)|no formats|only images/i.test(
+		/requested format is not available|no video (?:formats|could be found)|no formats|only images|is not a video/i.test(
 			text,
 		)
 	)
 		return new EngineError('no_formats', '没有符合要求的视频格式。');
 	if (
-		/not available|unavailable|deleted|removed|private video|not found|404|geo.?restrict|not support|直播/i.test(
+		/not available|unavailable|does not exist|deleted|removed|private video|not found|404|geo.?restrict|not support|直播/i.test(
 			text,
 		)
 	)
