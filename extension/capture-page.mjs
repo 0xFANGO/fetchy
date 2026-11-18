@@ -731,3 +731,42 @@ export async function hydrateArchiveEntry(entry) {
 	}
 	return {...entry, attachments: result};
 }
+
+// The user requests this list from one open document. Read only visible media
+// sources and the browser's existing resource timing entries for that document.
+export function discoverArchiveMedia() {
+	const page = new URL(location.href);
+	if (page.protocol !== 'https:' || page.username || page.password || page.port) return {items: []};
+	const items = new Map();
+	function add(raw, video = false) {
+		if (!raw || items.size >= 60) return;
+		let u;
+		try {
+			u = new URL(raw, page);
+		} catch {
+			return;
+		}
+		if (
+			u.protocol !== 'https:' ||
+			u.username ||
+			u.password ||
+			u.port ||
+			u.href.length > 16384 ||
+			items.has(u.href)
+		)
+			return;
+		const ext = u.pathname.match(/\.(mp4|m4v|mov|webm|mkv|m3u8|mpd)$/i)?.[1]?.toLowerCase();
+		if (!ext && !video) return;
+		const type = ext === 'm3u8' ? 'HLS' : ext === 'mpd' ? 'DASH' : '视频';
+		items.set(u.href, {url: u.href, type, host: u.hostname});
+	}
+	for (const n of document.querySelectorAll('video')) {
+		const r = n.getBoundingClientRect();
+		if (r.width && r.height)
+			add(n.currentSrc || n.getAttribute('src') || n.querySelector('source[src]')?.src, true);
+	}
+	for (const r of performance.getEntriesByType('resource')) {
+		if (['video', 'audio', 'fetch', 'xmlhttprequest'].includes(r.initiatorType)) add(r.name);
+	}
+	return {page: page.origin + page.pathname, items: [...items.values()]};
+}

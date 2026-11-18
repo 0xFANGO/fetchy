@@ -4,6 +4,7 @@ import {
 	hydrateArchivePages,
 	captureFolderLink,
 	hydrateOriginal,
+	listVisibleMedia,
 } from './archive-source.mjs';
 import {libraryRpc, submitArchive} from './archive-rpc.mjs';
 
@@ -28,6 +29,10 @@ const statuses = {
 	added: '已保存',
 };
 const errors = {
+	invalid_url: '媒体地址无法由本机公开访问。',
+	auth_required: '此媒体需要站点授权。',
+	network_error: '本机无法读取此媒体。',
+	unsupported_content: '本机无法保存这种媒体格式。',
 	unsupported_page: '当前页面没有可识别的作品或收藏夹。',
 	source_not_ready: '原帖正文尚未加载，请在原页面展开后重新读取。',
 	identity_mismatch: '页面与选中的原帖不一致。',
@@ -253,6 +258,8 @@ function folderPicker(folders, complete) {
 }
 async function loadSource() {
 	source = null;
+	el('media-results').replaceChildren();
+	el('media-discovery').hidden = !Number.isInteger(tabId) || tabId < 0;
 	collections = [];
 	selected.clear();
 	chosenFolders.clear();
@@ -458,4 +465,35 @@ el('search-form').addEventListener('submit', (e) => {
 	e.preventDefault();
 	act(search);
 });
+el('discover-media').addEventListener('click', () =>
+	act(async () => {
+		const {items, page} = await listVisibleMedia(tabId),
+			root = el('media-results');
+		root.replaceChildren();
+		if (!items.length) {
+			root.append(node('p', '此页尚未加载可识别的媒体。', 'hint'));
+			return;
+		}
+		for (const [index, media] of items.entries()) {
+			root.append(
+				itemRow(
+					media.type + ' ' + (index + 1),
+					media.host,
+					button('保存此媒体', async () => {
+						const fresh = await listVisibleMedia(tabId);
+						if (page !== fresh.page || !fresh.items.some((i) => i.url === media.url))
+							throw new Error('identity_mismatch');
+						message('正在保存媒体…');
+						const saved = await libraryRpc('webSave', {url: media.url});
+						if (saved.taskId) {
+							activeId = saved.taskId;
+							setView('tasks');
+							await loadTasks();
+						} else message(saved.filepath ? '已保存到 ' + saved.filepath : '已保存');
+					}),
+				),
+			);
+		}
+	}),
+);
 act(loadSource);

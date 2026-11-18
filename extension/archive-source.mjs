@@ -1,5 +1,6 @@
 import {
 	advanceArchivePage,
+	discoverArchiveMedia,
 	hydrateArchiveEntry,
 	captureArchivePage,
 	readBilibiliCollectionPage,
@@ -75,6 +76,9 @@ async function withTab(url, action) {
 	} finally {
 		await chrome.tabs.remove(tab.id).catch(() => {});
 	}
+}
+export async function listVisibleMedia(tabId) {
+	return inject(tabId, discoverArchiveMedia);
 }
 export async function hydrateOriginal(tabId, entry) {
 	return inject(tabId, hydrateArchiveEntry, [entry]);

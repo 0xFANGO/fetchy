@@ -267,6 +267,7 @@ chrome.runtime.onConnect.addListener((port) => {
 			'libraryRetry',
 			'libraryResume',
 			'libraryOpen',
+			'webSave',
 			'libraryUploadStart',
 			'libraryUploadPart',
 			'libraryUploadFinish',
@@ -275,7 +276,7 @@ chrome.runtime.onConnect.addListener((port) => {
 			if (typeof message?.id !== 'string' || !methods.has(message.method)) return;
 			let response;
 			try {
-				const long = ['libraryStart', 'libraryUploadFinish'].includes(message.method);
+				const long = ['libraryStart', 'libraryUploadFinish', 'webSave'].includes(message.method);
 				response = {
 					id: message.id,
 					ok: true,

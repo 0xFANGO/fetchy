@@ -4,6 +4,7 @@ Open an original post, article or collection you may save. Click the Fetchy tool
 
 - **当前页面** previews the original title, author, text and attachment count. For a single work, click **保存到收藏库**. Expand shortened text on the original page and use **重新读取** if the preview reports an incomplete body.
 - For a collection, click **读取全部页面**. The progress line shows unique items read against the site's count when available. Use **全选已读取的作品**, or check individual items across the selection pages. In a folder directory, select the folders you want before reading their contents. The same work can belong to several folders.
+- **查找页面媒体** reads visible media URLs and matching resource entries already loaded in the source tab. Choose a video, HLS playlist or DASH manifest and click **保存此媒体**. The local component must be able to open that resource. Expired, restricted and encrypted resources can fail.
 - **任务** shows the persistent task ID, folder coverage, item counts and individual outcomes. After the local component accepts a task, it continues when you close the archive tab. **继续任务** processes remaining work after an interruption. **仅重试失败项** retries failed items. To fill a partial post, open the complete original and save it again.
 - **离线收藏** searches titles, authors and bodies. You can filter by platform, folder or topic. **打开离线页** opens local HTML with its saved attachments. The desktop and CLI use the same library and task IDs. See the [library commands and import format](library.md).
 
@@ -32,6 +33,8 @@ On November 18, 2026, Chrome for Testing 157 on macOS ran the unpacked extension
 | Long article and X article   | First, middle and final paragraphs, a section heading and a link survived.                                          |
 | X post with mixed media      | The local page rendered image, video, image in order. Its video played with the browser offline.                    |
 | Named album with two pages   | The UI deduplicated the repeated first note and displayed two of two. Selecting only the second archived that note. |
+
+The same browser run also found a direct video, HLS playlist and DASH manifest that the fixture player had loaded. A save attempt for a loopback-only fixture reached the native component and received its public-network restriction.
 
 A separate desktop and CLI check reopened the same Chrome-created three-image and text-only tasks. Both reported the same task IDs and one addition each. These fixture results exercise Fetchy's end-to-end behavior. Live site availability and account-specific coverage are recorded separately in the [platform matrix](platforms.md).
 

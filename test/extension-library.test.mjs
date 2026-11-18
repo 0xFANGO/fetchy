@@ -129,3 +129,26 @@ test('large UTF-8 manifests round-trip through bounded native chunks in order', 
 	assert.equal(result.id, 'task');
 	assert.deepEqual(JSON.parse(Buffer.concat(chunks)), {manifest, selected});
 });
+
+test('runtime media discovery keeps relevant HTTPS files and manifests from the selected document', async () => {
+	const {discoverArchiveMedia} = await import('../extension/capture-page.mjs');
+	const urls = [
+		'https://cdn.example/clip.m3u8?signature=temporary',
+		'https://cdn.example/clip.mpd',
+		'https://cdn.example/clip.mpd',
+		'https://cdn.example/segment.m4s',
+		'http://127.0.0.1/local.mp4',
+		'https://user:secret@cdn.example/clip.mp4',
+	];
+	const capture = invoke(discoverArchiveMedia, [], {
+		location: {href: 'https://example.org/read'},
+		document: {querySelectorAll: () => []},
+		performance: {getEntriesByType: () => urls.map((name) => ({name, initiatorType: 'fetch'}))},
+	});
+	assert.deepEqual(
+		Array.from(capture.items, (x) => x.type),
+		['HLS', 'DASH'],
+	);
+	assert.equal(capture.items[0].host, 'cdn.example');
+	assert.equal(capture.page, 'https://example.org/read');
+});

@@ -110,7 +110,19 @@ const folder = 'https://www.xiaohongshu.com/board/archive-fixture',
 		'"><span class="title">Fixture ' +
 		id.slice(-2) +
 		'</span></a></div>';
+const mediaPage = 'https://example.org/runtime-player',
+	streamHost = 'https://archive-media.localhost';
 const fixtures = new Map([
+	[
+		mediaPage,
+		'<main><video controls src="' +
+			streamHost +
+			'/clip.mp4"></video><script>fetch("' +
+			streamHost +
+			'/playlist.m3u8");fetch("' +
+			streamHost +
+			'/manifest.mpd");</script></main>',
+	],
 	[xhs + '/explore/' + noteId, note(noteId)],
 	[x + '100000001', tweet('100000001', text, '')],
 	[article, articleBody],
@@ -176,6 +188,15 @@ const pin = createHash('sha256')
 const server = createServer({cert, key: privateKey}, (req, res) => {
 	const url = 'https://' + req.headers.host + req.url,
 		i = imageUrls.indexOf(url);
+	if (url.startsWith(streamHost + '/')) {
+		const clip = url.endsWith('.mp4');
+		res.writeHead(200, {
+			'content-type': clip ? 'video/mp4' : 'application/octet-stream',
+			'access-control-allow-origin': '*',
+		});
+		res.end(clip ? video : 'fixture');
+		return;
+	}
 	if (i !== -1) {
 		res.writeHead(200, {'content-type': 'image/png', 'access-control-allow-origin': '*'});
 		res.end(images[i]);
@@ -193,7 +214,13 @@ await new Promise((resolve, reject) => {
 	server.once('error', reject);
 	server.listen(0, '127.0.0.1', resolve);
 });
-const resolver = ['www.xiaohongshu.com', 'x.com', 'example.org', 'archive-fixture.xhscdn.com']
+const resolver = [
+	'www.xiaohongshu.com',
+	'x.com',
+	'example.org',
+	'archive-fixture.xhscdn.com',
+	'archive-media.localhost',
+]
 	.map((host) => 'MAP ' + host + ' 127.0.0.1:' + server.address().port)
 	.concat('MAP * ~NOTFOUND')
 	.join(',');
@@ -315,6 +342,19 @@ try {
 	])
 		await archive(src);
 	await archive(folder, true);
+	const runtime = await toolPage(mediaPage);
+	await runtime.page.locator('#media-discovery summary').click();
+	await runtime.page.locator('#discover-media').click();
+	await runtime.page.locator('#media-results .row').filter({hasText: 'HLS'}).waitFor();
+	await runtime.page.locator('#media-results .row').filter({hasText: 'DASH'}).waitFor();
+	await runtime.page
+		.locator('#media-results .row')
+		.filter({hasText: '视频'})
+		.getByRole('button')
+		.click();
+	await runtime.page.getByText('媒体地址无法由本机公开访问。').waitFor();
+	await runtime.page.close();
+	await runtime.before.close();
 	await chromiumContext.setOffline(true);
 	for (const [i, r] of record.entries()) {
 		const page = await chromiumContext.newPage();
