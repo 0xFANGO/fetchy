@@ -333,7 +333,8 @@ async function saveSelected() {
 	// The background worker reads each post page from this tab and hands it over.
 	const items = keys
 		.map((k) => collection.items.get(k))
-		.filter((item) => item.kind !== 'video')
+		// Only rows without text or files are read from their post page (see needsDetails).
+		.filter((item) => item.kind !== 'video' && !item.body && !item.attachments?.length)
 		.map((item) => ({
 			key: key(item),
 			platform: item.platform,

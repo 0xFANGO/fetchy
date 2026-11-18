@@ -580,7 +580,10 @@ struct PanelItem: Identifiable {
     let id = task["id"] as! String
     notice = "已建立任务，正在读取原帖 0 / \(keys.count)…"
     for (index, k) in keys.enumerated() {
-      guard let item = byKey[k], !item.isVideo else { continue }
+      // Only rows without text or files are read from their post page (see needsDetails).
+      guard let item = byKey[k], !item.isVideo, (item.raw["body"] as? String ?? "").isEmpty,
+        (item.raw["attachments"] as? [Any] ?? []).isEmpty
+      else { continue }
       let url = item.raw["visitUrl"] as? String ?? item.raw["sourceUrl"] as? String ?? ""
       var page: [String: Any] = ["id": id, "key": k, "skip": true]
       let current = browser.webView?.url.map { ($0.scheme ?? "") + "://" + ($0.host ?? "") }
