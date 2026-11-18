@@ -499,15 +499,16 @@ struct LibraryPane: View {
           var rows: [[String: Any]] = []
           while true {
             let detail =
-              try await commands.run(["task", task.id, String(rows.count), "problems"], bridge: true)
+              try await commands.run(["task", task.id, String(rows.count), "failed"], bridge: true)
               as? [String: Any]
             let page = detail?["items"] as? [[String: Any]] ?? []
             rows += page
             if page.isEmpty || rows.count >= (detail?["totalItems"] as? Int ?? 0) { break }
           }
           details[task.id] = rows.compactMap { item in
+            // Pending entries are counted in the header; rows list failed and partial ones.
             guard let key = item["key"] as? String, let status = item["status"] as? String,
-              ["failed", "partial", "pending"].contains(status)
+              ["failed", "partial"].contains(status)
             else { return nil }
             return FailureRow(task: task.id, key: key, status: status, reason: item["reason"] as? String)
           }

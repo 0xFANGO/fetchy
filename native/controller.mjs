@@ -276,12 +276,18 @@ export class NativeController extends EventEmitter {
 		const controller = new AbortController();
 		this.resolvers.set(requestId, controller);
 		try {
-			const metadata = publicMetadata(
-				await this.core.resolveVideo(input, {
+			// Identifying a video may need the sign-in too; page media brings the browser's own.
+			const run = (cookiesFile) =>
+				this.core.resolveVideo(input, {
 					...this.engineOptions,
+					...(cookiesFile ? {cookiesFile} : {}),
 					pageMedia,
 					signal: controller.signal,
-				}),
+				});
+			const metadata = publicMetadata(
+				await (pageMedia || this.engineOptions.cookiesFile
+					? run()
+					: this.withSiteCookies(input, run)),
 			);
 			if (controller.signal.aborted) throw bridgeError('cancelled');
 			this.resolved.set(input, metadata);

@@ -12,6 +12,14 @@ let siteLoggedOut = Notification.Name("app.fetchy.desktop.logout")
 /// `--data-dir <dir>` from `fetchy login`/`browse` under FETCHY_DATA_DIR; Launch Services drops the variable.
 var dataDirectoryOverride: String?
 
+/// Another running Fetchy that shows the window (hidden helpers run as accessory apps).
+func otherWindowInstance() -> NSRunningApplication? {
+  let me = ProcessInfo.processInfo.processIdentifier
+  return NSRunningApplication.runningApplications(
+    withBundleIdentifier: Bundle.main.bundleIdentifier ?? "app.fetchy.desktop"
+  ).first { $0.processIdentifier != me && $0.activationPolicy == .regular }
+}
+
 @MainActor final class Application: NSObject, NSApplicationDelegate {
   var session: BrowserSession?
   var window: NSWindow?
@@ -28,6 +36,17 @@ var dataDirectoryOverride: String?
     if let index = route.firstIndex(of: "--data-dir"), index + 1 < route.count {
       dataDirectoryOverride = route[index + 1]
       route.removeSubrange(index...(index + 1))
+    }
+    // One window: a second launch hands its request to the running window and quits.
+    if let other = otherWindowInstance() {
+      if route.count == 2, ["login", "browse"].contains(route[0]) {
+        DistributedNotificationCenter.default().postNotificationName(
+          openRequest, object: nil, userInfo: ["command": route[0], "url": route[1]],
+          deliverImmediately: true)
+      }
+      other.activate(options: [])
+      DispatchQueue.main.asyncAfter(deadline: .now() + 0.3) { NSApp.terminate(nil) }
+      return
     }
     let defaults =
       (dataDirectoryOverride ?? ProcessInfo.processInfo.environment["FETCHY_DATA_DIR"]).flatMap { path in
@@ -99,13 +118,17 @@ var dataDirectoryOverride: String?
         forName: openAcknowledged, object: nonce, queue: .main
       ) { _ in
         // Delivered on the main queue; the reply touches main-actor state.
-        MainActor.assumeIsolated { BrowserSession.respond(["ok": true, "delivered": true]) }
+        MainActor.assumeIsolated { () -> Void in
+          BrowserSession.respond(["ok": true, "delivered": true])
+        }
       }
       DistributedNotificationCenter.default().postNotificationName(
         openRequest, object: nil, userInfo: ["command": args[1], "url": args[2], "nonce": nonce],
         deliverImmediately: true)
       DispatchQueue.main.asyncAfter(deadline: .now() + 1.5) {
-        BrowserSession.respond(["ok": true, "delivered": false])
+        // A window that is slow to answer still gets the request; only hidden helpers
+        // (accessory policy) or no instance at all mean a new window must be launched.
+        BrowserSession.respond(["ok": true, "delivered": otherWindowInstance() != nil])
       }
       return
     }
@@ -166,7 +189,9 @@ var dataDirectoryOverride: String?
         ]
       }
       // WebKit calls back on the main thread.
-      MainActor.assumeIsolated { BrowserSession.respond(["ok": true, "cookies": rows]) }
+      MainActor.assumeIsolated { () -> Void in
+        BrowserSession.respond(["ok": true, "cookies": rows])
+      }
     }
   }
 

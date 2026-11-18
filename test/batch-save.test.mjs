@@ -348,3 +348,27 @@ test('a retry reads a partial entry again and fills its missing file', async (t)
 	assert.equal(done.items[0].status, 'added');
 	assert.deepEqual(cookies, [item.visitUrl, item.visitUrl]);
 });
+
+test('a retry that never starts leaves the task resumable instead of stuck as queued', async (t) => {
+	const {dir} = await fixture(t, (_req, res) => res.writeHead(404).end());
+	const bridge = new LibraryBridge(dir, {
+		session: {cookieHeader: async () => '', withCookies: (_url, action) => action()},
+	});
+	const entry = {
+		platform: 'x',
+		id: '9',
+		sourceUrl: 'https://x.com/a/status/9',
+		body: 'b',
+		bodyComplete: true,
+	};
+	const task = await bridge.request('libraryStart', {manifest: {version: 1, items: [entry]}});
+	await bridge.tail;
+	bridge.run = async () => {
+		throw new Error('worker could not start');
+	};
+	await bridge.request('libraryRetry', {id: task.id});
+	await bridge.tail;
+	assert.equal((await bridge.request('libraryTask', {id: task.id})).status, 'interrupted');
+	const failed = await bridge.request('libraryTask', {id: task.id, problems: 'failed'});
+	assert.equal(failed.totalItems, 0);
+});

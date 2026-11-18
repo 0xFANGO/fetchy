@@ -688,7 +688,21 @@ export async function importLibrary(manifest, options = {}) {
 export async function markLibraryTaskQueued(id, options = {}) {
 	const ctx = await openLibrary(options);
 	try {
-		ctx.db.prepare("UPDATE tasks SET status='queued' WHERE id=? AND status<>'running'").run(id);
+		// Native-owned from now on, so a restart picks it up again.
+		ctx.db
+			.prepare(
+				"UPDATE tasks SET status='queued', config=json_set(config,'$.nativeQueue',json('true')) WHERE id=? AND status<>'running'",
+			)
+			.run(id);
+	} finally {
+		ctx.db.close();
+	}
+}
+/** A queued run that never started is shown as interrupted, so it can be resumed. */
+export async function markLibraryTaskInterrupted(id, options = {}) {
+	const ctx = await openLibrary(options);
+	try {
+		ctx.db.prepare("UPDATE tasks SET status='interrupted' WHERE id=? AND status='queued'").run(id);
 	} finally {
 		ctx.db.close();
 	}

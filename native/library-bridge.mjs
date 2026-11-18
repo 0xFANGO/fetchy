@@ -6,6 +6,7 @@ import {
 	libraryRoot,
 	listLibraryTasks,
 	listRecoverableNativeTasks,
+	markLibraryTaskInterrupted,
 	markLibraryTaskQueued,
 	prepareLibraryTask,
 	runLibraryTask,
@@ -291,13 +292,21 @@ export class LibraryBridge {
 		});
 	}
 	queue(task, retryFailed, selected, pending = this.transfers.get(task.id)) {
-		if (pending?.size) this.transfers.set(task.id, pending);
+		if (pending?.size) {
+			// Most recent tasks only; the URLs are temporary and live in memory.
+			this.transfers.delete(task.id);
+			this.transfers.set(task.id, pending);
+			while (this.transfers.size > 20) this.transfers.delete(this.transfers.keys().next().value);
+		}
 		if (!this.active.has(task.id)) {
 			const work = this.tail.then(() =>
 				this.run(task, {...this.options, retryFailed, selected}, pending),
 			);
 			this.tail = work
-				.catch(() => {})
+				.then((result) => {
+					if (!result?.counts?.partial && !result?.counts?.failed) this.transfers.delete(task.id);
+				})
+				.catch(() => markLibraryTaskInterrupted(task.id, this.options).catch(() => {}))
 				.finally(() => {
 					this.active.delete(task.id);
 					for (const k of this.pages.keys()) if (k.startsWith(task.id + '\n')) this.pages.delete(k);
@@ -397,11 +406,14 @@ export class LibraryBridge {
 			case 'libraryTask': {
 				const task = await getLibraryTask(params.id, this.options);
 				const offset = Math.max(0, Number(params.offset) || 0);
-				// `problems`: only failed, partial and pending entries, for the panel and the app.
-				const items =
-					params.problems === true
-						? task.items.filter((i) => ['failed', 'partial', 'pending'].includes(i.status))
-						: task.items;
+				// `problems`: 'failed' lists failed and partial entries; true also lists pending ones.
+				const wanted =
+					params.problems === 'failed'
+						? ['failed', 'partial']
+						: params.problems === true
+							? ['failed', 'partial', 'pending']
+							: null;
+				const items = wanted ? task.items.filter((i) => wanted.includes(i.status)) : task.items;
 				return {
 					...summary(task, Math.max(0, Number(params.folderOffset) || 0)),
 					totalItems: items.length,

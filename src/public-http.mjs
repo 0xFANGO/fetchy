@@ -58,6 +58,10 @@ const knownDomains = [
 		'threads.com',
 		'threads.net',
 		'kuaishou.com',
+		'kwai.net',
+		'kwaicdn.com',
+		'yximgs.com',
+		'gifshow.com',
 	]),
 ];
 export const knownHost = (host) => knownDomains.some((d) => host === d || host.endsWith('.' + d));

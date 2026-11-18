@@ -909,3 +909,25 @@ test('a video download borrows the site sign-in only when the page did not suppl
 	assert.deepEqual(lent, ['https://youtu.be/test-video']);
 	assert.deepEqual(seen, ['/tmp/lent-cookies.txt']);
 });
+
+test('identifying a video borrows the sign-in, and its sign-in errors reach the panel intact', async (t) => {
+	const lent = [];
+	const {controller} = await fixture(t, {
+		withSiteCookies: (input, action) => {
+			lent.push(input);
+			return action('/tmp/lent-cookies.txt');
+		},
+		core: {
+			resolveVideo: async (_input, settings) => {
+				assert.equal(settings.cookiesFile, '/tmp/lent-cookies.txt');
+				throw Object.assign(new Error('raw'), {code: 'login_expired'});
+			},
+		},
+	});
+	await assert.rejects(
+		controller.request('resolve', {input: 'https://youtu.be/test-video', requestId: 'r1'}),
+		(error) => publicError(error).code === 'login_expired',
+	);
+	assert.deepEqual(lent, ['https://youtu.be/test-video']);
+	assert.equal(publicError({code: 'premium_required'}).code, 'premium_required');
+});

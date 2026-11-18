@@ -325,9 +325,14 @@ export function captureArchivePage(allowLoopback = false) {
 					'video.twimg.com',
 				]);
 				// A timeline video plays from a blob; the native worker saves it from the post link.
+				// A quoted post renders inside the tweet as a nested link container; its video
+				// is not this post's.
 				if (
 					all(tweet, 'video').some(
-						(v) => !v.closest('aside,nav,footer,[aria-hidden="true"],[data-testid="quoteTweet"]'),
+						(v) =>
+							!v.closest(
+								'aside,nav,footer,[aria-hidden="true"],[data-testid="quoteTweet"],div[role="link"]',
+							),
 					)
 				)
 					entry.kind = 'video';

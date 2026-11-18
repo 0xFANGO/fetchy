@@ -112,7 +112,7 @@ try {
 			result = await requestNative('libraryTask', {
 				id: args[0],
 				offset: Number(args[1]) || 0,
-				problems: args[2] === 'problems',
+				problems: args[2] === 'failed' ? 'failed' : args[2] === 'problems',
 			});
 			break;
 		case 'site': {

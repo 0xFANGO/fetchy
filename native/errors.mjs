@@ -44,6 +44,9 @@ const messages = {
 	interrupted: '下载已中断，请重新下载。',
 	cancelled: '已取消下载。',
 	engine_error: '本次识别或下载未能完成，请稍后重试或检查本地组件。',
+	login_expired: '该网站在 Fetchy 桌面端的登录已过期，请在「账号」重新登录后重试。',
+	premium_required: '该内容需要会员或购买，当前账号无法下载。',
+	open_page_required: '请先在浏览器打开这条视频的页面，再从右侧栏下载。',
 };
 export function bridgeError(code) {
 	return Object.assign(new Error(messages[code] ?? messages.engine_error), {

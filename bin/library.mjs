@@ -173,9 +173,12 @@ async function cancellable(work) {
 	process.once('SIGINT', cancel);
 	try {
 		return await work(controller.signal);
+	} catch (error) {
+		if (!controller.signal.aborted) throw error;
+		// Cancelled by the user: no error report, the shell's usual exit status.
+		process.exitCode = 130;
 	} finally {
 		process.removeListener('SIGINT', cancel);
-		if (controller.signal.aborted) process.exitCode = 130;
 	}
 }
 

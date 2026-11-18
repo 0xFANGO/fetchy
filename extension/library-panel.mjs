@@ -100,7 +100,8 @@ function setPage(kind) {
 
 async function permit() {
 	const optional = chrome.runtime.getManifest().optional_host_permissions || [];
-	// Without access Chrome hides the tab's address; then ask for the sites Fetchy reads.
+	// Without access Chrome hides the tab's address. The button then asks once for all
+	// the collection sites Fetchy reads, and says so in its label.
 	const origins = !origin
 		? optional
 		: origin === 'https://www.zhihu.com' || origin === 'https://zhuanlan.zhihu.com'
@@ -262,11 +263,17 @@ async function loadPage() {
 		origin = null;
 	}
 	if (Number.isInteger(tabId) && !tab?.url) {
+		// Any page Fetchy may not read looks like this, so stay quiet; only offer the one-time
+		// grant for the collection sites while it is still missing.
 		setPage('none');
-		notice(pageErrors.page_access);
-		show('grant-site', true);
+		const optional = chrome.runtime.getManifest().optional_host_permissions || [];
+		const granted = await chrome.permissions.contains({origins: optional}).catch(() => true);
+		if (mine !== generation) return;
+		byId('grant-site').textContent = '允许读取 X、知乎等收藏站点';
+		show('grant-site', !granted);
 		return;
 	}
+	byId('grant-site').textContent = '允许读取此网站';
 	if (!Number.isInteger(tabId) || !origin?.startsWith('https:')) {
 		setPage('none');
 		return;
@@ -381,10 +388,13 @@ async function refreshTask() {
 	let task;
 	try {
 		// Only problem entries, every page of them, so a failure at entry 300 still shows.
-		task = await libraryRpc('libraryTask', {id, problems: true});
+		task = await libraryRpc('libraryTask', {id, problems: 'failed'});
 		let items = task.items || [];
-		while (items.length < (task.totalItems || 0)) {
-			const next = await libraryRpc('libraryTask', {id, problems: true, offset: items.length});
+		const c0 = task.counts || {};
+		// Never page past what the counts allow, e.g. against an older component.
+		const limit = Math.min(task.totalItems || 0, (c0.failed || 0) + (c0.partial || 0));
+		while (items.length < limit) {
+			const next = await libraryRpc('libraryTask', {id, problems: 'failed', offset: items.length});
 			if (!next.items?.length) break;
 			items = items.concat(next.items);
 		}
@@ -492,10 +502,26 @@ chrome.tabs.onActivated.addListener(({windowId}) => {
 	if (panelWindow !== null && windowId !== panelWindow) return;
 	void loadPage();
 });
-// Single-page sites change the address without a new load.
-chrome.tabs.onUpdated.addListener((id, change) => {
+// Single-page sites change the address without a new load. While a collection is on
+// screen, opening one of its items (a modal, a photo viewer) keeps what was read; only
+// a different listing replaces it.
+chrome.tabs.onUpdated.addListener(async (id, change) => {
 	if (id !== tabId || reading || autoReading) return;
 	if (change.status !== 'complete' && !change.url) return;
+	if (collection) {
+		let page;
+		try {
+			page = await capture(tabId, 3);
+		} catch {
+			return;
+		}
+		if (!collection) return void loadPage();
+		if (page.type === 'collection' && key(page.folder) === key(collection.folder)) {
+			if (mergePage(collection, page)) renderCollection();
+			return;
+		}
+		if (page.type !== 'collection' && page.type !== 'folders') return;
+	}
 	void loadPage();
 });
 libraryRpc('libraryTasks')

@@ -783,9 +783,9 @@ test(
 	},
 );
 
-test('the reused extraction is written without the cookies yt-dlp copied into it', async (t) => {
-	const keep = path.join(await mkdtemp(path.join(tmpdir(), 'fetchy-info-')), 'seen.json');
-	t.after(() => rm(path.dirname(keep), {recursive: true, force: true}));
+test('the reused extraction drops cookies only when a sign-in was lent', async (t) => {
+	const dir = await mkdtemp(path.join(tmpdir(), 'fetchy-info-'));
+	t.after(() => rm(dir, {recursive: true, force: true}));
 	const info = {
 		...metadata,
 		cookies: 'SESSDATA=secret',
@@ -795,14 +795,27 @@ test('the reused extraction is written without the cookies yt-dlp copied into it
 			http_headers: {Cookie: 'SESSDATA=secret', Referer: 'https://example.org/'},
 		})),
 	};
-	const {options} = await fixture(t, {
-		info,
-		before: `if (args.includes("--load-info-json")) await copyFile(args[args.indexOf("--load-info-json") + 1], ${JSON.stringify(keep)});`,
-	});
-	await downloadWithYtDlp(target, options);
-	const written = await readFile(keep, 'utf8');
-	assert.doesNotMatch(written, /SESSDATA/);
-	assert.match(written, /"Referer":"https:\/\/example\.org\/"/);
+	const jar = path.join(dir, 'cookies.txt');
+	await writeFile(
+		jar,
+		'# Netscape HTTP Cookie File\n.example.org\tTRUE\t/\tTRUE\t0\tSESSDATA\tsecret\n',
+	);
+	for (const [name, cookiesFile] of [
+		['lent', jar],
+		['signed-out', undefined],
+	]) {
+		const keep = path.join(dir, name + '.json');
+		const {options} = await fixture(t, {
+			info,
+			before: `if (args.includes("--load-info-json")) await copyFile(args[args.indexOf("--load-info-json") + 1], ${JSON.stringify(keep)});`,
+		});
+		await downloadWithYtDlp(target, {...options, cookiesFile});
+		const written = await readFile(keep, 'utf8');
+		assert.match(written, /"Referer":"https:\/\/example\.org\/"/);
+		// Signed out, the cookies the extractor set are the download's only source.
+		if (cookiesFile) assert.doesNotMatch(written, /SESSDATA/);
+		else assert.match(written, /"cookies":"SESSDATA=secret"/);
+	}
 	assert.equal(
 		classifyEngineError('This video is only available to Premium members').code,
 		'premium_required',

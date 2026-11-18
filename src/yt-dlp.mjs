@@ -492,10 +492,15 @@ export async function downloadWithYtDlp(target, options = {}, kind = 'video') {
 		try {
 			const receipt = path.join(directory, 'result.json');
 			// Download from the extracted info instead of extracting the page a second time.
-			// It holds playback URLs, so it lives only in this private task directory. yt-dlp
-			// copies lent cookies into it; they are dropped, since --cookies supplies them again.
+			// It holds playback URLs, so it lives only in this private task directory. With a
+			// lent sign-in, yt-dlp copies its cookies in; they are dropped because --cookies
+			// supplies them again. Without one, the cookies the extractor set must stay.
 			const infoFile = path.join(directory, 'info.json');
-			await writeFile(infoFile, JSON.stringify(withoutCookies(info)), {mode: 0o600});
+			await writeFile(
+				infoFile,
+				JSON.stringify(settings._cookiesFile ? withoutCookies(info) : info),
+				{mode: 0o600},
+			);
 			const identityFields = siteForPlatform(target.platform)?.receiptFields ?? [];
 			const fields = [
 				'filepath',

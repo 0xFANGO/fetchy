@@ -60,6 +60,8 @@ private func json(_ value: Any) -> Data? {
   let panel = SitePanelModel()
   let commands = LocalCommands()
   private var observations: [NSKeyValueObservation] = []
+  /// The address the side column last read; a stopped or failed load returns to it.
+  private var panelAddress = ""
 
   override init() {
     super.init()
@@ -113,10 +115,12 @@ private func json(_ value: Any) -> Data? {
         let loading = view.isLoading
         DispatchQueue.main.async {
           guard let self else { return }
-          let changed = self.address != value
           self.address = value
           // A single-page site changes the address without loading; a load ends in didFinish.
-          if changed && !loading { self.panel.pageChanged() }
+          if !loading && value != self.panelAddress {
+            self.panelAddress = value
+            self.panel.pageChanged()
+          }
         }
       },
       view.observe(\.canGoBack, options: [.initial, .new]) { [weak self] view, _ in
@@ -134,6 +138,7 @@ private func json(_ value: Any) -> Data? {
     ]
     webView = view
     signedIn = nil
+    panelAddress = ""
     panel.reset()
   }
 
@@ -209,6 +214,7 @@ private func json(_ value: Any) -> Data? {
 
   func webView(_ webView: WKWebView, didFinish navigation: WKNavigation!) {
     refreshSignIn()
+    panelAddress = webView.url?.absoluteString ?? ""
     panel.pageChanged()
   }
 }
