@@ -1,5 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
+import {resolveAudio} from '../src/audio.mjs';
 import {chmod, mkdtemp, readFile, rm, writeFile} from 'node:fs/promises';
 import path from 'node:path';
 import {tmpdir} from 'node:os';
@@ -238,10 +239,54 @@ test('other platforms, explicit yt-dlp and legacy page media keep normal short-l
 	assert.equal(redirect.mock.callCount(), 3);
 });
 
-test('CLI help is available without external dependencies', async () => {
-	const result = await runProcess(process.execPath, ['bin/fetchy.mjs', '--help']);
-	assert.equal(result.code, 0);
-	assert.match(result.stdout, /resolve/);
-	assert.match(result.stdout, /download/);
-	assert.match(result.stdout, /--max-height/);
+test('CLI help lists the new commands first and keeps the old ones one step away', async () => {
+	const first = await runProcess(process.execPath, ['bin/fetchy.mjs', '--help']);
+	assert.equal(first.code, 0);
+	for (const command of [
+		'get',
+		'info',
+		'login',
+		'logout',
+		'accounts',
+		'folders',
+		'sync',
+		'list',
+		'search',
+		'retry',
+	])
+		assert.match(first.stdout, new RegExp('fetchy ' + command + '\\b'));
+	assert.doesNotMatch(first.stdout, /resolve|download|browse|library /);
+	const all = await runProcess(process.execPath, ['bin/fetchy.mjs', 'help', 'all']);
+	assert.equal(all.code, 0);
+	assert.match(all.stdout, /resolve/);
+	assert.match(all.stdout, /download/);
+	assert.match(all.stdout, /--max-height/);
+	const legacy = await runProcess(process.execPath, ['bin/fetchy.mjs', 'resolve', '--help']);
+	assert.match(legacy.stdout, /--max-height/);
+});
+
+test('a bare link is saved like fetchy get, and unknown words are not treated as links', async () => {
+	const link = await runProcess(process.execPath, [
+		'bin/fetchy.mjs',
+		'http://user:pw@example.com/a',
+	]);
+	assert.equal(link.code, 1);
+	assert.equal(JSON.parse(link.stderr).error.code, 'invalid_url');
+	const word = await runProcess(process.execPath, ['bin/fetchy.mjs', 'nonsense']);
+	assert.equal(JSON.parse(word.stderr).error.code, 'invalid_arguments');
+	const folders = await runProcess(process.execPath, ['bin/fetchy.mjs', 'folders', 'youtube']);
+	assert.equal(JSON.parse(folders.stderr).error.code, 'unsupported_platform');
+});
+
+test('audio from a video site is allowed only when the caller asks for it', async () => {
+	await assert.rejects(resolveAudio('https://streamable.com/dnd1', {ytDlpPath: '/not-installed'}), {
+		code: 'unsupported_content',
+	});
+	await assert.rejects(
+		resolveAudio('https://streamable.com/dnd1', {
+			ytDlpPath: '/not-installed',
+			audioFromVideo: true,
+		}),
+		(error) => error.code !== 'unsupported_content',
+	);
 });

@@ -21,6 +21,7 @@ import {videoFilename} from '../src/filenames.mjs';
 import {importLibrary, libraryRoot, searchLibrary} from '../src/library/index.mjs';
 import {entryIdentity, publicUrl, renderWork} from '../src/library/content.mjs';
 import {hasSession, downloadWithSession, captureWithSession} from './desktop.mjs';
+import {withSiteCookies} from './accounts.mjs';
 
 const invalid = (message) => new EngineError('invalid_arguments', message);
 async function targetFor(input, options) {
@@ -57,40 +58,52 @@ async function media(action, target, input, options) {
 	if (target.pageOnly)
 		throw new EngineError('no_formats', '请在扩展或 Fetchy 专属浏览器打开此帖以读取图文。');
 	const category = siteForPlatform(target.platform)?.kind;
-	const authenticated =
-		downloading && !options.publicOnly && !options.cookiesFile && (await hasSession(input));
-	// A previously opened site gets its own WebKit storage, even in a new process.
-	if (authenticated) {
-		try {
-			return await downloadWithSession(input, options);
-		} catch (error) {
-			if (!['no_formats', 'network_error', 'unavailable'].includes(error.code)) throw error;
-			// An explicitly opened loopback site may also be a signed-in article.
-			if (
-				target.platform === 'web' &&
-				explicitLocalOrigin(input, true) &&
-				!options.localOrigin &&
-				error.code === 'no_formats'
-			)
-				throw error;
-		}
-	}
+	const signedIn = !options.publicOnly && !options.cookiesFile;
 	if (target.platform === 'web') {
+		// A generic site signed in through Fetchy is read by WebKit with its own storage.
+		if (downloading && signedIn && (await hasSession(input))) {
+			try {
+				return await downloadWithSession(input, options);
+			} catch (error) {
+				if (!['no_formats', 'network_error', 'unavailable'].includes(error.code)) throw error;
+				// An explicitly opened loopback site may also be a signed-in article.
+				if (explicitLocalOrigin(input, true) && !options.localOrigin && error.code === 'no_formats')
+					throw error;
+			}
+		}
 		try {
 			return await (downloading ? downloadGeneric : resolveGeneric)(input, options);
 		} catch (e) {
 			if (e.code === 'auth_required')
-				throw new EngineError(e.code, '该页面要求登录。运行 fetchy browse <原链接> 登录后重试。');
+				throw new EngineError(e.code, '该页面要求登录。运行 fetchy login <原链接> 登录后重试。');
 			throw e;
 		}
 	}
-	const asAudio = () => (downloading ? downloadAudio : resolveAudio)(target.url, options);
-	if (category === 'audio') return asAudio();
+	const run = (cookiesFile) => {
+		const settings = cookiesFile ? {...options, cookiesFile} : options;
+		const asAudio = () =>
+			(downloading ? downloadAudio : resolveAudio)(target.url, {
+				...settings,
+				audioFromVideo: !['audio', 'mixed'].includes(category),
+			});
+		if (category === 'audio' || options.audio) return asAudio();
+		return (downloading ? downloadVideo : resolveVideo)(target.url, settings).catch((e) => {
+			if (category === 'mixed' && e.code === 'no_video') return asAudio();
+			throw e;
+		});
+	};
+	// A site signed in through Fetchy lends its cookies to the downloader for this request only.
+	if (!signedIn) return run(options.cookiesFile);
 	try {
-		return await (downloading ? downloadVideo : resolveVideo)(target.url, options);
-	} catch (e) {
-		if (category === 'mixed' && e.code === 'no_video') return asAudio();
-		throw e;
+		return await withSiteCookies(input, run);
+	} catch (error) {
+		if (
+			!downloading ||
+			!['no_formats', 'network_error', 'unavailable'].includes(error.code) ||
+			!(await hasSession(input))
+		)
+			throw error;
+		return downloadWithSession(input, options);
 	}
 }
 
@@ -320,7 +333,8 @@ export async function runGetCommand(action, args) {
 		allowPositionals: true,
 		options: {
 			input: {type: 'string', short: 'i'},
-			output: {type: 'string'},
+			output: {type: 'string', short: 'o'},
+			audio: {type: 'boolean'},
 			'allow-local': {type: 'boolean'},
 			'max-height': {type: 'string'},
 			'cookies-file': {type: 'string'},
@@ -340,6 +354,7 @@ export async function runGetCommand(action, args) {
 			try {
 				const opt = {
 					outputDir: values.output,
+					audio: values.audio,
 					allowLocal: values['allow-local'],
 					cookiesFile: values['cookies-file'],
 					transport: values.transport,

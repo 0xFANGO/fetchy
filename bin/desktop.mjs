@@ -1,5 +1,5 @@
 import {createHash} from 'node:crypto';
-import {access, mkdir, mkdtemp, open, rm, stat, writeFile} from 'node:fs/promises';
+import {access, mkdir, mkdtemp, open, rm, stat} from 'node:fs/promises';
 import {homedir} from 'node:os';
 import path from 'node:path';
 import {fileURLToPath} from 'node:url';
@@ -52,7 +52,7 @@ export function sessionTarget(input) {
 		key.slice(16, 20),
 		key.slice(20),
 	].join('-');
-	return {url, hosts, profile, marker: path.join(dataDirectory(), 'browser-sites', profile)};
+	return {url, hosts, profile};
 }
 
 export async function appBundle() {
@@ -78,42 +78,57 @@ export async function appBundle() {
 	);
 }
 
+/** True while the desktop app holds a sign-in for this site, judged from its cookies. */
 export async function hasSession(input) {
 	try {
-		await access(sessionTarget(input).marker);
-		return true;
+		const {accountStatus, findAccount} = await import('./accounts.mjs');
+		return (await accountStatus(await findAccount(input))).status === 'logged_in';
 	} catch {
 		return false;
 	}
 }
 
-export async function browse(input) {
-	const {url, profile, marker} = sessionTarget(input);
+// The desktop app is one window. A running window receives the request as a
+// notification; a new launch reads it from its arguments.
+async function openInApp(command, url) {
 	const bundle = await appBundle();
-	const started = await runProcess(
-		'/usr/bin/open',
-		['-n', '-a', bundle, '--args', 'browse', profile, url.href],
-		{timeoutMs: 15000},
-	);
-	if (started.code !== 0)
-		throw new EngineError('browser_unavailable', '无法启动 Fetchy 专属浏览器。');
-	await mkdir(path.dirname(marker), {recursive: true, mode: 0o700});
-	await writeFile(marker, '', {mode: 0o600});
+	await runProcess(path.join(bundle, 'Contents/MacOS/Fetchy'), ['notify', command, url], {
+		timeoutMs: 10000,
+	}).catch(() => {});
+	const started = await runProcess('/usr/bin/open', ['-a', bundle, '--args', command, url], {
+		timeoutMs: 15000,
+	});
+	if (started.code !== 0) throw new EngineError('browser_unavailable', '无法启动 Fetchy 桌面端。');
+}
+
+/** Open the site's row in the app's accounts and sign in inside its built-in browser. */
+export async function login(input) {
+	const {addAccount} = await import('./accounts.mjs');
+	const account = await addAccount(input);
+	await openInApp('login', account.url);
+	return {opened: true, site: account.site, url: account.url};
+}
+
+/** Open a link in the app's built-in browser with that site's storage. */
+export async function browse(input) {
+	const {url} = sessionTarget(input);
+	await openInApp('browse', url.href);
 	return {opened: true, origin: url.origin};
 }
 
 export async function logout(input) {
-	const {url, profile, marker} = sessionTarget(input);
+	const {findAccount, forgetAccount} = await import('./accounts.mjs');
+	const account = await findAccount(input);
 	const binary = path.join(await appBundle(), 'Contents/MacOS/Fetchy');
-	const result = await runProcess(binary, ['logout', profile], {timeoutMs: 30000});
+	const result = await runProcess(binary, ['logout', account.profile], {timeoutMs: 30000});
 	if (result.code !== 0)
 		throw new EngineError('browser_unavailable', '无法清除本站的 Fetchy 会话。');
-	await rm(marker, {force: true});
-	return {loggedOut: true, origin: url.origin};
+	await forgetAccount(account);
+	return {loggedOut: true, site: account.site, origin: new URL(account.url).origin};
 }
 
 const messages = {
-	auth_required: '本站要求登录，请用 fetchy browse 打开原链接并登录后重试。',
+	auth_required: '本站要求登录，请运行 fetchy login <站点> 登录后重试。',
 	no_formats: '当前页没有唯一可保存的同源 MP4 或 WebM。请打开具体的视频页。',
 	network_error: '专属浏览器无法加载该内容。',
 	unavailable: '本站没有提供请求的内容。',

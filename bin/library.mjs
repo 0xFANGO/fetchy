@@ -14,6 +14,15 @@ import {
 	searchLibrary,
 } from '../src/library/index.mjs';
 import {problem} from '../src/library/storage.mjs';
+import {fetchPostPage} from '../src/library/post-pages.mjs';
+import {siteCookieHeader, withSiteCookies} from './accounts.mjs';
+
+// A worker in this process reads post pages itself, with that site's desktop sign-in.
+const workerOptions = {
+	readDetails: async (item) =>
+		fetchPostPage(item, {url: item.sourceUrl, cookie: await siteCookieHeader(item.sourceUrl)}),
+	withSiteCookies,
+};
 
 export async function runLibraryCommand(args) {
 	const {values, positionals} = parseArgs({
@@ -34,7 +43,12 @@ export async function runLibraryCommand(args) {
 	});
 	const [action, input, ...extra] = positionals;
 	if (extra.length) throw problem('invalid_arguments', 'Too many arguments for library command.');
-	const options = {root: values.root, cookiesFile: values['cookies-file'], selected: values.select};
+	const options = {
+		...workerOptions,
+		root: values.root,
+		cookiesFile: values['cookies-file'],
+		selected: values.select,
+	};
 	const filters = {
 		platform: values.platform,
 		folder: values.folder,
@@ -135,4 +149,56 @@ export async function runLibraryCommand(args) {
 	)
 		process.exitCode = 1;
 	return output;
+}
+
+const brief = ({key, platform, title, author, status, filepath, folders}) => ({
+	key,
+	platform,
+	title,
+	author,
+	status,
+	folders: folders.map((f) => f.name),
+	filepath,
+});
+
+/** The short commands on the help's first screen. */
+export async function runShortCommand(action, args) {
+	const [input, ...extra] = args;
+	if (extra.length) throw problem('invalid_arguments', 'Too many arguments.');
+	switch (action) {
+		case 'list':
+			if (input) throw problem('invalid_arguments', 'fetchy list takes no arguments.');
+			console.log(JSON.stringify((await searchLibrary({})).map(brief), null, 2));
+			return;
+		case 'search':
+			if (!input) throw problem('invalid_arguments', '请提供关键词。');
+			console.log(JSON.stringify((await searchLibrary({query: input})).map(brief), null, 2));
+			return;
+		case 'retry': {
+			let id = input;
+			if (!id) {
+				const recent = (await listLibraryTasks()).find((t) => t.counts.failed || t.counts.partial);
+				if (!recent) throw problem('not_found', '没有需要重试的任务。');
+				id = recent.id;
+			}
+			await runLibraryCommand(['retry', id]);
+			return;
+		}
+		case 'folders':
+		case 'sync': {
+			const bilibili =
+				input === 'bilibili' || (action === 'sync' && Boolean(bilibiliFolderId(input ?? '')));
+			if (!bilibili)
+				throw problem(
+					'unsupported_platform',
+					action === 'folders'
+						? '命令行目前只能列出 B站收藏夹。其他网站请在浏览器打开收藏夹，用 Fetchy 右侧栏读取。'
+						: '命令行目前只能同步 B站收藏夹。其他网站请在浏览器打开收藏夹，用 Fetchy 右侧栏保存。',
+				);
+			await withSiteCookies('https://www.bilibili.com/', (file) =>
+				runLibraryCommand([action, input, ...(file ? ['--cookies-file', file] : [])]),
+			);
+			return;
+		}
+	}
 }

@@ -148,8 +148,13 @@ function formatSelector(options, compatible = false) {
 function argsFor(target, options, compatible = false, kind = 'video') {
 	const site = siteForPlatform(target.platform);
 	const fallback = !compatible && site?.kind === 'mixed' ? '/ba' : '';
+	// options.audioFromVideo: the caller asked for the sound of a video; a muxed format will do.
 	const selector =
-		kind === 'audio' ? 'ba/b[vcodec=none]' : formatSelector(options, compatible) + fallback;
+		kind === 'audio'
+			? options.audioFromVideo
+				? 'ba/b'
+				: 'ba/b[vcodec=none]'
+			: formatSelector(options, compatible) + fallback;
 	const args = [...COMMON_ARGS, '--format', selector];
 	const extractor = target.extractor ?? site?.extractor;
 	if (extractor)
@@ -239,7 +244,7 @@ async function metadata(target, options, kind) {
 	const site = siteForPlatform(target.platform);
 	if (
 		(site?.kind === 'audio' && kind !== 'audio') ||
-		(kind === 'audio' && !['audio', 'mixed'].includes(site?.kind))
+		(kind === 'audio' && !['audio', 'mixed'].includes(site?.kind) && !options.audioFromVideo)
 	)
 		throw new EngineError('unsupported_content', '该链接不属于此命令支持的媒体类型。');
 	const result = await runProcess(
@@ -281,7 +286,8 @@ async function metadata(target, options, kind) {
 		!formats.some(
 			(item) =>
 				(kind === 'audio'
-					? item.vcodec === 'none' && codecPresent(item.acodec) !== false
+					? (item.vcodec === 'none' || options.audioFromVideo) &&
+						codecPresent(item.acodec) !== false
 					: codecPresent(item.vcodec) !== false) &&
 				item.has_drm !== true &&
 				(item.url || item.format_id),
