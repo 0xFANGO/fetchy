@@ -1,12 +1,14 @@
-import {mkdtemp, mkdir, rm} from 'node:fs/promises';
+import {mkdtemp, mkdir, readdir, rm, stat} from 'node:fs/promises';
 import path from 'node:path';
 import {
 	getLibraryTask,
 	listLibraryTasks,
+	listRecoverableNativeTasks,
 	prepareLibraryTask,
 	runLibraryTask,
 	searchLibrary,
 } from '../src/library/index.mjs';
+import {entryIdentity, stashFile} from '../src/library/content.mjs';
 import {saveWebFile} from '../src/public-http.mjs';
 import {LibraryUploads} from './library-upload.mjs';
 import {EngineError, runProcess} from '../src/process.mjs';
@@ -68,46 +70,112 @@ function summary(task, offset = 0) {
 		folders: boundedRows(folders.slice(offset, offset + 100), 100 * 1024),
 	};
 }
-export async function stageAttachments(entries, directory, selected, options = {}) {
-	let sequence = 0;
-	const files = new Map();
-	let budget = 1024 ** 3;
+function stagingBudget(options = {}) {
 	const deadline = AbortSignal.timeout(10 * 60_000);
-	const signal = options.signal ? AbortSignal.any([deadline, options.signal]) : deadline;
+	return {
+		remaining: options.maxBytes ?? 1024 ** 3,
+		sequence: 0,
+		files: new Map(),
+		signal: options.signal ? AbortSignal.any([deadline, options.signal]) : deadline,
+	};
+}
+function checkAttachment(a) {
+	if (!a || !['image', 'video', 'audio'].includes(a.kind) || a.path !== undefined) fail();
+	if (a.url !== undefined && (typeof a.url !== 'string' || a.url.length > 16384)) fail();
+}
+
+export async function stageAttachments(entries, directory, selected, options = {}) {
+	const state = options.staging ?? stagingBudget(options);
 	for (const entry of entries) {
-		if (selected && !selected.has(entry.platform + ':' + entry.id)) continue;
+		if (selected && !selected.has(entryIdentity(entry).key)) continue;
 		for (const attachment of entry.attachments ?? []) {
-			if (
-				!attachment ||
-				!['image', 'video', 'audio'].includes(attachment.kind) ||
-				attachment.path !== undefined
-			)
-				fail();
+			checkAttachment(attachment);
 			if (attachment.url === undefined) continue;
 			const uri = attachment.url;
 			delete attachment.url;
-			if (typeof uri !== 'string' || uri.length > 16384) fail();
 			try {
-				if (!files.has(uri)) {
-					const localName = 'attachment-' + ++sequence;
-					const mime = await saveWebFile(uri, path.join(directory, localName), {
-						signal,
-						localOrigin: options.localOrigin,
-						maxBytes: Math.min(budget, 256 * 1024 ** 2),
-					});
-					budget -= mime.bytes;
-					if (!mime.mimeType.startsWith(attachment.kind + '/')) throw Error('type');
-					files.set(uri, {path: localName, mimeType: mime.mimeType});
+				if (!state.files.has(uri)) {
+					if (state.remaining <= 0 || state.signal.aborted) throw Error('exhausted');
+					const localName = 'attachment-' + ++state.sequence;
+					const file = path.join(directory, localName);
+					const limit = Math.min(state.remaining, 256 * 1024 ** 2);
+					let mime;
+					try {
+						mime = await saveWebFile(uri, file, {
+							signal: state.signal,
+							localOrigin: options.localOrigin,
+							maxBytes: limit,
+						});
+					} catch (error) {
+						// A truncated transfer still consumes the same per-task budget.
+						state.remaining -=
+							error.code === 'size_limit'
+								? limit
+								: await stat(file).then(
+										(s) => s.size,
+										() => 0,
+									);
+						await rm(file, {force: true});
+						throw error;
+					}
+					state.remaining -= mime.bytes;
+					state.files.set(uri, {path: localName, mimeType: mime.mimeType});
 				}
-				const stored = files.get(uri);
+				const stored = state.files.get(uri);
 				if (!stored.mimeType.startsWith(attachment.kind + '/')) throw Error('type');
 				Object.assign(attachment, stored);
 			} catch {
+				options.signal?.throwIfAborted();
 				attachment.missing = true;
 			}
 		}
 	}
 }
+
+function captureTransfers(entries) {
+	const urls = new WeakMap(),
+		pending = new Map();
+	for (const entry of entries) {
+		for (const a of entry.attachments ?? []) {
+			checkAttachment(a);
+			if (a.url !== undefined) {
+				urls.set(a, a.url);
+				delete a.url;
+			}
+		}
+	}
+	return {
+		pending,
+		deferAttachment(a) {
+			const url = urls.get(a);
+			if (!url) return;
+			const id = pending.size + 1;
+			pending.set(id, url);
+			return id;
+		},
+	};
+}
+
+async function clearAbandonedAttachments(directory) {
+	let entries;
+	try {
+		entries = await readdir(directory, {withFileTypes: true});
+	} catch (error) {
+		if (error.code === 'ENOENT') return;
+		throw error;
+	}
+	for (const entry of entries) {
+		const match = /^\.native-attachments-(\d+)-[A-Za-z0-9]{6}$/.exec(entry.name);
+		if (!match || !entry.isDirectory()) continue;
+		try {
+			process.kill(Number(match[1]), 0);
+		} catch (error) {
+			if (error.code === 'ESRCH')
+				await rm(path.join(directory, entry.name), {recursive: true, force: true});
+		}
+	}
+}
+
 export class LibraryBridge {
 	constructor(directory) {
 		this.directory = directory;
@@ -117,15 +185,56 @@ export class LibraryBridge {
 		this.uploads = new LibraryUploads();
 		this.tail = Promise.resolve();
 	}
-	queue(task, retryFailed) {
+	async run(task, options, pending) {
+		if (!pending?.size) return runLibraryTask(task.id, options);
+		await mkdir(this.directory, {recursive: true, mode: 0o700});
+		const scratch = await mkdtemp(
+			path.join(this.directory, '.native-attachments-' + process.pid + '-'),
+		);
+		const staging = stagingBudget(options);
+		try {
+			return await runLibraryTask(task.id, {
+				...options,
+				resolveAttachment: async (id, kind) => {
+					const url = pending.get(id);
+					if (!url) return;
+					const a = {kind, url};
+					await stageAttachments([{attachments: [a]}], scratch, null, {...options, staging});
+					if (!a.path) return;
+					try {
+						return await stashFile(options.root, path.join(scratch, a.path), kind, a.mimeType);
+					} catch (e) {
+						if (!['invalid_attachment', 'empty_attachment', 'ENOENT'].includes(e.code)) throw e;
+					}
+				},
+			});
+		} finally {
+			await rm(scratch, {recursive: true, force: true});
+		}
+	}
+	queue(task, retryFailed, selected, pending) {
 		if (!this.active.has(task.id)) {
-			const work = this.tail.then(() => runLibraryTask(task.id, {...this.options, retryFailed}));
+			const work = this.tail.then(() =>
+				this.run(task, {...this.options, retryFailed, selected}, pending),
+			);
 			this.tail = work.catch(() => {}).finally(() => this.active.delete(task.id));
 			this.active.set(task.id, work);
 		}
 		return summary(task);
 	}
 	async request(method, params) {
+		if (!this.recovery) {
+			this.recovery = clearAbandonedAttachments(this.directory)
+				.then(() => listRecoverableNativeTasks(this.options))
+				.then((tasks) => {
+					for (const task of tasks) this.queue(task, false);
+				})
+				.catch((error) => {
+					this.recovery = null;
+					throw error;
+				});
+		}
+		await this.recovery;
 		switch (method) {
 			case 'libraryUploadStart':
 				return this.uploads.start();
@@ -198,11 +307,15 @@ export class LibraryBridge {
 			case 'libraryRetry':
 			case 'libraryResume': {
 				const task = await getLibraryTask(params.id, this.options);
-				return this.queue(task, method === 'libraryRetry');
+				if (
+					params.selected !== undefined &&
+					(!Array.isArray(params.selected) || !params.selected.every((k) => typeof k === 'string'))
+				)
+					fail();
+				return this.queue(task, method === 'libraryRetry', params.selected);
 			}
 			case 'libraryStart': {
 				this.preparing++;
-				let scratch;
 				try {
 					const manifest = structuredClone(params.manifest);
 					const entries = allEntries(manifest);
@@ -212,21 +325,16 @@ export class LibraryBridge {
 						(!Array.isArray(selected) || !selected.every((key) => typeof key === 'string'))
 					)
 						fail();
-					// IPC callers may supply public media or bytes, never paths on the host.
-					for (const e of entries)
-						for (const a of e.attachments ?? []) if (a?.path !== undefined) fail();
-					await mkdir(this.directory, {recursive: true, mode: 0o700});
-					scratch = await mkdtemp(path.join(this.directory, '.import-'));
-					await stageAttachments(entries, scratch, selected && new Set(selected));
+					const transfers = captureTransfers(entries);
 					const task = await prepareLibraryTask(manifest, {
 						...this.options,
 						selected,
-						sourceDir: scratch,
+						nativeQueue: true,
+						deferAttachment: transfers.deferAttachment,
 					});
-					return this.queue(task, false);
+					return this.queue(task, false, undefined, transfers.pending);
 				} finally {
 					this.preparing--;
-					if (scratch) await rm(scratch, {recursive: true, force: true});
 				}
 			}
 			default:

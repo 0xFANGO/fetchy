@@ -71,7 +71,11 @@ function mergeAttachments(primary, other) {
 		if (!slot.path && a.path) {
 			slot.path = a.path;
 			delete slot.missing;
+			delete slot.needsSource;
+			delete slot.pendingAttachment;
 		}
+		if (!slot.path && a.pendingAttachment && !slot.pendingAttachment)
+			slot.pendingAttachment = a.pendingAttachment;
 		slot.alt ||= a.alt || '';
 		slot.name ||= a.name || '';
 	}
@@ -134,7 +138,13 @@ async function inputsFor(items, folder, root, options, seed) {
 		try {
 			const {key} = entryIdentity(raw, folder);
 			if (options.selected && !options.selected.has(key)) continue;
-			result.push([await normalizeEntry(raw, folder, root, options)]);
+			const item = await normalizeEntry(raw, folder, root, options);
+			for (const [i, a] of item.attachments.entries()) {
+				if (a.path) continue;
+				const pending = options.deferAttachment?.(raw.attachments[i]);
+				if (pending) a.pendingAttachment = pending;
+			}
+			result.push([item]);
 		} catch (e) {
 			if (!['invalid_entry', 'invalid_folder'].includes(e.code)) throw e;
 			result.push([{key: 'invalid:' + seed + '-' + n}, 'failed', e.code]);
@@ -268,7 +278,11 @@ export async function prepareLibraryTask(manifest, options = {}) {
 		throw problem('invalid_manifest', 'Use a version 1 manifest with items or folders.');
 	const ctx = await openLibrary(options),
 		id = randomUUID(),
-		cfg = {folders: [], selected: options.selected ?? null};
+		cfg = {
+			folders: [],
+			selected: options.selected ?? null,
+			nativeQueue: options.nativeQueue === true,
+		};
 	try {
 		if (
 			cfg.selected !== null &&
@@ -396,7 +410,10 @@ async function saveItem(ctx, input, old, options) {
 	}
 	if (input.coverage === 'unavailable_resource')
 		throw problem('unavailable', 'The collection member is unavailable.');
-	if (item.kind === 'video' && !item.attachments.some((a) => a.kind === 'video' && a.path)) {
+	if (
+		item.kind === 'video' &&
+		!item.attachments.some((a) => a.kind === 'video' && (a.path || a.needsSource))
+	) {
 		const tmp = await mkdtemp(path.join(tmpdir(), 'fetchy-library-'));
 		try {
 			const res = await (options.downloadVideo || defaultDownload)(item.sourceUrl, {
@@ -475,6 +492,28 @@ export async function runLibraryTask(id, options = {}) {
 				const item = JSON.parse(row.input);
 				if (!item.sourceUrl) continue;
 				try {
+					// Temporary URLs live only in the native worker. The durable input
+					// already has the text, inline files, and ordered slots for remote files.
+					if (item.attachments.some((a) => a.pendingAttachment)) {
+						for (const a of item.attachments) {
+							if (!a.pendingAttachment) continue;
+							const file = await options.resolveAttachment?.(a.pendingAttachment, a.kind);
+							delete a.pendingAttachment;
+							if (file) {
+								a.path = file;
+								delete a.missing;
+								delete a.needsSource;
+							} else {
+								a.missing = true;
+								a.needsSource = true;
+							}
+						}
+						db.prepare('UPDATE items SET input=? WHERE task=? AND key=?').run(
+							JSON.stringify(item),
+							id,
+							row.key,
+						);
+					}
 					const oldRow = db.prepare('SELECT record FROM works WHERE key=?').get(row.key);
 					const old = oldRow && JSON.parse(oldRow.record);
 					const {record, outcome} = await saveItem(ctx, item, old, options);
@@ -536,6 +575,20 @@ export async function getLibraryTask(id, options = {}) {
 	const ctx = await openLibrary(options);
 	try {
 		return taskResult(ctx, id);
+	} finally {
+		ctx.db.close();
+	}
+}
+export async function listRecoverableNativeTasks(options = {}) {
+	const ctx = await openLibrary(options);
+	try {
+		return ctx.db
+			.prepare(
+				"SELECT id FROM tasks WHERE status IN ('queued','running','interrupted') AND json_extract(config,'$.nativeQueue') = 1 ORDER BY created",
+			)
+			.all()
+			.map(({id}) => taskResult(ctx, id, false))
+			.filter((task) => task.status !== 'running');
 	} finally {
 		ctx.db.close();
 	}
