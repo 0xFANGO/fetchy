@@ -6,6 +6,7 @@ const HOST = 'com.fetchy.video_downloader';
 const popups = new Set(),
 	requests = new Map();
 let nativePort,
+	archiveAvailable = false,
 	connectionPromise,
 	reconnectTimer,
 	reconnectAttempt = 0;
@@ -125,6 +126,7 @@ async function connect() {
 			}
 			throw error;
 		}
+		archiveAvailable = hello.capabilities?.archive === true;
 		controller.receiveNative(hello.state, {authoritative: true});
 		controller.setConnection({status: 'connected', dependencies: hello.dependencies});
 		reconnectAttempt = 0;
@@ -137,6 +139,8 @@ async function connect() {
 }
 async function rpc(method, params, timeoutMs) {
 	await connect();
+	if (!archiveAvailable && (method.startsWith('library') || method === 'webSave'))
+		throw {code: 'archive_update_required'};
 	return send(method, params, timeoutMs);
 }
 

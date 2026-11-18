@@ -205,6 +205,7 @@ export class NativeController extends EventEmitter {
 				return {
 					version: '0.1.0',
 					protocolVersion: 1,
+					capabilities: {archive: true},
 					dependencies: await this.dependencies(),
 					state: this.snapshot(),
 				};

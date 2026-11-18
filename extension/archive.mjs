@@ -30,6 +30,8 @@ const statuses = {
 	added: '已保存',
 };
 const errors = {
+	archive_update_required:
+		'当前本机组件版本较旧。请更新组件，待下载结束后重新启动组件，再打开收藏库。',
 	metadata_limit: '作品正文与收藏夹清单超过 48 MiB，请分批选择作品。',
 	invalid_url: '媒体地址无法由本机公开访问。',
 	auth_required: '此媒体需要站点授权。',

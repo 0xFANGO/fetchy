@@ -8,6 +8,8 @@ Open an original post, article or collection you may save. Click the Fetchy tool
 - **任务** shows the persistent task ID, folder coverage, item counts and individual outcomes. After the local component accepts a task, it continues when you close the archive tab. **继续任务** processes remaining work after an interruption. **仅重试失败项** retries failed items. To fill a partial post, open the complete original and save it again.
 - **离线收藏** searches titles, authors and bodies. You can filter by platform, folder or topic. **打开离线页** opens local HTML with its saved attachments. The desktop and CLI use the same library and task IDs. See the [library commands and import format](library.md).
 
+If the archive asks you to update the local component, install the matching Fetchy checkout and rebuild the extension. Finish any active downloads, disable the extension in each browser using it, and allow the idle worker to exit (about five minutes). Re-enable the updated extension and reopen the archive.
+
 ## What the extension can read
 
 | Page                    | Scope and coverage                                                                                                                                                                                                                                                                                      |
