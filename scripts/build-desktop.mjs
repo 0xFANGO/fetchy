@@ -46,6 +46,11 @@ try {
 	]);
 	for (const directory of ['bin', 'src', 'native'])
 		await cp(path.join(root, directory), path.join(app, directory), {recursive: true});
+	await mkdir(path.join(app, 'extension'));
+	await cp(
+		path.join(root, 'extension/archive-rpc.mjs'),
+		path.join(app, 'extension/archive-rpc.mjs'),
+	);
 	await mkdir(path.join(app, 'desktop'));
 	await cp(path.join(root, 'desktop/bridge.mjs'), path.join(app, 'desktop/bridge.mjs'));
 	await writeFile(

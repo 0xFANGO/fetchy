@@ -207,6 +207,8 @@ struct Workspace: View {
   @State private var topic = ""
   @State private var items: [LibraryItem] = []
   @State private var jobs: [CollectionTask] = []
+  @State private var history: [Int] = [0]
+  @State private var nextPage: Int?
   @State private var serviceNotice = ""
   @State private var updating = false
   @State private var preview: ManifestPreview?
@@ -226,6 +228,14 @@ struct Workspace: View {
       if section == "保存" { downloadView }
       if section == "收藏库" { libraryView }
       if section == "任务" { taskView }
+      if section != "保存" && (history.count > 1 || nextPage != nil) {
+        HStack {
+          Button("上一页") { if history.count > 1 { history.removeLast(); Task { await refresh() } } }
+            .disabled(history.count <= 1)
+          Button("下一页") { if let nextPage { history.append(nextPage); Task { await refresh() } } }
+            .disabled(nextPage == nil)
+        }
+      }
       if section != "保存", !serviceNotice.isEmpty {
         Text(serviceNotice).foregroundStyle(.secondary).textSelection(.enabled)
       }
@@ -252,6 +262,8 @@ struct Workspace: View {
       }
     }
     .task(id: section + "\u{1f}" + filters.joined(separator: "\u{1e}")) {
+      history = [0]
+      nextPage = nil
       guard section != "保存" else { return }
       try? await Task.sleep(nanoseconds: 220_000_000)
       guard !Task.isCancelled else { return }
@@ -380,7 +392,7 @@ struct Workspace: View {
               .enabled)
           }
           Spacer()
-          if job.status == "interrupted" {
+          if ["interrupted", "queued"].contains(job.status) {
             Button("继续") { perform(["resume", job.id]) }.disabled(updating)
           }
           if (job.counts["failed"] ?? 0) > 0 {
@@ -424,13 +436,19 @@ struct Workspace: View {
   private func refresh() async {
     let selected = section
     let requested = filters
+    let offset = history.last ?? 0
     do {
-      let args = selected == "收藏库" ? ["search"] + requested : ["tasks"]
+      let args = (selected == "收藏库" ? ["search"] + requested : ["tasks"]) + [String(offset)]
       let result = try await commands.run(args, bridge: true)
-      guard !Task.isCancelled, selected == section, requested == filters else { return }
+      guard !Task.isCancelled, selected == section, requested == filters, offset == history.last else { return }
       guard let rows = result as? [[String: Any]] else {
         throw FetchyFailure(text: "收藏服务返回了无法读取的结果。")
       }
+      let argument = selected == "收藏库" ? ["search"] + requested : ["tasks"]
+      let count = rows.count
+      let probe = count > 0 ? try await commands.run(argument + [String(offset + count)], bridge: true) as? [[String: Any]] : nil
+      guard !Task.isCancelled, selected == section, requested == filters, offset == history.last else { return }
+      nextPage = probe?.isEmpty == false ? offset + count : nil
       if selected == "收藏库" {
         items = rows.compactMap(LibraryItem.init)
       } else {

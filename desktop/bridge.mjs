@@ -1,13 +1,21 @@
 import {stat, readFile} from 'node:fs/promises';
 import path from 'node:path';
+import {entryIdentity} from '../src/library/content.mjs';
 
 async function readManifest(filename) {
 	if (!filename || (await stat(filename)).size > 8 * 1024 * 1024) throw new Error();
 	const manifest = JSON.parse(await readFile(filename, 'utf8'));
 	if (manifest.version !== 1) throw new Error();
 	const entries = [...(manifest.items ?? [])];
-	for (const folder of manifest.folders ?? [])
-		for (const page of folder.pages ?? []) entries.push(...page.items);
+	for (const folder of manifest.folders ?? []) {
+		const pages = folder.items !== undefined ? [{items: folder.items}] : (folder.pages ?? []);
+		for (const page of pages) {
+			for (const entry of page.items) {
+				entry.platform ??= folder.platform;
+				entries.push(entry);
+			}
+		}
+	}
 	if (entries.length > 5000) throw new Error();
 	return {manifest, entries};
 }
@@ -18,11 +26,14 @@ try {
 	let result;
 	switch (command) {
 		case 'tasks':
-			result = await requestNative('libraryTasks', {});
+			result = await requestNative('libraryTasks', {offset: Number(args[0]) || 0});
 			break;
 		case 'search': {
-			const [query, platform, folder, topic] = args;
-			result = await requestNative('librarySearch', {filters: {query, platform, folder, topic}});
+			const [query, platform, folder, topic, offset] = args;
+			result = await requestNative('librarySearch', {
+				filters: {query, platform, folder, topic},
+				offset: Number(offset) || 0,
+			});
 			break;
 		}
 		case 'retry':
@@ -36,7 +47,7 @@ try {
 			const items = new Map();
 			for (const entry of entries) {
 				if (typeof entry.platform !== 'string' || typeof entry.id !== 'string') throw new Error();
-				const key = entry.platform + ':' + entry.id;
+				const {key} = entryIdentity(entry);
 				if (!items.has(key))
 					items.set(key, {
 						key,
@@ -63,7 +74,10 @@ try {
 				const task = await prepareLibraryTask(manifest, {sourceDir: path.dirname(file), selected});
 				result = await requestNative('libraryResume', {id: task.id});
 			} else {
-				result = await requestNative('libraryStart', {manifest, selected});
+				const {submitArchive} = await import('../extension/archive-rpc.mjs');
+				result = await submitArchive(manifest, selected, null, (method, params) =>
+					requestNative(method, params, {timeoutMs: 15 * 60_000}),
+				);
 			}
 			break;
 		}
