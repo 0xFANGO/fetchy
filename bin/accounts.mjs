@@ -101,10 +101,17 @@ export async function readSiteCookies(account) {
 	} catch {
 		return [];
 	}
-	const result = await runProcess(binary, ['cookies', account.profile, account.hosts.join(',')], {
-		timeoutMs: 15000,
-		maxOutputBytes: 4 * 1024 * 1024,
-	});
+	let result;
+	try {
+		// Longer than the app's own 15 s limit, so its answer arrives first.
+		result = await runProcess(binary, ['cookies', account.profile, account.hosts.join(',')], {
+			timeoutMs: 20000,
+			maxOutputBytes: 4 * 1024 * 1024,
+		});
+	} catch {
+		// Without the app's answer the request goes ahead signed out.
+		return [];
+	}
 	let payload;
 	try {
 		payload = JSON.parse(result.stdout);
@@ -138,31 +145,44 @@ function sessionDigest(account, cookies) {
  * logged_in: a session cookie is present and has not failed a download.
  * expired: the site signed in before, but the session is gone or was rejected.
  */
-export async function accountStatus(account, {readCookies = readSiteCookies} = {}) {
-	const cookies = await readCookies(account);
-	const current = sessionDigest(account, cookies);
-	const state = await readState();
-	const seen = state.seen[account.profile] ?? {};
-	let status = 'logged_out';
-	if (current && current !== seen.rejected) status = 'logged_in';
-	else if (current || seen.loggedIn) status = 'expired';
-	if (status === 'logged_in' && seen.loggedIn !== current) {
-		state.seen[account.profile] = {loggedIn: current};
-		await saveState(state);
-	}
-	return {
-		site: account.site,
-		label: account.label,
-		url: account.url,
-		status,
-		verified: Boolean(account.session?.length),
-	};
+function computeStatus(current, seen = {}) {
+	if (current && current !== seen.rejected) return 'logged_in';
+	if (current || seen.loggedIn) return 'expired';
+	return 'logged_out';
 }
+const statusRow = (account, status) => ({
+	site: account.site,
+	label: account.label,
+	url: account.url,
+	status,
+	verified: Boolean(account.session?.length),
+});
 
-export async function listAccounts(options = {}) {
+export async function accountStatus(account, {readCookies = readSiteCookies} = {}) {
+	return (await statuses([account], readCookies))[0];
+}
+export async function listAccounts({readCookies = readSiteCookies} = {}) {
 	const state = await readState();
-	const rows = [...KNOWN_SITES, ...state.custom].map(describe);
-	return Promise.all(rows.map((row) => accountStatus(row, options)));
+	return statuses([...KNOWN_SITES, ...state.custom].map(describe), readCookies);
+}
+// Cookies are read in parallel; the state file is then read and written once, with no wait between.
+async function statuses(accounts, readCookies) {
+	const digests = await Promise.all(
+		accounts.map(async (account) => sessionDigest(account, await readCookies(account))),
+	);
+	const state = await readState();
+	let changed = false;
+	const rows = accounts.map((account, i) => {
+		const seen = state.seen[account.profile];
+		const status = computeStatus(digests[i], seen);
+		if (status === 'logged_in' && seen?.loggedIn !== digests[i]) {
+			state.seen[account.profile] = {loggedIn: digests[i]};
+			changed = true;
+		}
+		return statusRow(account, status);
+	});
+	if (changed) await saveState(state);
+	return rows;
 }
 
 /** After logout the site shows as signed out, not expired. */
@@ -233,7 +253,9 @@ export async function withSiteCookies(input, action, {readCookies = readSiteCook
 		await writeFile(file, netscapeCookies(cookies), {mode: 0o600});
 		return await action(file);
 	} catch (error) {
-		if (['auth_required', 'session_required', 'login_required'].includes(error.code)) {
+		// Only a refused sign-in marks the site expired. Paid or members-only content
+		// (premium_required) and a missing browser session (session_required) do not.
+		if (['auth_required', 'login_required'].includes(error.code)) {
 			await markExpired(account, {readCookies: async () => cookies});
 			throw new EngineError(
 				'login_expired',

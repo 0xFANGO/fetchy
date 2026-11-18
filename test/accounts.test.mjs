@@ -105,3 +105,39 @@ test('the downloader gets a cookies file only while it runs and only when signed
 	});
 	assert.equal(status.status, 'expired');
 });
+
+test('every Zhihu host shares the one Zhihu sign-in', async () => {
+	const zhihu = await accounts.findAccount('zhihu');
+	for (const link of ['https://zhuanlan.zhihu.com/p/1', 'https://zhihu.com/question/1/answer/2'])
+		assert.equal((await accounts.findAccount(link)).profile, zhihu.profile);
+	assert.deepEqual(zhihu.hosts.sort(), ['www.zhihu.com', 'zhihu.com', 'zhuanlan.zhihu.com'].sort());
+});
+
+test('paid content and a missing browser session do not mark a sign-in expired', async () => {
+	const bilibili = await accounts.findAccount('bilibili');
+	await accounts.forgetAccount(bilibili);
+	const readCookies = async () => session('four');
+	for (const code of ['premium_required', 'session_required'])
+		await assert.rejects(
+			accounts.withSiteCookies(
+				'https://www.bilibili.com/video/BV1',
+				async () => {
+					throw Object.assign(new Error(), {code});
+				},
+				{readCookies},
+			),
+			{code},
+		);
+	assert.equal((await accounts.accountStatus(bilibili, {readCookies})).status, 'logged_in');
+});
+
+test('listing every site records each sign-in once, without losing concurrent updates', async () => {
+	const list = await accounts.listAccounts({
+		readCookies: async (account) => [
+			{name: account.session[0] ?? 'any', value: account.site, domain: account.hosts[0], path: '/'},
+		],
+	});
+	assert.ok(list.filter((row) => row.verified).every((row) => row.status === 'logged_in'));
+	const after = await accounts.listAccounts({readCookies: async () => []});
+	assert.ok(after.filter((row) => row.verified).every((row) => row.status === 'expired'));
+});

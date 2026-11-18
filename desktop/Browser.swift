@@ -110,7 +110,14 @@ private func json(_ value: Any) -> Data? {
     observations = [
       view.observe(\.url, options: [.initial, .new]) { [weak self] view, _ in
         let value = view.url?.absoluteString ?? ""
-        DispatchQueue.main.async { self?.address = value }
+        let loading = view.isLoading
+        DispatchQueue.main.async {
+          guard let self else { return }
+          let changed = self.address != value
+          self.address = value
+          // A single-page site changes the address without loading; a load ends in didFinish.
+          if changed && !loading { self.panel.pageChanged() }
+        }
       },
       view.observe(\.canGoBack, options: [.initial, .new]) { [weak self] view, _ in
         let value = view.canGoBack
@@ -130,6 +137,7 @@ private func json(_ value: Any) -> Data? {
     panel.reset()
   }
 
+  func stop() { webView?.stopLoading() }
   func back() { webView?.goBack() }
   func forward() { webView?.goForward() }
   func reload() { webView?.reload() }
@@ -242,16 +250,16 @@ struct BrowserPane: View {
           .disabled(!browser.canGoBack).help("后退")
         Button(action: browser.forward) { Image(systemName: "chevron.right") }
           .disabled(!browser.canGoForward).help("前进")
-        Button(action: browser.reload) {
+        Button(action: { browser.isLoading ? browser.stop() : browser.reload() }) {
           Image(systemName: browser.isLoading ? "xmark" : "arrow.clockwise")
-        }.disabled(browser.webView == nil).help("刷新")
+        }.disabled(browser.webView == nil).help(browser.isLoading ? "停止" : "刷新")
         TextField("输入网址，例如 www.xiaohongshu.com", text: $typed)
           .textFieldStyle(.roundedBorder).focused($editing)
           .onSubmit { browser.go(typed) }
         signInBadge
       }
       .buttonStyle(.borderless).padding(10)
-      .onChange(of: browser.address) { _, value in if !editing { typed = value } }
+      .onChange(of: browser.address, initial: true) { _, value in if !editing { typed = value } }
       if !browser.notice.isEmpty {
         Text(browser.notice).font(.callout).foregroundStyle(.secondary)
           .frame(maxWidth: .infinity, alignment: .leading).padding(.horizontal, 12)
@@ -354,8 +362,18 @@ struct PanelItem: Identifiable {
   private func inspect(_ mine: Int) async {
     guard let browser, let url = browser.webView?.url, url.scheme == "https" else { return }
     origin = (url.scheme ?? "") + "://" + (url.host ?? "")
-    guard let snap = try? await browser.runTool("capture") as? [String: Any], mine == generation
-    else { return }
+    // Like the extension, wait for pages that render their content after loading.
+    var found: [String: Any]?
+    for _ in 0..<10 {
+      found = try? await browser.runTool("capture") as? [String: Any]
+      guard mine == generation else { return }
+      let reason = found?["reason"] as? String ?? ""
+      guard found?["type"] as? String == "unsupported",
+        ["source_not_ready", "page_access"].contains(reason)
+      else { break }
+      try? await Task.sleep(nanoseconds: 350_000_000)
+    }
+    guard let snap = found else { return }
     switch snap["type"] as? String {
     case "post":
       guard let entry = snap["entry"] as? [String: Any] else { return }
@@ -378,7 +396,8 @@ struct PanelItem: Identifiable {
       kind = "collection"
       _ = merge(snap)
       selected = Set(items.map(\.id))
-      startSync(mine)
+      // Bilibili pages come from its API, not from the page; a sync would rewind them.
+      if provider != "bilibili" { startSync(mine) }
     case "folders":
       kind = "folders"
       folders = (snap["folders"] as? [[String: Any]] ?? []).compactMap { row in
@@ -463,20 +482,21 @@ struct PanelItem: Identifiable {
     let before = items.count
     do {
       if provider == "bilibili" {
-        guard let page = nextPage else {
+        guard let pageNumber = nextPage else {
           reason = "count_mismatch"
           return
         }
         let result =
-          try await browser.runTool("bilibili", ["folderId": folder["id"] as? String ?? "", "page": page])
+          try await browser.runTool(
+            "bilibili", ["folderId": folder["id"] as? String ?? "", "page": pageNumber])
           as? [String: Any] ?? [:]
         if let error = result["error"] as? String {
           reason = error
           return
         }
-        var page = result
-        page["provider"] = "bilibili"
-        _ = merge(page)
+        var loaded = result
+        loaded["provider"] = "bilibili"
+        _ = merge(loaded)
       } else if let next = nextUrl {
         guard let url = URL(string: next), url.scheme == "https",
           (url.scheme ?? "") + "://" + (url.host ?? "") == origin
@@ -597,9 +617,10 @@ struct PanelItem: Identifiable {
           "userAgent": read["userAgent"] as? String ?? "",
         ]
       }
-      for attempt in 0..<3 {
+      // The worker holds a limited number of read pages; wait for it like the extension does.
+      for attempt in 0..<30 {
         if (try? await run(["page"], payload: page)) != nil { break }
-        if attempt < 2 { try? await Task.sleep(nanoseconds: 2_000_000_000) }
+        if attempt < 29 { try? await Task.sleep(nanoseconds: 2_000_000_000) }
       }
       notice = "已建立任务，正在读取原帖 \(index + 1) / \(keys.count)…"
     }

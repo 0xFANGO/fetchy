@@ -7,6 +7,8 @@ import WebKit
 // Every other launch shows the one Fetchy window.
 let hiddenModes: Set<String> = ["logout", "capture", "post", "cookies", "notify"]
 let openRequest = Notification.Name("app.fetchy.desktop.open")
+let openAcknowledged = Notification.Name("app.fetchy.desktop.opened")
+let siteLoggedOut = Notification.Name("app.fetchy.desktop.logout")
 /// `--data-dir <dir>` from `fetchy login`/`browse` under FETCHY_DATA_DIR; Launch Services drops the variable.
 var dataDirectoryOverride: String?
 
@@ -50,6 +52,9 @@ var dataDirectoryOverride: String?
     // `fetchy login` and `fetchy browse` reach a running window through this notification.
     DistributedNotificationCenter.default().addObserver(
       self, selector: #selector(receiveOpen(_:)), name: openRequest, object: nil)
+    // `fetchy logout` clears the store in another process; this window drops its copy too.
+    DistributedNotificationCenter.default().addObserver(
+      self, selector: #selector(receiveLogout(_:)), name: siteLoggedOut, object: nil)
     if route.count == 2, ["login", "browse"].contains(route[0]) { self.open(route[0], route[1]) }
   }
 
@@ -60,6 +65,23 @@ var dataDirectoryOverride: String?
     self.open(command, url)
     window?.makeKeyAndOrderFront(nil)
     NSApp.activate(ignoringOtherApps: true)
+    if let nonce = info["nonce"] as? String {
+      DistributedNotificationCenter.default().postNotificationName(
+        openAcknowledged, object: nonce, userInfo: nil, deliverImmediately: true)
+    }
+  }
+
+  @objc func receiveLogout(_ notification: Notification) {
+    guard let raw = notification.object as? String, let profile = UUID(uuidString: raw) else {
+      return
+    }
+    WKWebsiteDataStore(forIdentifier: profile).removeData(
+      ofTypes: WKWebsiteDataStore.allWebsiteDataTypes(), modifiedSince: .distantPast
+    ) { [weak self] in
+      guard let browser = self?.state.browser, browser.site?.profile == profile else { return }
+      browser.reload()
+      browser.refreshSignIn()
+    }
   }
 
   func open(_ command: String, _ url: String) {
@@ -71,10 +93,20 @@ var dataDirectoryOverride: String?
       guard args.count == 3 else {
         BrowserSession.respond(["ok": false, "error": "invalid_options"], 1)
       }
+      // A running window acknowledges with the nonce; hidden helpers never do.
+      let nonce = UUID().uuidString
+      _ = DistributedNotificationCenter.default().addObserver(
+        forName: openAcknowledged, object: nonce, queue: .main
+      ) { _ in
+        // Delivered on the main queue; the reply touches main-actor state.
+        MainActor.assumeIsolated { BrowserSession.respond(["ok": true, "delivered": true]) }
+      }
       DistributedNotificationCenter.default().postNotificationName(
-        openRequest, object: nil, userInfo: ["command": args[1], "url": args[2]],
+        openRequest, object: nil, userInfo: ["command": args[1], "url": args[2], "nonce": nonce],
         deliverImmediately: true)
-      DispatchQueue.main.asyncAfter(deadline: .now() + 0.3) { BrowserSession.respond(["ok": true]) }
+      DispatchQueue.main.asyncAfter(deadline: .now() + 1.5) {
+        BrowserSession.respond(["ok": true, "delivered": false])
+      }
       return
     }
     guard args.count >= 2, let id = UUID(uuidString: args[1]) else {
@@ -84,6 +116,8 @@ var dataDirectoryOverride: String?
       DistributedNotificationCenter.default().postNotificationName(
         Notification.Name("app.fetchy.desktop.logout." + id.uuidString), object: nil,
         userInfo: nil, deliverImmediately: true)
+      DistributedNotificationCenter.default().postNotificationName(
+        siteLoggedOut, object: id.uuidString, userInfo: nil, deliverImmediately: true)
       let store = WKWebsiteDataStore(forIdentifier: id)
       store.removeData(
         ofTypes: WKWebsiteDataStore.allWebsiteDataTypes(), modifiedSince: .distantPast
@@ -131,7 +165,8 @@ var dataDirectoryOverride: String?
           "expires": cookie.expiresDate?.timeIntervalSince1970 ?? 0,
         ]
       }
-      BrowserSession.respond(["ok": true, "cookies": rows])
+      // WebKit calls back on the main thread.
+      MainActor.assumeIsolated { BrowserSession.respond(["ok": true, "cookies": rows]) }
     }
   }
 

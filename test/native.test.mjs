@@ -52,6 +52,8 @@ async function fixture(t, options = {}) {
 			...options.core,
 		},
 		runProcess: options.runProcess ?? (async () => ({code: 0, stdout: ''})),
+		// No desktop app here: downloads run signed out, without extra async steps.
+		withSiteCookies: options.withSiteCookies ?? ((_input, action) => action()),
 	}).initialize();
 	t.after(async () => {
 		await controller.close();
@@ -881,4 +883,29 @@ test('the handshake answers without probing tools; dependencies are a separate r
 	const dependencies = await controller.request('dependencies');
 	assert.equal(dependencies.ffmpeg.available, true);
 	assert.equal(runs.length, 3);
+});
+
+test('a video download borrows the site sign-in only when the page did not supply the media', async (t) => {
+	const seen = [];
+	const lent = [];
+	const {controller} = await fixture(t, {
+		withSiteCookies: (input, action) => {
+			lent.push(input);
+			return action('/tmp/lent-cookies.txt');
+		},
+		core: {
+			downloadVideo: async (_input, settings) => {
+				seen.push(settings.cookiesFile);
+				return output(settings.outputDir);
+			},
+		},
+	});
+	await controller.request('start', {
+		input: 'https://youtu.be/test-video',
+		taskId: 'job-c',
+		metadata,
+	});
+	await controller.downloadPromise;
+	assert.deepEqual(lent, ['https://youtu.be/test-video']);
+	assert.deepEqual(seen, ['/tmp/lent-cookies.txt']);
 });

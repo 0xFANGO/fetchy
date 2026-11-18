@@ -64,11 +64,9 @@ export function classifyEngineError(text = '') {
 		return new EngineError('session_required', '平台需要有效浏览器会话，请使用 browser 引擎。');
 	if (/captcha|verify you|verification|not a bot|sign in to confirm|验证码|验证/i.test(text))
 		return new EngineError('verification_required', '平台要求验证，请在浏览器完成验证后重试。');
-	if (
-		/login|log in|sign in|authentication|access restricted|cookies|members.only|premium|purchase|会员|登录/i.test(
-			text,
-		)
-	)
+	if (/members.only|premium|purchase|会员/i.test(text))
+		return new EngineError('premium_required', '该内容需要会员或购买。');
+	if (/login|log in|sign in|authentication|access restricted|cookies|登录/i.test(text))
 		return new EngineError('auth_required', '该内容需要有效的登录或访问权限。');
 	if (
 		/ffmpeg.*not (?:installed|found)|ffprobe.*not (?:installed|found)|no supported javascript runtime|EJS.*not|No such file or directory/i.test(
@@ -238,6 +236,23 @@ function assertIdentity(target, info, expectedSourceId) {
 	) {
 		throw new EngineError('wrong_video', '解析结果与目标视频或分 P 不一致，已停止下载。');
 	}
+}
+
+function withoutCookies(value) {
+	if (Array.isArray(value)) return value.map(withoutCookies);
+	if (!value || typeof value !== 'object') return value;
+	return Object.fromEntries(
+		Object.entries(value)
+			.filter(([key]) => key !== 'cookies')
+			.map(([key, inner]) => [
+				key,
+				key === 'http_headers' && inner && typeof inner === 'object'
+					? Object.fromEntries(
+							Object.entries(inner).filter(([name]) => name.toLowerCase() !== 'cookie'),
+						)
+					: withoutCookies(inner),
+			]),
+	);
 }
 
 async function metadata(target, options, kind) {
@@ -477,9 +492,10 @@ export async function downloadWithYtDlp(target, options = {}, kind = 'video') {
 		try {
 			const receipt = path.join(directory, 'result.json');
 			// Download from the extracted info instead of extracting the page a second time.
-			// It holds playback URLs, so it lives only in this private task directory.
+			// It holds playback URLs, so it lives only in this private task directory. yt-dlp
+			// copies lent cookies into it; they are dropped, since --cookies supplies them again.
 			const infoFile = path.join(directory, 'info.json');
-			await writeFile(infoFile, JSON.stringify(info), {mode: 0o600});
+			await writeFile(infoFile, JSON.stringify(withoutCookies(info)), {mode: 0o600});
 			const identityFields = siteForPlatform(target.platform)?.receiptFields ?? [];
 			const fields = [
 				'filepath',

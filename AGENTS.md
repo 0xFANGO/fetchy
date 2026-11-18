@@ -65,10 +65,13 @@ src/index.mjs  public API, engine routing, bounded fallbacks
 - The extension never opens tabs to read pages (only the help page); a test
   asserts it. It reads the open tab and sends lists, page state and media
   addresses; the native worker downloads every file.
-- Post pages are parsed only in `src/library/post-pages.mjs`, whether the
-  extension read them or the native worker fetched them with the desktop
-  sign-in. Site cookies leave the desktop app only through `bin/accounts.mjs`,
-  for one site's request.
+- Post pages read for batch entries are parsed only in
+  `src/library/post-pages.mjs`, whether the extension sent them
+  (`libraryPage`) or the native worker fetched them with the desktop sign-in.
+  Saving the open post from the panel or the desktop browser uses the in-tab
+  capture in `extension/capture-page.mjs`. Site cookies leave the desktop app
+  only through `bin/accounts.mjs`, for one site's request, and are dropped on
+  any redirect to another origin.
 - The browser engine never opens pages. It takes `options.pageMedia` from the
   extension and re-validates identity and CDN hosts before downloading.
 - Signed media URLs in `pageMedia` live only in memory in `native/`.

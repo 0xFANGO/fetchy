@@ -278,6 +278,23 @@ test('a bare link is saved like fetchy get, and unknown words are not treated as
 	assert.equal(JSON.parse(folders.stderr).error.code, 'unsupported_platform');
 });
 
+test('a one-line -i file reports its failure as a JSON line, like batch', async (t) => {
+	const dir = await mkdtemp(path.join(tmpdir(), 'fetchy-cli-'));
+	t.after(() => rm(dir, {recursive: true, force: true}));
+	const list = path.join(dir, 'links.txt');
+	await writeFile(list, 'http://user:pw@example.com/a\n');
+	const result = await runProcess(process.execPath, ['bin/fetchy.mjs', 'get', '-i', list]);
+	assert.equal(result.code, 1);
+	assert.equal(JSON.parse(result.stdout).error.code, 'invalid_url');
+	const audio = await runProcess(process.execPath, [
+		'bin/fetchy.mjs',
+		'get',
+		'https://example.org/page',
+		'--audio',
+	]);
+	assert.equal(JSON.parse(audio.stderr).error.code, 'invalid_arguments');
+});
+
 test('audio from a video site is allowed only when the caller asks for it', async () => {
 	await assert.rejects(resolveAudio('https://streamable.com/dnd1', {ytDlpPath: '/not-installed'}), {
 		code: 'unsupported_content',

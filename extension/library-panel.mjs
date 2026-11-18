@@ -100,8 +100,10 @@ function setPage(kind) {
 
 async function permit() {
 	const optional = chrome.runtime.getManifest().optional_host_permissions || [];
-	const origins =
-		origin === 'https://www.zhihu.com' || origin === 'https://zhuanlan.zhihu.com'
+	// Without access Chrome hides the tab's address; then ask for the sites Fetchy reads.
+	const origins = !origin
+		? optional
+		: origin === 'https://www.zhihu.com' || origin === 'https://zhuanlan.zhihu.com'
 			? optional.filter((s) => s.includes('zhihu.com/'))
 			: optional.filter((s) => s === origin + '/*');
 	if (!origins.length) return false;
@@ -259,6 +261,12 @@ async function loadPage() {
 	} catch {
 		origin = null;
 	}
+	if (Number.isInteger(tabId) && !tab?.url) {
+		setPage('none');
+		notice(pageErrors.page_access);
+		show('grant-site', true);
+		return;
+	}
 	if (!Number.isInteger(tabId) || !origin?.startsWith('https:')) {
 		setPage('none');
 		return;
@@ -315,10 +323,13 @@ function scheduleSync(mine) {
 async function readStep(options) {
 	reading = true;
 	renderCollection();
+	const current = collection;
 	try {
-		const before = collection.items.size;
-		await readMore(tabId, collection, origin, options);
-		for (const item of [...collection.items.values()].slice(before)) selected.add(key(item));
+		const before = current.items.size;
+		await readMore(tabId, current, origin, options);
+		// The tab may have changed meanwhile; then this read belongs to nothing on screen.
+		if (current !== collection) return;
+		for (const item of [...current.items.values()].slice(before)) selected.add(key(item));
 	} finally {
 		reading = false;
 		renderCollection();
@@ -326,13 +337,14 @@ async function readStep(options) {
 }
 
 async function saveSelected() {
-	const keys = [...selected].filter((k) => collection.items.has(k));
-	const manifest = {version: 1, folders: [manifestFolder(collection)]};
-	notice('正在建立保存任务…');
-	const task = await submitArchive(manifest, keys, null, libraryRpc, {feed: true});
-	// The background worker reads each post page from this tab and hands it over.
+	// Everything the save needs is taken now: the panel may switch pages while the task starts.
+	const current = collection,
+		sourceTab = tabId,
+		sourceOrigin = origin;
+	const keys = [...selected].filter((k) => current.items.has(k));
+	const manifest = {version: 1, folders: [manifestFolder(current)]};
 	const items = keys
-		.map((k) => collection.items.get(k))
+		.map((k) => current.items.get(k))
 		// Only rows without text or files are read from their post page (see needsDetails).
 		.filter((item) => item.kind !== 'video' && !item.body && !item.attachments?.length)
 		.map((item) => ({
@@ -340,7 +352,10 @@ async function saveSelected() {
 			platform: item.platform,
 			url: item.visitUrl || item.sourceUrl,
 		}));
-	libraryNotify('feed', {taskId: task.id, tabId, origin, items});
+	notice('正在建立保存任务…');
+	const task = await submitArchive(manifest, keys, null, libraryRpc, {feed: true});
+	// The background worker reads each post page from the source tab and hands it over.
+	libraryNotify('feed', {taskId: task.id, tabId: sourceTab, origin: sourceOrigin, items});
 	notice('');
 	watchTask(task.id);
 }
@@ -365,7 +380,15 @@ async function refreshTask() {
 	const id = taskId;
 	let task;
 	try {
-		task = await libraryRpc('libraryTask', {id});
+		// Only problem entries, every page of them, so a failure at entry 300 still shows.
+		task = await libraryRpc('libraryTask', {id, problems: true});
+		let items = task.items || [];
+		while (items.length < (task.totalItems || 0)) {
+			const next = await libraryRpc('libraryTask', {id, problems: true, offset: items.length});
+			if (!next.items?.length) break;
+			items = items.concat(next.items);
+		}
+		task.items = items;
 	} catch {
 		taskTimer = setTimeout(refreshTask, 4000);
 		return;
@@ -404,6 +427,7 @@ async function refreshTask() {
 				);
 				const retry = node('button', '重试', 'text-button');
 				retry.type = 'button';
+				retry.hidden = ['running', 'queued'].includes(task.status);
 				retry.addEventListener('click', () =>
 					act(async () => {
 						await libraryRpc('libraryRetry', {id, selected: [i.key]});
@@ -458,9 +482,20 @@ byId('task-retry').addEventListener('click', () =>
 	}),
 );
 
-chrome.tabs.onActivated.addListener(() => void loadPage());
+// The panel belongs to one window and follows only that window's tabs.
+let panelWindow = null;
+chrome.windows
+	?.getCurrent()
+	.then((w) => (panelWindow = w.id))
+	.catch(() => {});
+chrome.tabs.onActivated.addListener(({windowId}) => {
+	if (panelWindow !== null && windowId !== panelWindow) return;
+	void loadPage();
+});
+// Single-page sites change the address without a new load.
 chrome.tabs.onUpdated.addListener((id, change) => {
-	if (id !== tabId || change.status !== 'complete' || reading) return;
+	if (id !== tabId || reading || autoReading) return;
+	if (change.status !== 'complete' && !change.url) return;
 	void loadPage();
 });
 libraryRpc('libraryTasks')

@@ -495,8 +495,17 @@ struct LibraryPane: View {
         let open = rows.compactMap(TaskSummary.init).filter(\.open)
         var details: [String: [FailureRow]] = [:]
         for task in open.prefix(20) {
-          let detail = try await commands.run(["task", task.id], bridge: true) as? [String: Any]
-          details[task.id] = (detail?["items"] as? [[String: Any]] ?? []).compactMap { item in
+          // Only problem entries, every page of them, so a failure at entry 300 still shows.
+          var rows: [[String: Any]] = []
+          while true {
+            let detail =
+              try await commands.run(["task", task.id, String(rows.count), "problems"], bridge: true)
+              as? [String: Any]
+            let page = detail?["items"] as? [[String: Any]] ?? []
+            rows += page
+            if page.isEmpty || rows.count >= (detail?["totalItems"] as? Int ?? 0) { break }
+          }
+          details[task.id] = rows.compactMap { item in
             guard let key = item["key"] as? String, let status = item["status"] as? String,
               ["failed", "partial", "pending"].contains(status)
             else { return nil }

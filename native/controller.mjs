@@ -92,6 +92,11 @@ export class NativeController extends EventEmitter {
 		this.core = options.core ?? {resolveVideo, downloadVideo};
 		this.execute = options.runProcess ?? runProcess;
 		this.engineOptions = options.engineOptions ?? {};
+		// The desktop sign-in for a site, lent to yt-dlp for that site's download only.
+		this.withSiteCookies =
+			options.withSiteCookies ??
+			(async (input, action) =>
+				(await import('../bin/accounts.mjs')).withSiteCookies(input, action));
 		this.settings = {outputDir: this.defaultDirectory};
 		this.task = null;
 		// Signed media URLs extracted by the extension live here only; they are
@@ -372,9 +377,10 @@ export class NativeController extends EventEmitter {
 	}
 	async download(task, controller, refreshOnValidationFailure = false) {
 		try {
-			const attempt = () =>
+			const run = (cookiesFile) =>
 				this.core.downloadVideo(task.input, {
 					...this.engineOptions,
+					...(cookiesFile ? {cookiesFile} : {}),
 					pageMedia: this.taskPageMedia ?? undefined,
 					outputDir: task.outputDir,
 					signal: controller.signal,
@@ -399,6 +405,11 @@ export class NativeController extends EventEmitter {
 						this.broadcast();
 					},
 				});
+			// Page media is read in the browser's own session; only yt-dlp downloads take cookies.
+			const attempt = () =>
+				this.taskPageMedia || this.engineOptions.cookiesFile
+					? run()
+					: this.withSiteCookies(task.input, run);
 			let result;
 			try {
 				result = await attempt();

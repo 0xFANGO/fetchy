@@ -6,6 +6,7 @@ import {
 	libraryRoot,
 	listLibraryTasks,
 	listRecoverableNativeTasks,
+	markLibraryTaskQueued,
 	prepareLibraryTask,
 	runLibraryTask,
 	searchLibrary,
@@ -225,6 +226,8 @@ export class LibraryBridge {
 		this.feeders = new Map();
 		// Post links that carry a viewer token stay in memory only.
 		this.visits = new Map();
+		// Listing media URLs per task, kept in memory so a retry in this session can fetch them again.
+		this.transfers = new Map();
 		this.sessionApi = session;
 	}
 	async session() {
@@ -263,6 +266,8 @@ export class LibraryBridge {
 		return runLibraryTask(task.id, {
 			...options,
 			readDetails: (item) => this.readDetails(task.id, item, options.signal),
+			// Whatever the worker did with an entry, a page fed for it is no longer needed.
+			onItemDone: (key) => this.pages.delete(task.id + '\n' + key),
 			withSiteCookies: (url, action) => session.withCookies(url, action),
 			resolveAttachment: pending?.size
 				? (id, kind, item) => {
@@ -285,7 +290,8 @@ export class LibraryBridge {
 				: undefined,
 		});
 	}
-	queue(task, retryFailed, selected, pending) {
+	queue(task, retryFailed, selected, pending = this.transfers.get(task.id)) {
+		if (pending?.size) this.transfers.set(task.id, pending);
 		if (!this.active.has(task.id)) {
 			const work = this.tail.then(() =>
 				this.run(task, {...this.options, retryFailed, selected}, pending),
@@ -309,8 +315,10 @@ export class LibraryBridge {
 			(!skip && (typeof url !== 'string' || typeof html !== 'string' || html.length > PAGE_LIMIT))
 		)
 			fail();
-		if (this.pages.size >= 200) throw new EngineError('busy', '本机仍在处理之前读取的原帖。');
+		// The task already finished or never ran here: nothing will read this page.
+		if (!this.active.has(id)) return {ok: true, skipped: true};
 		this.feeders.set(id, Date.now());
+		if (this.pages.size >= 200) throw new EngineError('busy', '本机仍在处理之前读取的原帖。');
 		const k = id + '\n' + key;
 		if (skip) {
 			this.pages.set(k, {skip: true});
@@ -357,7 +365,12 @@ export class LibraryBridge {
 			case 'libraryFeed':
 				if (typeof params.id !== 'string') fail();
 				if (params.active === true) this.feeders.set(params.id, Date.now());
-				else this.feeders.delete(params.id);
+				else {
+					this.feeders.delete(params.id);
+					if (!this.active.has(params.id))
+						for (const k of this.pages.keys())
+							if (k.startsWith(params.id + '\n')) this.pages.delete(k);
+				}
 				return {ok: true};
 			case 'libraryUploadStart':
 				return this.uploads.start();
@@ -384,10 +397,15 @@ export class LibraryBridge {
 			case 'libraryTask': {
 				const task = await getLibraryTask(params.id, this.options);
 				const offset = Math.max(0, Number(params.offset) || 0);
+				// `problems`: only failed, partial and pending entries, for the panel and the app.
+				const items =
+					params.problems === true
+						? task.items.filter((i) => ['failed', 'partial', 'pending'].includes(i.status))
+						: task.items;
 				return {
 					...summary(task, Math.max(0, Number(params.folderOffset) || 0)),
-					totalItems: task.items?.length ?? 0,
-					items: boundedRows(task.items.slice(offset, offset + 100), 350 * 1024),
+					totalItems: items.length,
+					items: boundedRows(items.slice(offset, offset + 100), 350 * 1024),
 				};
 			}
 			case 'librarySearch': {
@@ -456,7 +474,9 @@ export class LibraryBridge {
 					(!Array.isArray(params.selected) || !params.selected.every((k) => typeof k === 'string'))
 				)
 					fail();
-				return this.queue(task, method === 'libraryRetry', params.selected);
+				if (this.active.has(task.id)) throw new EngineError('busy', '这个任务还在保存中。');
+				await markLibraryTaskQueued(task.id, this.options);
+				return this.queue({...task, status: 'queued'}, method === 'libraryRetry', params.selected);
 			}
 			case 'libraryStart': {
 				this.preparing++;

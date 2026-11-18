@@ -782,3 +782,30 @@ test(
 		}
 	},
 );
+
+test('the reused extraction is written without the cookies yt-dlp copied into it', async (t) => {
+	const keep = path.join(await mkdtemp(path.join(tmpdir(), 'fetchy-info-')), 'seen.json');
+	t.after(() => rm(path.dirname(keep), {recursive: true, force: true}));
+	const info = {
+		...metadata,
+		cookies: 'SESSDATA=secret',
+		formats: metadata.formats.map((f) => ({
+			...f,
+			cookies: 'SESSDATA=secret',
+			http_headers: {Cookie: 'SESSDATA=secret', Referer: 'https://example.org/'},
+		})),
+	};
+	const {options} = await fixture(t, {
+		info,
+		before: `if (args.includes("--load-info-json")) await copyFile(args[args.indexOf("--load-info-json") + 1], ${JSON.stringify(keep)});`,
+	});
+	await downloadWithYtDlp(target, options);
+	const written = await readFile(keep, 'utf8');
+	assert.doesNotMatch(written, /SESSDATA/);
+	assert.match(written, /"Referer":"https:\/\/example\.org\/"/);
+	assert.equal(
+		classifyEngineError('This video is only available to Premium members').code,
+		'premium_required',
+	);
+	assert.equal(classifyEngineError('Please log in to view this video').code, 'auth_required');
+});

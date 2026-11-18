@@ -257,21 +257,34 @@ export const browserHeaders = (userAgent) => ({
 });
 
 /** Read a post page from the native side. `cookie` belongs to this site only. */
-export async function fetchPostPage(item, {url, cookie, userAgent, signal, localOrigin} = {}) {
+export async function fetchPostPage(
+	item,
+	{url, cookie, userAgent, signal, localOrigin, timeoutMs = 60_000} = {},
+) {
 	const headers = browserHeaders(userAgent);
 	if (cookie) headers.cookie = cookie;
-	let response, finalUrl;
+	// One stalled site must not hold the serial native queue.
+	const deadline = AbortSignal.timeout(timeoutMs);
+	const limit = signal ? AbortSignal.any([deadline, signal]) : deadline;
 	try {
-		({response, url: finalUrl} = await openWeb(url || item.sourceUrl, {
-			signal,
+		const {response, url: finalUrl} = await openWeb(url || item.sourceUrl, {
+			signal: limit,
 			localOrigin,
 			headers,
-		}));
+		});
+		const stop = () => response.destroy();
+		limit.addEventListener('abort', stop, {once: true});
+		try {
+			const html = (await readBounded(response, PAGE_LIMIT)).toString('utf8');
+			return parsePostPage(item, html, finalUrl.href, {localOrigin});
+		} finally {
+			limit.removeEventListener('abort', stop);
+		}
 	} catch (error) {
+		signal?.throwIfAborted();
+		if (deadline.aborted) throw problem('timeout', 'The post page did not load in time.');
 		if (error.code === 'auth_required')
 			throw problem('login_required', 'The site asked for sign-in.');
 		throw error;
 	}
-	const html = (await readBounded(response, PAGE_LIMIT)).toString('utf8');
-	return parsePostPage(item, html, finalUrl.href, {localOrigin});
 }

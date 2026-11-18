@@ -6,6 +6,7 @@ import {open, rm} from 'node:fs/promises';
 import {pipeline} from 'node:stream/promises';
 import {Transform} from 'node:stream';
 import {EngineError} from './process.mjs';
+import {sites} from './sites/index.mjs';
 
 const excluded = new BlockList();
 for (const [network, prefix] of [
@@ -33,10 +34,33 @@ for (const [network, prefix] of [
 	excluded.addSubnet(network, prefix, 'ipv6');
 
 // Fake-IP proxies (Clash, Surge and similar) answer every name from 198.18.0.0/15
-// and forward the connection by name. Accept that range only for a DNS answer,
-// never for an address literal in the URL.
+// and forward the connection by name. A name that resolves there could still be a
+// private host, so the range is accepted only for supported sites and their media
+// hosts, and never for an address literal in the URL.
 const fakeIp = new BlockList();
 fakeIp.addSubnet('198.18.0.0', 15, 'ipv4');
+const knownDomains = [
+	...new Set([
+		...sites.flatMap((s) => [...s.hosts, ...(s.shortHosts ?? []), ...(s.thumbnailHosts ?? [])]),
+		'xhscdn.com',
+		'xhsimg.com',
+		'zhimg.com',
+		'zhihu.com',
+		'twimg.com',
+		'douyinvod.com',
+		'zjcdn.com',
+		'bilivideo.com',
+		'bilivideo.cn',
+		'hdslb.com',
+		'googlevideo.com',
+		'cdninstagram.com',
+		'fbcdn.net',
+		'threads.com',
+		'threads.net',
+		'kuaishou.com',
+	]),
+];
+export const knownHost = (host) => knownDomains.some((d) => host === d || host.endsWith('.' + d));
 export function publicAddress({address, family}, resolvedName = false) {
 	if (family === 4)
 		return !excluded.check(address, 'ipv4') || (resolvedName && fakeIp.check(address, 'ipv4'));
@@ -57,6 +81,14 @@ export function explicitLocalOrigin(input, allowLocal) {
 		? url.origin
 		: undefined;
 }
+
+// Cookies and Authorization are dropped whenever a redirect leaves the origin.
+export const withoutCredentials = (headers) =>
+	Object.fromEntries(
+		Object.entries(headers).filter(
+			([name]) => !['cookie', 'authorization'].includes(name.toLowerCase()),
+		),
+	);
 
 // Resolve once and use the vetted address for the connection, including after a redirect.
 export async function openWeb(input, {signal, localOrigin, headers = {}} = {}) {
@@ -81,7 +113,9 @@ export async function openWeb(input, {signal, localOrigin, headers = {}} = {}) {
 		if (
 			!records.length ||
 			!records.every((r) =>
-				local ? ['127.0.0.1', '::1'].includes(r.address) : publicAddress(r, !isIP(host)),
+				local
+					? ['127.0.0.1', '::1'].includes(r.address)
+					: publicAddress(r, !isIP(host) && knownHost(host)),
 			)
 		)
 			throw new EngineError('invalid_url', '此地址不属于允许读取的网络范围。');
@@ -106,7 +140,10 @@ export async function openWeb(input, {signal, localOrigin, headers = {}} = {}) {
 		});
 		if ([301, 302, 303, 307, 308].includes(response.statusCode) && response.headers.location) {
 			response.destroy();
-			url = webUrl(new URL(response.headers.location, url));
+			const next = webUrl(new URL(response.headers.location, url));
+			// A site's sign-in never follows a redirect to another origin or to plain HTTP.
+			if (next.origin !== url.origin) headers = withoutCredentials(headers);
+			url = next;
 			continue;
 		}
 		if (response.statusCode < 200 || response.statusCode >= 300) {

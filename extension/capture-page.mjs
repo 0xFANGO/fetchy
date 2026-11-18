@@ -325,7 +325,12 @@ export function captureArchivePage(allowLoopback = false) {
 					'video.twimg.com',
 				]);
 				// A timeline video plays from a blob; the native worker saves it from the post link.
-				if (query(tweet, 'video')) entry.kind = 'video';
+				if (
+					all(tweet, 'video').some(
+						(v) => !v.closest('aside,nav,footer,[aria-hidden="true"],[data-testid="quoteTweet"]'),
+					)
+				)
+					entry.kind = 'video';
 				entries.push(entry);
 			}
 			const folders = all(primary, 'a[href]')

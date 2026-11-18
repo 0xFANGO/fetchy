@@ -34,6 +34,8 @@ async function targetFor(input, options) {
 }
 async function media(action, target, input, options) {
 	const downloading = action === 'get';
+	if (options.audio && (target.platform === 'web' || target.pageOnly))
+		throw invalid('--audio 只支持已适配平台的链接。');
 	if (target.pageOnly && target.platform === 'instagram' && !(await hasSession(input))) {
 		try {
 			return await (downloading ? downloadWithYtDlp : resolveWithYtDlp)(target, {
@@ -387,7 +389,8 @@ export async function runGetCommand(action, args) {
 					code: known ? e.code : 'engine_error',
 					message: known ? e.message : '无法完成此任务。',
 				};
-				if (inputs.length === 1 && action !== 'batch')
+				// One link on the command line fails as a command; a list (-i) reports each line.
+				if (inputs.length === 1 && !values.input && action !== 'batch')
 					throw new EngineError(error.code, error.message);
 				console.log(JSON.stringify({index: i, sourceUrl: publicUrl(input), error}));
 				process.exitCode = 1;

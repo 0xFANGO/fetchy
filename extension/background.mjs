@@ -1,6 +1,8 @@
 import {usesPageMedia} from '../src/sites/index.mjs';
 import {Controller, activeTask} from './controller.mjs';
 import {normalizeUrl} from '../src/urls.mjs';
+// A service worker cannot load modules at run time; everything it runs is imported here.
+import {readPostPageInTab} from './archive-source.mjs';
 
 const HOST = 'com.fetchy.video_downloader';
 const panels = new Set(),
@@ -240,10 +242,9 @@ const feeding = new Map();
 async function feedTask({taskId, tabId, origin, items}) {
 	if (typeof taskId !== 'string' || !Number.isInteger(tabId) || !Array.isArray(items)) return;
 	if (feeding.has(taskId)) return;
-	feeding.set(taskId, true);
-	const {readPostPageInTab, mayVisit} = await import('./archive-source.mjs');
 	const skip = (key) => rpc('libraryPage', {id: taskId, key, skip: true}).catch(() => {});
 	try {
+		feeding.set(taskId, true);
 		for (const {key, url, platform} of items) {
 			let tab;
 			try {
@@ -251,8 +252,16 @@ async function feedTask({taskId, tabId, origin, items}) {
 			} catch {
 				tab = null;
 			}
-			const sameSite = tab?.url && new URL(tab.url).origin === origin;
-			if (!sameSite || !mayVisit(url, platform, origin)) {
+			// Only same-origin pages: a page-context request elsewhere needs CORS the site does not send.
+			let sameOrigin = false;
+			try {
+				sameOrigin =
+					Boolean(tab?.url) &&
+					new URL(tab.url).origin === origin &&
+					new URL(url).origin === origin &&
+					typeof platform === 'string';
+			} catch {}
+			if (!sameOrigin) {
 				await skip(key);
 				continue;
 			}

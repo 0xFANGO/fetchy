@@ -117,6 +117,8 @@ function mergeInput(old, item) {
 		bodyFormat: body.bodyFormat,
 		bodyComplete: body.bodyComplete,
 		savedAt: item.savedAt || old.savedAt,
+		// Only the latest read's failure explains this save.
+		readError: item.readError,
 		notes: item.notes || old.notes,
 		summary: item.summary || old.summary,
 		translation: item.translation || old.translation,
@@ -437,6 +439,7 @@ async function fillDetails(ctx, item, details, options) {
 			a.error = errorCode(e);
 		}
 	}
+	delete item.readError;
 	Object.assign(item, {
 		kind: details.kind === 'video' ? 'video' : item.kind,
 		title: read.title || item.title,
@@ -451,6 +454,7 @@ async function fillDetails(ctx, item, details, options) {
 }
 function partialReason(record) {
 	return (
+		record.readError ||
 		record.attachments.find((a) => a.error)?.error ||
 		(record.missing.includes('attachments')
 			? 'attachments'
@@ -583,8 +587,9 @@ export async function runLibraryTask(id, options = {}) {
 								options.signal?.throwIfAborted();
 								a.error = errorCode(e);
 							}
-							delete a.pendingAttachment;
+							// The id stays until a file arrives, so a retry in this session can fetch it again.
 							if (file) {
+								delete a.pendingAttachment;
 								a.path = file;
 								delete a.missing;
 								delete a.needsSource;
@@ -600,10 +605,27 @@ export async function runLibraryTask(id, options = {}) {
 							row.key,
 						);
 					}
+					for (const a of item.attachments) delete a.pendingAttachment;
 					const oldRow = db.prepare('SELECT record FROM works WHERE key=?').get(row.key);
 					const old = oldRow && JSON.parse(oldRow.record);
-					if (item.needsDetails && options.readDetails && old?.status !== 'complete')
-						await fillDetails(ctx, item, await options.readDetails(item, {taskId: id}), options);
+					// A row merged with a fuller copy of the same post keeps that copy's text and files.
+					if (
+						item.needsDetails &&
+						!item.body &&
+						!item.attachments.length &&
+						options.readDetails &&
+						old?.status !== 'complete'
+					) {
+						let details;
+						try {
+							details = await options.readDetails(item, {taskId: id, signal: options.signal});
+						} catch (e) {
+							options.signal?.throwIfAborted();
+							// The listing's title and link are still worth keeping; the reason says why.
+							item.readError = errorCode(e);
+						}
+						if (details) await fillDetails(ctx, item, details, options);
+					}
 					delete item.needsDetails;
 					const {record, outcome} = await saveItem(ctx, item, old, options);
 					await renderWork(ctx.root, record);
@@ -626,6 +648,7 @@ export async function runLibraryTask(id, options = {}) {
 						row.key,
 					);
 				}
+				options.onItemDone?.(row.key);
 				await options.onProgress?.(taskResult(ctx, id, false));
 			}
 			if (cfg.selected && cfg.folders.every((f) => f.complete)) {
@@ -660,6 +683,15 @@ export async function runLibraryTask(id, options = {}) {
 export async function importLibrary(manifest, options = {}) {
 	const task = await prepareLibraryTask(manifest, options);
 	return runLibraryTask(task.id, options);
+}
+/** Show a task as waiting while a retry or resume sits in the native queue. */
+export async function markLibraryTaskQueued(id, options = {}) {
+	const ctx = await openLibrary(options);
+	try {
+		ctx.db.prepare("UPDATE tasks SET status='queued' WHERE id=? AND status<>'running'").run(id);
+	} finally {
+		ctx.db.close();
+	}
 }
 export async function getLibraryTask(id, options = {}) {
 	const ctx = await openLibrary(options);

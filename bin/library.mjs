@@ -19,12 +19,16 @@ import {siteCookieHeader, withSiteCookies} from './accounts.mjs';
 
 // A worker in this process reads post pages itself, with that site's desktop sign-in.
 const workerOptions = {
-	readDetails: async (item) =>
-		fetchPostPage(item, {url: item.sourceUrl, cookie: await siteCookieHeader(item.sourceUrl)}),
+	readDetails: async (item, {signal} = {}) =>
+		fetchPostPage(item, {
+			url: item.sourceUrl,
+			signal,
+			cookie: await siteCookieHeader(item.sourceUrl),
+		}),
 	withSiteCookies,
 };
 
-export async function runLibraryCommand(args) {
+export async function runLibraryCommand(args, {signal} = {}) {
 	const {values, positionals} = parseArgs({
 		args,
 		strict: true,
@@ -45,6 +49,7 @@ export async function runLibraryCommand(args) {
 	if (extra.length) throw problem('invalid_arguments', 'Too many arguments for library command.');
 	const options = {
 		...workerOptions,
+		signal,
 		root: values.root,
 		cookiesFile: values['cookies-file'],
 		selected: values.select,
@@ -161,6 +166,19 @@ const brief = ({key, platform, title, author, status, filepath, folders}) => ({
 	filepath,
 });
 
+// Ctrl+C aborts the work instead of exiting at once, so a lent cookies file is still deleted.
+async function cancellable(work) {
+	const controller = new AbortController();
+	const cancel = () => controller.abort();
+	process.once('SIGINT', cancel);
+	try {
+		return await work(controller.signal);
+	} finally {
+		process.removeListener('SIGINT', cancel);
+		if (controller.signal.aborted) process.exitCode = 130;
+	}
+}
+
 /** The short commands on the help's first screen. */
 export async function runShortCommand(action, args) {
 	const [input, ...extra] = args;
@@ -181,7 +199,7 @@ export async function runShortCommand(action, args) {
 				if (!recent) throw problem('not_found', '没有需要重试的任务。');
 				id = recent.id;
 			}
-			await runLibraryCommand(['retry', id]);
+			await cancellable((signal) => runLibraryCommand(['retry', id], {signal}));
 			return;
 		}
 		case 'folders':
@@ -195,8 +213,10 @@ export async function runShortCommand(action, args) {
 						? '命令行目前只能列出 B站收藏夹。其他网站请在浏览器打开收藏夹，用 Fetchy 右侧栏读取。'
 						: '命令行目前只能同步 B站收藏夹。其他网站请在浏览器打开收藏夹，用 Fetchy 右侧栏保存。',
 				);
-			await withSiteCookies('https://www.bilibili.com/', (file) =>
-				runLibraryCommand([action, input, ...(file ? ['--cookies-file', file] : [])]),
+			await cancellable((signal) =>
+				withSiteCookies('https://www.bilibili.com/', (file) =>
+					runLibraryCommand([action, input, ...(file ? ['--cookies-file', file] : [])], {signal}),
+				),
 			);
 			return;
 		}

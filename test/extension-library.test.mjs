@@ -235,3 +235,8 @@ test('the extension opens no tab for reading or saving; only the help page uses 
 		"background.mjs: openHelp: () => chrome.tabs.create({url: chrome.runtime.getURL('help.html')}),",
 	]);
 });
+
+test('the service worker imports everything statically; Chrome forbids import() there', async () => {
+	const source = await readFile(new URL('../extension/background.mjs', import.meta.url), 'utf8');
+	assert.doesNotMatch(source, /\bimport\s*\(/);
+});

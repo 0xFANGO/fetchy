@@ -259,5 +259,10 @@ for (const site of sites) {
 	byId('supported-platforms').append(label);
 }
 
+// The page kind comes from library-panel.mjs after the panel reads the tab.
+new MutationObserver(() => render(latestState)).observe(document.body, {
+	attributes: true,
+	attributeFilter: ['data-page'],
+});
 render();
 connect();

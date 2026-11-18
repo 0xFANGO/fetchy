@@ -16,10 +16,15 @@ const digest = (value) => createHash('sha256').update(value).digest('hex');
 
 // An extractor may support several independent instances or tenant-owned hosts.
 // Only its explicitly registered aliases can share a website data store.
+// Hosts of one service without a video adapter that share one sign-in. The first host
+// names the store, so an existing sign-in on it keeps its profile.
+const sessionAliases = [['www.zhihu.com', 'zhihu.com', 'zhuanlan.zhihu.com']];
 export function browserSessionScope(url) {
 	const secure = url.protocol === 'https:' && !url.port && !url.username && !url.password;
 	const browserOnly = secure && browserOnlySite(url.hostname);
 	if (browserOnly) return {scope: 'https://' + browserOnly.hosts[0], hosts: browserOnly.hosts};
+	const alias = secure && sessionAliases.find((hosts) => hosts.includes(url.hostname));
+	if (alias) return {scope: 'https://' + alias[0], hosts: alias};
 	const site = secure ? siteForHost(url.hostname) : null;
 	const aliases = site ? [...site.hosts, ...(site.shortHosts ?? [])] : [];
 	if (site?.browserProfile !== 'origin' && aliases.includes(url.hostname)) {
@@ -92,26 +97,35 @@ export async function hasSession(input) {
 // notification; a new launch reads it from its arguments.
 async function openInApp(command, url) {
 	const bundle = await appBundle();
-	await runProcess(path.join(bundle, 'Contents/MacOS/Fetchy'), ['notify', command, url], {
-		timeoutMs: 10000,
-	}).catch(() => {});
+	// A running window acknowledges the request. Hidden helper processes of the same app
+	// (cookies, capture) do not, so only then is a new window instance launched.
+	const notified = await runProcess(
+		path.join(bundle, 'Contents/MacOS/Fetchy'),
+		['notify', command, url],
+		{timeoutMs: 10000},
+	).catch(() => null);
+	let delivered = false;
+	try {
+		delivered = JSON.parse(notified?.stdout ?? '').delivered === true;
+	} catch {}
+	if (delivered) return;
 	// Launch Services does not pass this environment on; the app hands it to its own Node calls.
 	const data = process.env.FETCHY_DATA_DIR ? ['--data-dir', dataDirectory()] : [];
 	const started = await runProcess(
 		'/usr/bin/open',
-		['-a', bundle, '--args', command, url, ...data],
-		{
-			timeoutMs: 15000,
-		},
+		['-n', '-a', bundle, '--args', command, url, ...data],
+		{timeoutMs: 15000},
 	);
 	if (started.code !== 0) throw new EngineError('browser_unavailable', '无法启动 Fetchy 桌面端。');
 }
 
 /** Open the site's row in the app's accounts and sign in inside its built-in browser. */
 export async function login(input) {
-	const {addAccount} = await import('./accounts.mjs');
-	const account = await addAccount(input);
+	const {addAccount, findAccount} = await import('./accounts.mjs');
+	const account = await findAccount(input);
 	await openInApp('login', account.url);
+	// Saved only once the app opened, so a failed command leaves no row behind.
+	await addAccount(input);
 	return {opened: true, site: account.site, url: account.url};
 }
 

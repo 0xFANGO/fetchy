@@ -109,7 +109,11 @@ try {
 			});
 			break;
 		case 'task':
-			result = await requestNative('libraryTask', {id: args[0], offset: Number(args[1]) || 0});
+			result = await requestNative('libraryTask', {
+				id: args[0],
+				offset: Number(args[1]) || 0,
+				problems: args[2] === 'problems',
+			});
 			break;
 		case 'site': {
 			// The app opens each site with its own WebKit store; Node owns the site rules.

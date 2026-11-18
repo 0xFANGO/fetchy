@@ -6,9 +6,9 @@ import path from 'node:path';
 import {tmpdir} from 'node:os';
 import {LibraryBridge} from '../native/library-bridge.mjs';
 import {searchLibrary} from '../src/library/index.mjs';
-import {looseJson, parsePostPage} from '../src/library/post-pages.mjs';
+import {fetchPostPage, looseJson, parsePostPage} from '../src/library/post-pages.mjs';
 import {downloadAttachment} from '../src/library/content.mjs';
-import {openWeb, publicAddress} from '../src/public-http.mjs';
+import {knownHost, openWeb, publicAddress, withoutCredentials} from '../src/public-http.mjs';
 
 const gif = Buffer.from('R0lGODlhAQABAIAAAAAAAP///ywAAAAAAQABAAACAUwAOw==', 'base64');
 const ids = ['a'.repeat(24), 'b'.repeat(24), 'c'.repeat(24)];
@@ -119,11 +119,119 @@ test('other sites fall back to an OpenGraph preview marked incomplete', () => {
 	assert.equal(entry.attachments[0].url, 'https://cdn.example/i.jpg');
 });
 
-test('a fake-IP proxy answer is accepted for a host name, never for an address literal', async () => {
+test('a fake-IP proxy answer is accepted only for supported sites and their media hosts', async () => {
 	assert.equal(publicAddress({address: '198.18.0.5', family: 4}, true), true);
 	assert.equal(publicAddress({address: '198.18.0.5', family: 4}, false), false);
 	assert.equal(publicAddress({address: '192.168.1.2', family: 4}, true), false);
+	assert.equal(knownHost('sns-img-qc.xhscdn.com'), true);
+	assert.equal(knownHost('www.bilibili.com'), true);
+	assert.equal(knownHost('192-168-1-1.nip.io'), false);
+	assert.equal(knownHost('evil-xhscdn.com'), false);
 	await assert.rejects(openWeb('https://198.18.0.5/a'), {code: 'invalid_url'});
+});
+
+test('a sign-in cookie follows a same-origin redirect and is dropped for any other origin', async (t) => {
+	const seen = [];
+	const {origin} = await fixture(t, (req, res) => {
+		seen.push(req.headers.cookie);
+		if (req.url === '/same') return res.writeHead(302, {location: '/next'}).end();
+		res.writeHead(200).end('ok');
+	});
+	const {response} = await openWeb(origin + '/same', {
+		localOrigin: origin,
+		headers: {cookie: 'web_session=secret'},
+	});
+	response.destroy();
+	assert.deepEqual(seen, ['web_session=secret', 'web_session=secret']);
+	assert.deepEqual(
+		withoutCredentials({
+			Cookie: 'a=1',
+			authorization: 'x',
+			referer: 'https://www.xiaohongshu.com/',
+		}),
+		{referer: 'https://www.xiaohongshu.com/'},
+	);
+});
+
+test('a post page that never answers times out instead of holding the queue', async (t) => {
+	const {origin} = await fixture(t, () => {});
+	const started = Date.now();
+	await assert.rejects(
+		fetchPostPage(
+			{platform: 'xiaohongshu', id: ids[0], sourceUrl: origin + '/explore/' + ids[0]},
+			{url: origin + '/explore/' + ids[0], localOrigin: origin, timeoutMs: 200},
+		),
+		{code: 'timeout'},
+	);
+	assert.ok(Date.now() - started < 5000);
+});
+
+test('a bare row merged with a full copy of the same post keeps the full text', async (t) => {
+	const {dir} = await fixture(t, (_req, res) => res.writeHead(404).end());
+	let reads = 0;
+	const bridge = new LibraryBridge(dir, {
+		session: {cookieHeader: async () => '', withCookies: (_url, action) => action()},
+	});
+	bridge.readDetails = async () => {
+		reads++;
+		return {title: '', body: '', attachments: []};
+	};
+	const full = {...listing(ids[0]), body: 'The full text', bodyComplete: true, visitUrl: undefined};
+	const bare = {...listing(ids[0]), visitUrl: undefined};
+	const task = await bridge.request('libraryStart', {
+		manifest: {
+			version: 1,
+			folders: [
+				{platform: 'xiaohongshu', id: 'a', items: [full]},
+				{platform: 'xiaohongshu', id: 'b', items: [bare]},
+			],
+		},
+	});
+	await bridge.tail;
+	assert.equal(reads, 0);
+	const [saved] = await searchLibrary({key: 'xiaohongshu:' + ids[0]}, bridge.options);
+	assert.equal(saved.body, 'The full text');
+	assert.equal((await bridge.request('libraryTask', {id: task.id})).items[0].status, 'added');
+});
+
+test('a retry in the same session fetches listing media again; feeds after the task ended are dropped', async (t) => {
+	let up = false;
+	const {dir, origin} = await fixture(t, (_req, res) => {
+		if (!up) return res.writeHead(404).end();
+		res.writeHead(200, {'content-type': 'image/gif'}).end(gif);
+	});
+	const bridge = new LibraryBridge(dir, {
+		session: {cookieHeader: async () => '', withCookies: (_url, action) => action()},
+	});
+	bridge.options.localOrigin = origin;
+	const entry = {
+		platform: 'x',
+		id: '123',
+		sourceUrl: 'https://x.com/a/status/123',
+		body: 'hello',
+		bodyComplete: true,
+		attachments: [{kind: 'image', url: origin + '/one.gif'}],
+	};
+	const task = await bridge.request('libraryStart', {manifest: {version: 1, items: [entry]}});
+	await bridge.tail;
+	let done = await bridge.request('libraryTask', {id: task.id, problems: true});
+	assert.deepEqual(
+		done.items.map((i) => [i.status, i.reason]),
+		[['partial', 'network_error']],
+	);
+	assert.deepEqual(await bridge.request('libraryPage', {id: task.id, key: 'x:123', skip: true}), {
+		ok: true,
+		skipped: true,
+	});
+	assert.equal(bridge.pages.size, 0);
+	up = true;
+	const queued = await bridge.request('libraryRetry', {id: task.id, selected: ['x:123']});
+	assert.equal(queued.status, 'queued');
+	await assert.rejects(bridge.request('libraryRetry', {id: task.id}), {code: 'busy'});
+	await bridge.tail;
+	done = await bridge.request('libraryTask', {id: task.id});
+	assert.equal(done.items[0].status, 'added');
+	assert.equal((await bridge.request('libraryTask', {id: task.id, problems: true})).totalItems, 0);
 });
 
 test('attachment downloads retry a transient failure and recognise a mislabelled type', async (t) => {
@@ -189,7 +297,8 @@ test(
 			[
 				['added', null],
 				['partial', 'network_error'],
-				['failed', 'login_required'],
+				// Unreadable post: its listing title and link are kept, with the reason.
+				['partial', 'login_required'],
 			],
 		);
 		const [first] = await searchLibrary({key: 'xiaohongshu:' + ids[0]}, bridge.options);
