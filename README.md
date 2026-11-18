@@ -105,7 +105,7 @@ On a post, the panel shows its title, author, whether the text is complete and h
 
 Video-only downloads go to `~/Downloads/Fetchy` by default. Click the folder at the bottom of the panel to change it.
 
-Fetchy never opens tabs to read pages. For Xiaohongshu and Douyin videos it reads the playback data from the open video page; for a short link, open the page first. Your logged-in session is used in place. Permissions requested: `activeTab`, `storage`, `nativeMessaging`, `scripting`, `sidePanel`, plus host access to `xiaohongshu.com`, `douyin.com` and `iesdouyin.com`. Reading some collection sites can prompt for access to that site. [Archive controls](docs/extension-library.md)
+Fetchy never opens tabs to read pages. For Xiaohongshu and Douyin videos it reads the playback data from the open video page; for a short link, open the page first. Your logged-in session is used in place. Permissions requested: `activeTab`, `storage`, `nativeMessaging`, `scripting`, `sidePanel`, plus host access to `xiaohongshu.com`, `rednote.com`, `douyin.com` and `iesdouyin.com`. Reading some collection sites can prompt for access to that site. [Archive controls](docs/extension-library.md)
 
 For results by browser and platform, see the [extension validation log](docs/extension-validation.md). For native host registration, sessions and troubleshooting, see the [installation guide](docs/extension-install.md).
 

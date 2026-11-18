@@ -82,6 +82,9 @@ private func json(_ value: Any) -> Data? {
   private var observations: [NSKeyValueObservation] = []
   /// The address the side column last read; a stopped or failed load returns to it.
   private var panelAddress = ""
+  private var regionalMonitor: Task<Void, Never>?
+  private var regionalCheck: Task<Void, Never>?
+  private var regionalSessionBound = false
 
   override init() {
     super.init()
@@ -157,7 +160,23 @@ private func json(_ value: Any) -> Data? {
         DispatchQueue.main.async { self?.isLoading = value }
       },
     ]
+    regionalCheck?.cancel()
+    regionalCheck = nil
+    regionalMonitor?.cancel()
+    regionalSessionBound = false
     webView = view
+    if info.site == "xiaohongshu" {
+      // A login modal can complete without loading a new page or changing the URL.
+      regionalMonitor = Task { [weak self, weak view] in
+        while !Task.isCancelled {
+          try? await Task.sleep(nanoseconds: 2_000_000_000)
+          guard !Task.isCancelled, let self, let view, self.webView === view else { return }
+          if NSApp.isActive, view.window?.isVisible == true, !view.isLoading {
+            self.refreshSignIn()
+          }
+        }
+      }
+    }
     signedIn = nil
     panelAddress = ""
     panel.reset()
@@ -170,17 +189,48 @@ private func json(_ value: Any) -> Data? {
 
   /// Signed in means one of the site's session cookies is in its store and not expired.
   func refreshSignIn() {
-    guard let site, let store = webView?.configuration.websiteDataStore else { return }
-    store.httpCookieStore.getAllCookies { [weak self] cookies in
+    guard let site, let webView else { return }
+    if site.site == "xiaohongshu" {
+      guard let host = XiaohongshuLogin.pageHost(webView.url) else { signedIn = nil; return }
+      refreshRegionalSignIn(webView, site: site, host: host)
+      return
+    }
+    let hosts = site.hosts
+    webView.configuration.websiteDataStore.httpCookieStore.getAllCookies { [weak self] cookies in
       let now = Date()
       let live = cookies.filter { cookie in
-        let domain = cookie.domain.hasPrefix(".") ? String(cookie.domain.dropFirst()) : cookie.domain
-        return (cookie.expiresDate.map { $0 > now } ?? true)
-          && site.hosts.contains { $0 == domain || $0.hasSuffix("." + domain) }
+        (cookie.expiresDate.map { $0 > now } ?? true) && hosts.contains { cookie.matches(host: $0) }
       }
       let ok =
         site.session.isEmpty ? !live.isEmpty : live.contains { site.session.contains($0.name) }
-      DispatchQueue.main.async { self?.signedIn = ok }
+      DispatchQueue.main.async {
+        if self?.webView === webView {
+          self?.signedIn = ok
+        }
+      }
+    }
+  }
+
+  private func refreshRegionalSignIn(_ view: WKWebView, site: SiteInfo, host: String) {
+    guard regionalCheck == nil else { return }
+    regionalCheck = Task { [weak self] in
+      let state = try? await view.evaluateJavaScript(XiaohongshuLogin.pageState) as? String
+      let cookies = await view.configuration.websiteDataStore.httpCookieStore.allCookies()
+      guard !Task.isCancelled, let self else { return }
+      self.regionalCheck = nil
+      guard self.webView === view, XiaohongshuLogin.pageHost(view.url) == host else { return }
+      let login = XiaohongshuLogin.shared
+      let sessions = cookies.filter { $0.name == "web_session" && $0.matches(host: host) }
+      if state == "guest" {
+        self.regionalSessionBound = false
+        login.observe("guest", cookies: [], host: host, profile: site.profile)
+      } else if state == "member" && !self.regionalSessionBound && !sessions.isEmpty {
+        login.observe("member", cookies: sessions, host: host, profile: site.profile)
+        self.regionalSessionBound = true
+      }
+      let verified = sessions.contains { login.mayUse($0, profile: site.profile) }
+      let status: Bool? = verified ? true : (state == "guest" ? false : nil)
+      if self.signedIn != status { self.signedIn = status }
     }
   }
 
@@ -231,6 +281,12 @@ private func json(_ value: Any) -> Data? {
   ) -> WKWebView? {
     if navigationAction.targetFrame == nil { webView.load(navigationAction.request) }
     return nil
+  }
+
+  func webView(_ webView: WKWebView, didStartProvisionalNavigation navigation: WKNavigation!) {
+    regionalCheck?.cancel()
+    regionalCheck = nil
+    regionalSessionBound = false
   }
 
   func webView(_ webView: WKWebView, didFinish navigation: WKNavigation!) {

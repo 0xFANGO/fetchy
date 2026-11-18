@@ -8,6 +8,8 @@
 	"permissions": ["activeTab", "storage", "nativeMessaging", "scripting", "sidePanel"],
 	"host_permissions": [
 		"https://*.xiaohongshu.com/*",
+		"https://rednote.com/*",
+		"https://www.rednote.com/*",
 		"https://*.douyin.com/*",
 		"https://*.iesdouyin.com/*"
 	],

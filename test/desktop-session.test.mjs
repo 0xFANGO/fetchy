@@ -20,6 +20,29 @@ import {runProcess} from '../src/process.mjs';
 import {captureSocialPost} from '../extension/social-post.mjs';
 import {runInNewContext} from 'node:vm';
 
+test(
+	'WebKit lends only a page-confirmed regional member session',
+	{skip: process.platform !== 'darwin'},
+	async () => {
+		const dir = await mkdtemp(path.join(tmpdir(), 'fy-regional-login-'));
+		try {
+			const binary = path.join(dir, 'check');
+			const sources = [
+				'../desktop/XiaohongshuLogin.swift',
+				'fixtures/regional-login/main.swift',
+			].map((name) => fileURLToPath(new URL(name, import.meta.url)));
+			const built = await runProcess('/usr/bin/xcrun', ['swiftc', ...sources, '-o', binary], {
+				timeoutMs: 60000,
+			});
+			assert.equal(built.code, 0, built.stderr);
+			const checked = await runProcess(binary, [], {timeoutMs: 10000});
+			assert.equal(checked.code, 0, checked.stderr);
+		} finally {
+			await rm(dir, {recursive: true, force: true});
+		}
+	},
+);
+
 test('the browser rejects credentials, local files and cleartext remote origins', async () => {
 	for (const input of [
 		'file:///tmp/example',
@@ -35,6 +58,8 @@ test('the browser rejects credentials, local files and cleartext remote origins'
 test('dedicated profiles and capture hosts respect independently operated sites', () => {
 	const plan = (host) => browserSessionScope(new URL('https://' + host + '/'));
 	for (const [a, b] of [
+		['rednote.com.example.org', 'rednote.com'],
+		['cdn.rednote.com', 'www.rednote.com'],
 		['framatube.org', 'video.blender.org'],
 		['artist-a.bandcamp.com', 'artist-b.bandcamp.com'],
 		['alice.tumblr.com', 'bob.tumblr.com'],
@@ -47,6 +72,8 @@ test('dedicated profiles and capture hosts respect independently operated sites'
 		['www.x.com', 'twitter.com'],
 		['b23.tv', 'www.bilibili.com'],
 		['xhslink.com', 'www.xiaohongshu.com'],
+		['www.rednote.com', 'www.xiaohongshu.com'],
+		['rednote.com', 'www.rednote.com'],
 		['tumblr.com', 'www.tumblr.com'],
 		['threads.net', 'www.threads.com'],
 		['www.threads.net', 'threads.com'],

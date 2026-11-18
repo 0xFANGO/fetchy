@@ -1,6 +1,6 @@
-import {usesPageMedia} from '../src/sites/index.mjs';
+import {sites, usesPageMedia} from '../src/sites/index.mjs';
 import {Controller, activeTask} from './controller.mjs';
-import {normalizeUrl} from '../src/urls.mjs';
+import {matchingTarget, normalizeUrl} from '../src/urls.mjs';
 // A service worker cannot load modules at run time; everything it runs is imported here.
 import {readPostPageInTab} from './archive-source.mjs';
 
@@ -160,22 +160,14 @@ async function rpc(method, params, timeoutMs) {
 // their own browser session. Fetchy never opens a tab for this: without an
 // open page for the exact video it asks the user to open one. Only the
 // extractor's narrow result crosses into the native host.
-const PAGE_HOSTS = ['https://*.xiaohongshu.com/*', 'https://*.douyin.com/*'];
+const PAGE_HOSTS = sites
+	.filter((site) => site.pageMedia)
+	.flatMap((site) => site.hosts.map((host) => `https://${host}/*`));
 const RETRYABLE = ['browser_state_missing', 'browser_unavailable'];
 const delay = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
 function checkCancelled(signal) {
 	if (signal?.aborted) throw {code: 'cancelled'};
 }
-function targetOf(url) {
-	try {
-		const target = normalizeUrl(url);
-		return target.needsRedirect ? null : target;
-	} catch {
-		return null;
-	}
-}
-const sameTarget = (a, b) => Boolean(a && b && a.platform === b.platform && a.id === b.id);
-
 async function extractOnce(tabId, target) {
 	const args = {platform: target.platform, expectedId: target.id};
 	await chrome.scripting.executeScript({
@@ -222,10 +214,13 @@ async function collectPageMedia(input, {fresh = false, signal} = {}) {
 	const tabs = await chrome.tabs.query({url: PAGE_HOSTS}).catch(() => []);
 	let last = {code: 'open_page_required'};
 	for (const tab of tabs) {
-		if (!sameTarget(targetOf(tab.url), expected)) continue;
+		const page = matchingTarget(tab.url, expected);
+		if (!page) continue;
 		try {
-			// A refresh waits longer: the page may still be loading a new address.
-			return await extractFromTab(tab.id, expected, fresh ? 20 : 6, signal);
+			// Preserve an explicit input's query only on its original site.
+			const sameOrigin = new URL(expected.url).origin === new URL(page.url).origin;
+			const target = sameOrigin ? expected : {...page, url: page.url.split('?')[0]};
+			return await extractFromTab(tab.id, target, fresh ? 20 : 6, signal);
 		} catch (error) {
 			if (!RETRYABLE.includes(error.code)) throw error;
 			last = error;

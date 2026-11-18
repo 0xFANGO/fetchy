@@ -33,7 +33,12 @@ test('reads all XHS codec families, keeps mirrors together, omits unrelated priv
 								videoCodec: 'h264',
 								size: 19875696,
 								avgBitrate: 1083882,
-								backupUrls: [cdn, 'https://sns-bak-v1.xhscdn.com/backup.mp4'],
+								backupUrls: [
+									cdn,
+									'https://sns-bak-v1.xhscdn.com/backup.mp4',
+									'https://sns-v8.rednotecdn.com/a.mp4',
+									'https://sns-v8-ae.rednotecdn.com/a.mp4',
+								],
 							},
 						],
 						EF5: [
@@ -46,7 +51,7 @@ test('reads all XHS codec families, keeps mirrors together, omits unrelated priv
 		}),
 	);
 	assert.equal(result.formats.length, 3);
-	assert.equal(result.formats[0].urls.length, 2);
+	assert.equal(result.formats[0].urls.length, 4);
 	assert.equal(result.formats[2].height, 1920);
 	assert.equal(result.formats[2].size, 10167052);
 	assert.equal(result.formats[0].bitrate, 1083882);
@@ -73,6 +78,8 @@ test('rejects unexpected protocols, deceptive CDN hosts, credentials and custom 
 		'ftp://sns-video.xhscdn.com/a.mp4',
 		'https://xhscdn.com.attacker.test/a.mp4',
 		'https://fake-xhscdn.com/a.mp4',
+		'https://other.rednotecdn.com/a.mp4',
+		'https://sns-v8.rednotecdn.com.example/a.mp4',
 		'https://user:pass@sns-video.xhscdn.com/a.mp4',
 		'https://sns-video.xhscdn.com:444/a.mp4',
 		'file:///tmp/a.mp4',

@@ -53,6 +53,7 @@ try {
 			'Library.swift',
 			'Tasks.swift',
 			'Session.swift',
+			'XiaohongshuLogin.swift',
 			'Browser.swift',
 			'Accounts.swift',
 		].map((name) => path.join(root, 'desktop', name)),

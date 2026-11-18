@@ -183,6 +183,25 @@ test('browser-resolved short links resolve and download without a second redirec
 	}
 });
 
+test('a domestic note opened on rednote downloads with its verified page origin as Referer', async (t) => {
+	const domestic = pageTargets[0];
+	const resolvedUrl = domestic.resolvedUrl.replace('xiaohongshu.com', 'rednote.com');
+	const {options} = await fakeTools(t, {id: domestic.id});
+	const request = t.mock.method(
+		globalThis,
+		'fetch',
+		async () =>
+			new Response('test-media-data', {
+				headers: {'content-type': 'video/mp4', 'content-length': '15'},
+			}),
+	);
+	await downloadVideo(domestic.resolvedUrl, {
+		...options,
+		pageMedia: pageMediaFor({...domestic, resolvedUrl}),
+	});
+	assert.equal(request.mock.calls[0].arguments[1].headers.referer, 'https://www.rednote.com/');
+});
+
 test('browser redirect hints must identify a concrete video on the original platform', async (t) => {
 	const target = pageTargets[0];
 	const redirect = t.mock.fn(() => {

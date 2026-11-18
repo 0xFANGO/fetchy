@@ -5,6 +5,7 @@ import path from 'node:path';
 import {dataDirectory, privateDirectory, readJson, writeJson} from '../native/settings.mjs';
 import {EngineError, runProcess} from '../src/process.mjs';
 import {appBundle, sessionTarget} from './desktop.mjs';
+import xiaohongshu, {isRednoteHost} from '../src/sites/xiaohongshu.mjs';
 
 // Sign-in lives in the desktop app's WebKit store for each site. A site counts
 // as signed in only while one of its session cookies is present; the cookie
@@ -66,15 +67,20 @@ export async function findAccount(input) {
 			row.label === input ||
 			row.label.toLowerCase() === String(input).toLowerCase(),
 	);
-	if (byName) return describe(byName);
-	let profile;
+	let target;
 	try {
-		profile = sessionTarget(input).profile;
+		target = sessionTarget(byName?.url ?? input);
 	} catch {
 		throw new EngineError('invalid_url', '请提供站点名称，例如 bilibili，或该站的 HTTPS 链接。');
 	}
-	const row = rows.find((r) => sessionTarget(r.url).profile === profile);
-	if (row) return describe(row);
+	const row = rows.find((r) => sessionTarget(r.url).profile === target.profile);
+	if (row) {
+		const account = describe(row);
+		// An explicit regional login opens the domain the user selected.
+		if (account.site === 'xiaohongshu' && isRednoteHost(target.url.hostname))
+			account.url = target.url.origin + '/';
+		return account;
+	}
 	const url = new URL(input);
 	return describe({site: url.hostname, label: url.hostname, url: url.origin + '/', session: []});
 }
@@ -92,8 +98,30 @@ export async function addAccount(input) {
 	return account;
 }
 
+const matchesCookieHost = (host, domain) =>
+	host === domain.replace(/^\./, '') || (domain.startsWith('.') && host.endsWith(domain));
+
+// The two regional logins live in one WebKit store, but either can expire independently.
+// Pre-verification state only proved a cookie existed, which is also true for guests.
+function loginScopes(account) {
+	if (account.site !== 'xiaohongshu') return [account];
+	return [
+		{
+			...account,
+			hosts: xiaohongshu.hosts.filter((h) => !isRednoteHost(h)),
+			stateKey: account.profile + ':verified:xiaohongshu.com',
+		},
+		{
+			...account,
+			hosts: account.hosts.filter(isRednoteHost),
+			stateKey: account.profile + ':verified:rednote.com',
+		},
+	];
+}
+const cookiesForHosts = (cookies, hosts) =>
+	cookies.filter((c) => hosts.some((host) => matchesCookieHost(host, c.domain)));
+
 /** Cookies for exactly this site's hosts, read from the desktop app. */
-const onHost = (host, domain) => host === domain || host.endsWith('.' + domain);
 export async function readSiteCookies(account) {
 	let binary;
 	try {
@@ -117,12 +145,13 @@ export async function readSiteCookies(account) {
 		payload = JSON.parse(result.stdout);
 	} catch {}
 	if (result.code !== 0 || !payload?.ok || !Array.isArray(payload.cookies)) return [];
+	if (account.site === 'xiaohongshu' && payload.xiaohongshuSessionVerification !== 1) return [];
 	return payload.cookies.filter(
 		(c) =>
 			typeof c?.name === 'string' &&
 			typeof c.value === 'string' &&
 			typeof c.domain === 'string' &&
-			account.hosts.some((h) => onHost(h, c.domain.replace(/^\./, ''))),
+			account.hosts.some((h) => matchesCookieHost(h, c.domain)),
 	);
 }
 
@@ -163,23 +192,45 @@ export async function accountStatus(account, {readCookies = readSiteCookies} = {
 }
 export async function listAccounts({readCookies = readSiteCookies} = {}) {
 	const state = await readState();
-	return statuses([...KNOWN_SITES, ...state.custom].map(describe), readCookies);
+	// A domain saved as a custom site by an older build may now be a built-in alias.
+	const accounts = new Map();
+	for (const row of [...KNOWN_SITES, ...state.custom]) {
+		const account = describe(row);
+		if (!accounts.has(account.profile)) accounts.set(account.profile, account);
+	}
+	return statuses([...accounts.values()], readCookies);
 }
 // Cookies are read in parallel; the state file is then read and written once, with no wait between.
 async function statuses(accounts, readCookies) {
-	const digests = await Promise.all(
-		accounts.map(async (account) => sessionDigest(account, await readCookies(account))),
+	const scoped = await Promise.all(
+		accounts.map(async (account) => {
+			const cookies = await readCookies(account);
+			return loginScopes(account).map((scope) => ({
+				key: scope.stateKey ?? scope.profile,
+				current: sessionDigest(scope, cookiesForHosts(cookies, scope.hosts)),
+			}));
+		}),
 	);
 	const state = await readState();
 	let changed = false;
 	const rows = accounts.map((account, i) => {
-		const seen = state.seen[account.profile];
-		const status = computeStatus(digests[i], seen);
-		if (status === 'logged_in' && seen?.loggedIn !== digests[i]) {
-			state.seen[account.profile] = {loggedIn: digests[i]};
-			changed = true;
-		}
-		return statusRow(account, status);
+		const results = scoped[i].map(({key, current}) => {
+			const seen = state.seen[key];
+			const status = computeStatus(current, seen);
+			if (status === 'logged_in' && seen?.loggedIn !== current) {
+				state.seen[key] = {loggedIn: current};
+				changed = true;
+			}
+			return status;
+		});
+		return statusRow(
+			account,
+			results.includes('logged_in')
+				? 'logged_in'
+				: results.includes('expired')
+					? 'expired'
+					: 'logged_out',
+		);
 	});
 	if (changed) await saveState(state);
 	return rows;
@@ -188,7 +239,7 @@ async function statuses(accounts, readCookies) {
 /** After logout the site shows as signed out, not expired. */
 export async function forgetAccount(account) {
 	const state = await readState();
-	delete state.seen[account.profile];
+	for (const scope of loginScopes(account)) delete state.seen[scope.stateKey ?? scope.profile];
 	await saveState(state);
 }
 
@@ -196,7 +247,8 @@ export async function forgetAccount(account) {
 export async function markExpired(account, {readCookies = readSiteCookies} = {}) {
 	const current = sessionDigest(account, await readCookies(account));
 	const state = await readState();
-	state.seen[account.profile] = {...state.seen[account.profile], rejected: current ?? 'none'};
+	const key = account.stateKey ?? account.profile;
+	state.seen[key] = {...state.seen[key], rejected: current ?? 'none'};
 	await saveState(state);
 }
 
@@ -205,7 +257,7 @@ export function cookieHeader(cookies, url) {
 	return cookies
 		.filter((c) => {
 			return (
-				onHost(u.hostname, c.domain.replace(/^\./, '')) &&
+				matchesCookieHost(u.hostname, c.domain) &&
 				u.pathname.startsWith(c.path || '/') &&
 				(!c.secure || u.protocol === 'https:')
 			);
@@ -233,19 +285,29 @@ export function netscapeCookies(cookies) {
 	return lines.join('\n') + '\n';
 }
 
+async function requestCookies(input, readCookies) {
+	const account = await findAccount(input);
+	if (account.site !== 'xiaohongshu') return {account, cookies: await readCookies(account)};
+	const {url} = sessionTarget(URL.canParse(input) ? input : account.url);
+	const scope = loginScopes(account).find((s) => s.hosts.includes(url.hostname));
+	if (!scope) return {account, cookies: []};
+	const hosts = [url.hostname];
+	const cookies = cookiesForHosts(await readCookies({...scope, hosts}), hosts);
+	return {account: scope, cookies};
+}
+
 /**
  * Give `action` a temporary cookies file for this site only while it runs.
  * Without a sign-in, `action` runs without one. A rejected sign-in marks the
  * account expired and is reported as `login_expired`.
  */
 export async function withSiteCookies(input, action, {readCookies = readSiteCookies} = {}) {
-	let account;
+	let account, cookies;
 	try {
-		account = await findAccount(input);
+		({account, cookies} = await requestCookies(input, readCookies));
 	} catch {
 		return action(undefined);
 	}
-	const cookies = await readCookies(account);
 	if (!sessionDigest(account, cookies)) return action(undefined);
 	const dir = await mkdtemp(path.join(tmpdir(), 'fetchy-session-'));
 	const file = path.join(dir, 'cookies.txt');
@@ -270,12 +332,10 @@ export async function withSiteCookies(input, action, {readCookies = readSiteCook
 
 /** The Cookie header for one request to `url`, from that site's sign-in only. */
 export async function siteCookieHeader(url, {readCookies = readSiteCookies} = {}) {
-	let account;
 	try {
-		account = await findAccount(url);
+		const {account, cookies} = await requestCookies(url, readCookies);
+		return sessionDigest(account, cookies) ? cookieHeader(cookies, url) : '';
 	} catch {
 		return '';
 	}
-	const cookies = await readCookies(account);
-	return sessionDigest(account, cookies) ? cookieHeader(cookies, url) : '';
 }

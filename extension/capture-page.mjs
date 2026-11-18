@@ -11,7 +11,7 @@ export function captureArchivePage(allowLoopback = false) {
 	if ((!testOrigin && (url.protocol !== 'https:' || url.port)) || url.username || url.password)
 		return unsupported('unsupported_page');
 	const isHost = (host, domain) => host === domain || host.endsWith('.' + domain);
-	const xhs = ['www.xiaohongshu.com', 'xiaohongshu.com'].includes(url.hostname);
+	const xhsHosts = ['xiaohongshu.com', 'www.xiaohongshu.com', 'rednote.com', 'www.rednote.com'];
 	const x = ['www.x.com', 'x.com', 'twitter.com', 'www.twitter.com'].includes(url.hostname);
 	const zhihu = ['zhuanlan.zhihu.com', 'www.zhihu.com', 'zhihu.com'].includes(url.hostname);
 	const query = (el, selector) => el?.querySelector(selector);
@@ -35,7 +35,16 @@ export function captureArchivePage(allowLoopback = false) {
 	function imgUrl(raw, domains) {
 		if (typeof raw !== 'string' || !raw) return null;
 		const u = clean(raw.replace(/^http:\/\//i, 'https://'));
-		return u && domains.some((d) => isHost(u.hostname, d)) ? u.href : null;
+		if (!u) return null;
+		if (domains.some((d) => isHost(u.hostname, d))) return u.href;
+		if (
+			xhsHosts.includes(url.hostname) &&
+			['sns-web-i10.rednotecdn.com', 'sns-v8.rednotecdn.com', 'sns-v8-ae.rednotecdn.com'].includes(
+				u.hostname,
+			)
+		)
+			return u.href;
+		return null;
 	}
 	function media(kind, raw, domains, alt = '') {
 		const inline =
@@ -82,7 +91,7 @@ export function captureArchivePage(allowLoopback = false) {
 	}
 	function xhsId(href) {
 		const u = clean(href);
-		return u && ['xiaohongshu.com', 'www.xiaohongshu.com'].includes(u.hostname)
+		return u && xhsHosts.includes(u.hostname)
 			? /^\/(?:explore|discovery\/item|board\/[\w-]+|user\/profile\/[a-f0-9]+)\/([a-f0-9]{24})\/?$/i.exec(
 					u.pathname,
 				)?.[1]
@@ -168,11 +177,21 @@ export function captureArchivePage(allowLoopback = false) {
 			complete: !nextUrl && (end || (total !== null && items.length === total)),
 		};
 	}
-	if (xhs) {
+	if (xhsHosts.includes(url.hostname)) {
 		const id = xhsId(url.href);
 		if (id) {
-			const canonical = 'https://www.xiaohongshu.com/explore/' + id;
-			const note = window.__INITIAL_STATE__?.note?.noteDetailMap?.[id]?.note;
+			const canonical = url.origin + '/explore/' + id;
+			const doc = globalThis.document;
+			const app =
+				doc?.querySelector?.('[data-v-app]')?.__vue_app__ ??
+				doc?.querySelector?.('#app')?.__vue_app__;
+			const unwrap = (value) => (value?.__v_isRef === true ? value.value : value);
+			const read = (store) => {
+				const map = unwrap(unwrap(store)?.noteDetailMap);
+				return unwrap(unwrap(map?.[id])?.note);
+			};
+			const live = app?.config?.globalProperties?.$pinia?.state?.value?.note;
+			const note = read(live) ?? read(globalThis.window?.__INITIAL_STATE__?.note);
 			if (!note || note.noteId !== id) return unsupported('source_not_ready');
 			const entry = rawPost(
 				'xiaohongshu',
@@ -219,7 +238,7 @@ export function captureArchivePage(allowLoopback = false) {
 					...rawPost(
 						'xiaohongshu',
 						id,
-						'https://www.xiaohongshu.com/explore/' + id,
+						new URL(visitUrl, url).origin + '/explore/' + id,
 						txt(query(item, '.title')),
 					),
 					visitUrl,

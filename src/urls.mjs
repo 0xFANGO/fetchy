@@ -19,13 +19,12 @@ function readUrl(input) {
 	} catch {
 		fail('invalid_url', '链接格式不正确。');
 	}
-	if (url.protocol !== 'https:' || url.username || url.password || url.port)
-		fail('invalid_url', '仅接受不含凭据和自定义端口的 HTTPS 链接。');
 	return url;
 }
 
-export function normalizeUrl(input) {
-	const url = readUrl(input);
+function targetForUrl(url) {
+	if (url.protocol !== 'https:' || url.username || url.password || url.port)
+		fail('invalid_url', '仅接受不含凭据和自定义端口的 HTTPS 链接。');
 	const site = siteForHost(url.hostname);
 	if (!site) fail('unsupported_platform', unsupportedPlatformMessage);
 	if (site.shortHosts?.includes(url.hostname)) {
@@ -38,6 +37,21 @@ export function normalizeUrl(input) {
 		};
 	}
 	return {platform: site.id, startTimeSeconds: null, ...site.parse(url)};
+}
+
+export function normalizeUrl(input) {
+	return targetForUrl(readUrl(input));
+}
+
+export function matchingTarget(input, target) {
+	try {
+		const resolved = targetForUrl(new URL(input));
+		return resolved.id && resolved.id === target.id && resolved.platform === target.platform
+			? resolved
+			: null;
+	} catch {
+		return null;
+	}
 }
 
 export async function resolveTarget(input, {signal, fetchImpl = fetch} = {}) {

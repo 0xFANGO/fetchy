@@ -1,6 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import {access, mkdtemp, readFile, rm} from 'node:fs/promises';
+import {access, chmod, mkdir, mkdtemp, readFile, rm, writeFile} from 'node:fs/promises';
 import path from 'node:path';
 import {tmpdir} from 'node:os';
 
@@ -43,6 +43,105 @@ test('a site is found by name, label or any of its links', async () => {
 	);
 	assert.notEqual((await accounts.findAccount('youtube')).profile, byName.profile);
 	await assert.rejects(accounts.findAccount('not a site'), {code: 'invalid_url'});
+});
+
+test('regional Xiaohongshu logins share a store and keep their own credentials and expiry', async () => {
+	const home = await accounts.findAccount('小红书');
+	const regionalUrl = 'https://www.rednote.com/explore/example';
+	const regional = await accounts.findAccount(regionalUrl);
+	assert.equal(regional.profile, home.profile);
+	assert.equal(regional.site, home.site);
+	assert.equal(regional.url, 'https://www.rednote.com/');
+	const domestic = {name: 'web_session', value: 'domestic', domain: '.xiaohongshu.com', path: '/'};
+	const international = {...domestic, domain: '.rednote.com', value: 'international'};
+	const device = {...international, name: 'device'};
+	let jar = [domestic, device];
+	const readCookies = async () => jar;
+	const header = () => accounts.siteCookieHeader(regionalUrl, {readCookies});
+	assert.equal(await header(), '');
+	assert.equal(
+		await accounts.withSiteCookies(regionalUrl, (file) => file, {readCookies}),
+		undefined,
+	);
+
+	jar = [domestic, international, {...device, domain: 'rednote.com'}];
+	assert.equal(await header(), 'web_session=international');
+	assert.equal(await accounts.siteCookieHeader(home.url, {readCookies}), 'web_session=domestic');
+	await assert.rejects(
+		accounts.withSiteCookies(
+			regionalUrl,
+			async (file) => {
+				const lines = (await readFile(file, 'utf8')).trim().split('\n');
+				assert.equal(lines.length, 2);
+				assert.match(lines[1], /^\.rednote\.com\tTRUE\t.*\tweb_session\tinternational$/);
+				throw Object.assign(new Error(), {code: 'auth_required'});
+			},
+			{readCookies},
+		),
+		{code: 'login_expired'},
+	);
+	assert.equal((await accounts.accountStatus(home, {readCookies})).status, 'logged_in');
+	jar = [international];
+	assert.equal((await accounts.accountStatus(home, {readCookies})).status, 'expired');
+	jar = [{...international, value: 'fresh'}];
+	assert.equal((await accounts.accountStatus(home, {readCookies})).status, 'logged_in');
+	await accounts.forgetAccount(home);
+	jar = [device];
+	assert.equal((await accounts.accountStatus(home, {readCookies})).status, 'logged_out');
+});
+
+test(
+	'the downloader does not borrow a guest cookie from an older macOS helper',
+	{skip: process.platform !== 'darwin'},
+	async (t) => {
+		const previous = process.env.FETCHY_DESKTOP_APP;
+		const bundle = path.join(dir, 'old-helper.app');
+		const executable = path.join(bundle, 'Contents/MacOS/Fetchy');
+		await mkdir(path.dirname(executable), {recursive: true});
+		const payload = {
+			ok: true,
+			cookies: [{name: 'web_session', value: 'guest-fixture', domain: '.rednote.com', path: '/'}],
+		};
+		await writeFile(
+			executable,
+			['#!/bin/sh', "cat <<'JSON'", JSON.stringify(payload), 'JSON', ''].join('\n'),
+		);
+		await chmod(executable, 0o700);
+		process.env.FETCHY_DESKTOP_APP = bundle;
+		t.after(() => {
+			if (previous === undefined) delete process.env.FETCHY_DESKTOP_APP;
+			else process.env.FETCHY_DESKTOP_APP = previous;
+		});
+		const url = 'https://www.rednote.com/explore/example';
+		assert.equal(await accounts.siteCookieHeader(url), '');
+		await accounts.withSiteCookies(url, (file) => assert.equal(file, undefined));
+	},
+);
+
+test('a custom Rednote row from an earlier install resolves to the built-in account', async () => {
+	const file = path.join(dir, 'accounts.json');
+
+	const old = {
+		site: 'www.rednote.com',
+		label: 'www.rednote.com',
+		url: 'https://www.rednote.com/',
+		session: [],
+	};
+	const home = await accounts.findAccount('xiaohongshu');
+	await writeFile(
+		file,
+		JSON.stringify({custom: [old], seen: {[home.profile]: {loggedIn: 'legacy-guest'}}}),
+	);
+	const byName = await accounts.findAccount(old.label);
+	assert.equal(byName.site, 'xiaohongshu');
+	assert.deepEqual(byName.session, ['web_session']);
+	const rows = await accounts.listAccounts({readCookies: async () => []});
+	assert.equal(rows.filter((row) => row.site === 'xiaohongshu').length, 1);
+	assert.equal(rows.find((row) => row.site === 'xiaohongshu').status, 'logged_out');
+	assert.equal(
+		rows.some((row) => row.site === old.site),
+		false,
+	);
 });
 
 test('custom sites are listed after the built-in ones', async () => {

@@ -17,12 +17,13 @@ import {
 import {explicitLocalOrigin, webUrl} from '../src/public-http.mjs';
 import {siteForHost, siteForPlatform} from '../src/sites/index.mjs';
 import {browserPostTarget} from '../src/sites/page-posts.mjs';
+import {isRednoteHost} from '../src/sites/xiaohongshu.mjs';
 import {videoFilename} from '../src/filenames.mjs';
 import {importLibrary, libraryRoot, searchLibrary} from '../src/library/index.mjs';
 import {entryIdentity, publicUrl, renderWork} from '../src/library/content.mjs';
 import {hasSession, downloadWithSession, captureWithSession} from './desktop.mjs';
-import {withSiteCookies} from './accounts.mjs';
-import {browserHeaders} from '../src/library/post-pages.mjs';
+import {siteCookieHeader, withSiteCookies} from './accounts.mjs';
+import {browserHeaders, fetchPostPage} from '../src/library/post-pages.mjs';
 
 const invalid = (message) => new EngineError('invalid_arguments', message);
 async function targetFor(input, options) {
@@ -102,6 +103,9 @@ async function media(action, target, input, options) {
 	} catch (error) {
 		if (
 			!downloading ||
+			(options.audio &&
+				target.platform === 'xiaohongshu' &&
+				isRednoteHost(new URL(target.url).hostname)) ||
 			!['no_formats', 'network_error', 'unavailable'].includes(error.code) ||
 			!(await hasSession(input))
 		)
@@ -155,9 +159,34 @@ async function exportPost(record, root, destination) {
 		throw e;
 	}
 }
-async function postFor(target, input, settings, error) {
+async function postFor(target, input, settings, error, action) {
+	const regional = target.platform === 'xiaohongshu' && isRednoteHost(new URL(target.url).hostname);
+	if (!regional && action === 'info' && error.code !== 'no_formats') throw error;
 	let entry;
-	if (
+	if (regional) {
+		if (
+			settings.audio ||
+			settings.publicOnly ||
+			settings.cookiesFile ||
+			!['unsupported_content', 'no_formats', 'no_video', 'not_video'].includes(error.code)
+		)
+			throw error;
+		// yt-dlp's Xiaohongshu extractor only handles the domestic website.
+		try {
+			entry = await fetchPostPage(
+				{...target, sourceUrl: target.url},
+				{
+					cookieHeader: siteCookieHeader,
+					signal: settings.signal,
+					timeoutMs: settings.timeoutMs,
+				},
+			);
+		} catch (pageError) {
+			if (pageError.code === 'source_unavailable' || [404, 410].includes(pageError.httpStatus))
+				throw new EngineError('unavailable', '该页面未提供这篇笔记。');
+			throw pageError;
+		}
+	} else if (
 		!settings.publicOnly &&
 		!settings.cookiesFile &&
 		((await hasSession(input)) || target.pageOnly)
@@ -183,13 +212,13 @@ async function postFor(target, input, settings, error) {
 export async function getOne(action, input, options = {}) {
 	const localOrigin = explicitLocalOrigin(input, options.allowLocal);
 	const target = await targetFor(input, options);
+	const source = target.platform === 'xiaohongshu' ? target.url : input;
 	const settings = {...options, localOrigin};
 	if (action === 'info') {
 		try {
-			return await media(action, target, input, settings);
+			return await media(action, target, source, settings);
 		} catch (error) {
-			if (error.code !== 'no_formats') throw error;
-			const entry = await postFor(target, input, settings, error);
+			const entry = await postFor(target, source, settings, error, action);
 
 			return {
 				platform: entry.platform,
@@ -207,7 +236,7 @@ export async function getOne(action, input, options = {}) {
 	try {
 		let result;
 		try {
-			result = await media(action, target, input, {...settings, outputDir: tmp});
+			result = await media(action, target, source, {...settings, outputDir: tmp});
 		} catch (error) {
 			if (
 				options.publicOnly ||
@@ -224,7 +253,7 @@ export async function getOne(action, input, options = {}) {
 				].includes(error.code)
 			)
 				throw error;
-			const entry = await postFor(target, input, settings, error);
+			const entry = await postFor(target, source, settings, error, action);
 			const {stageAttachments} = await import('../native/library-bridge.mjs');
 			// Media hosts often check that the request comes from the post's site.
 			await stageAttachments([entry], tmp, null, {

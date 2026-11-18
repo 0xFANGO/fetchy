@@ -1,5 +1,6 @@
 import {openWeb, readBounded} from '../public-http.mjs';
 import {problem} from './storage.mjs';
+import {matchingTarget} from '../urls.mjs';
 
 // Post pages are read as HTML, either by the extension with a same-site request
 // from the user's tab or by the native worker with the desktop sign-in. Parsing
@@ -23,7 +24,12 @@ function mediaUrl(raw, platform, loopback) {
 	}
 	if (u.protocol !== 'https:' || u.username || u.password || u.port) return null;
 	const hosts = MEDIA_HOSTS[platform];
-	if (hosts && !hosts.some((d) => isHost(u.hostname, d))) return null;
+	const regionalMedia =
+		platform === 'xiaohongshu' &&
+		['sns-web-i10.rednotecdn.com', 'sns-v8.rednotecdn.com', 'sns-v8-ae.rednotecdn.com'].includes(
+			u.hostname,
+		);
+	if (hosts && !regionalMedia && !hosts.some((d) => isHost(u.hostname, d))) return null;
 	u.hash = '';
 	return u.href;
 }
@@ -88,7 +94,7 @@ const decode = (s) =>
 		.replaceAll('&nbsp;', ' ')
 		.replaceAll('&amp;', '&');
 
-function blocked(html, finalUrl) {
+function postPageError(finalUrl) {
 	const path = (() => {
 		try {
 			return new URL(finalUrl).pathname;
@@ -96,9 +102,11 @@ function blocked(html, finalUrl) {
 			return '';
 		}
 	})();
-	if (/captcha|verify|security-check/i.test(path)) return 'verification_required';
-	if (/(?:^|\/)(?:website-)?login|signin|passport/i.test(path)) return 'login_required';
-	return null;
+	if (/captcha|verify|security-check/i.test(path))
+		return problem('verification_required', 'The site asked for verification.');
+	if (/(?:^|\/)(?:website-)?login|signin|passport/i.test(path))
+		return problem('login_required', 'The site asked for sign-in.');
+	return problem('source_unavailable', 'The page did not contain this post.');
 }
 
 function entry(platform, id, sourceUrl, fields) {
@@ -237,15 +245,18 @@ export const readablePlatforms = new Set(['xiaohongshu', 'zhihu']);
 export function parsePostPage({platform, id, sourceUrl}, html, pageUrl, {localOrigin} = {}) {
 	if (typeof html !== 'string' || html.length > PAGE_LIMIT)
 		throw problem('source_unavailable', 'The post page is empty or too large.');
+	if (platform === 'xiaohongshu' && !(localOrigin && pageUrl?.startsWith(localOrigin + '/'))) {
+		const served = matchingTarget(pageUrl, {platform, id});
+		if (!served) throw postPageError(pageUrl);
+		sourceUrl = new URL('/explore/' + id, served.url).href;
+	}
 	const reader = {xiaohongshu, zhihu}[platform];
 	const media = mediaFor(localOrigin);
 	const parsed = reader
 		? reader(id, html, sourceUrl, media)
 		: openGraph(platform, id, html, sourceUrl, media);
 	if (parsed) return parsed;
-	const reason = blocked(html, pageUrl);
-	if (reason) throw problem(reason, 'The site asked for sign-in or verification.');
-	throw problem('source_unavailable', 'The page did not contain this post.');
+	throw postPageError(pageUrl);
 }
 
 const BROWSER_UA =
@@ -259,15 +270,35 @@ export const browserHeaders = (userAgent) => ({
 /** Read a post page from the native side. `cookie` belongs to this site only. */
 export async function fetchPostPage(
 	item,
-	{url, cookie, userAgent, signal, localOrigin, timeoutMs = 60_000} = {},
+	{
+		url = item.sourceUrl,
+		cookie,
+		cookieHeader,
+		userAgent,
+		signal,
+		localOrigin,
+		timeoutMs = 60_000,
+	} = {},
 ) {
 	const headers = browserHeaders(userAgent);
-	if (cookie) headers.cookie = cookie;
+	// A regional redirect can lead to the same note on another site with its own sign-in.
+	let cookieForUrl;
+	if (item.platform === 'xiaohongshu' && cookieHeader) {
+		cookieForUrl = (next) => {
+			if (matchingTarget(next.href, item) || next.origin === localOrigin)
+				return cookieHeader(next.href);
+			return '';
+		};
+	} else {
+		const initialCookie = cookie ?? (await cookieHeader?.(url));
+		if (initialCookie) headers.cookie = initialCookie;
+	}
 	// One stalled site must not hold the serial native queue.
 	const deadline = AbortSignal.timeout(timeoutMs);
 	const limit = signal ? AbortSignal.any([deadline, signal]) : deadline;
 	try {
-		const {response, url: finalUrl} = await openWeb(url || item.sourceUrl, {
+		const {response, url: finalUrl} = await openWeb(url, {
+			cookieForUrl,
 			signal: limit,
 			localOrigin,
 			headers,

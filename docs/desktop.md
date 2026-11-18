@@ -53,7 +53,9 @@ Beside the page is the same column as the browser extension: save the open post,
 
 ## Accounts
 
-Each site has a row showing **已登录**, **已过期** or **未登录**. **登录** opens the site in the built-in browser; **退出登录** clears that site's store. Add any other site by its address; for a site without a known session cookie, any cookie counts as signed in and the row says so. Being signed in is judged from the site's session cookies, and a site whose download was rejected shows as expired until you sign in again.
+Each site has a row showing **已登录**, **已过期** or **未登录**. **登录** opens the site in the built-in browser; **退出登录** clears that site's store. Add any other site by its address; for a site without a known session cookie, any cookie counts as signed in and the row says so. If a site rejects a signed-in download, Fetchy marks the session as expired.
+
+Xiaohongshu may redirect you to `rednote.com` after sign-in. Both domains use the same Fetchy account row. The site also gives guests a session cookie, so Fetchy checks whether the open page recognizes a signed-in user. After upgrading, open Xiaohongshu once in Fetchy to refresh its status.
 
 ```sh
 fetchy login bilibili     # opens the row's site in the app's browser

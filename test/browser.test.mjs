@@ -169,6 +169,22 @@ test('media URL validation preserves signatures but rejects cross-platform and d
 	assert.throws(() => validateMediaUrl(url, 'youtube'), {code: 'invalid_media_url'});
 });
 
+test('only known rednote video mirrors can serve Xiaohongshu video', () => {
+	for (const host of ['sns-v8.rednotecdn.com', 'sns-v8-ae.rednotecdn.com']) {
+		const url = 'https://' + host + '/video.mp4';
+		assert.equal(validateMediaUrl(url, 'xiaohongshu'), url);
+		assert.throws(() => validateMediaUrl(url, 'douyin'), {code: 'invalid_media_url'});
+	}
+	for (const host of [
+		'unknown.rednotecdn.com',
+		'other.sns-v8.rednotecdn.com',
+		'sns-v8.rednotecdn.com.example',
+	])
+		assert.throws(() => validateMediaUrl('https://' + host + '/v', 'xiaohongshu'), {
+			code: 'invalid_media_url',
+		});
+});
+
 test('media URL validation allows only verified Douyin zjcdn hosts', () => {
 	for (const host of ['v5-dy-ov-experiment.zjcdn.com', 'v3-dy-o.zjcdn.com']) {
 		const url = `https://${host}/media.mp4?sign=example%2B123`;
@@ -266,7 +282,10 @@ test('browser engines publish the resolved video title only after media validati
 		const target = {
 			platform,
 			id,
-			url: `https://www.${platform}.com/${platform === 'xiaohongshu' ? 'explore' : 'video'}/${id}`,
+			url:
+				platform === 'xiaohongshu'
+					? `https://www.rednote.com/explore/${id}?xsec_token=secret`
+					: `https://www.douyin.com/video/${id}`,
 		};
 		const title = '中文视频 第 1 集';
 		const url =
@@ -296,14 +315,12 @@ test('browser engines publish the resolved video title only after media validati
 				');\n',
 		);
 		await chmod(ffprobePath, 0o755);
-		const fetchMock = t.mock.method(
-			globalThis,
-			'fetch',
-			async () =>
-				new Response('test-media-data', {
-					headers: {'content-type': 'video/mp4', 'content-length': '15'},
-				}),
-		);
+		const fetchMock = t.mock.method(globalThis, 'fetch', async (_url, {headers}) => {
+			assert.equal(headers.referer, new URL(target.url).origin + '/');
+			return new Response('test-media-data', {
+				headers: {'content-type': 'video/mp4', 'content-length': '15'},
+			});
+		});
 		const outputDir = path.join(root, platform);
 		const options = {
 			pageMedia: {media, userAgent: 'test'},

@@ -25,6 +25,7 @@ Notable changes for users, following [Keep a Changelog](https://keepachangelog.c
 
 ### Fixed
 
+- Fetchy recognizes Xiaohongshu notes on `rednote.com` and keeps the same desktop account when the site redirects there after sign-in. Visiting the login page as a guest no longer counts as signing in.
 - The desktop app's built-in browser identifies as Safari, so Bilibili and similar sites no longer show an outdated-browser page.
 - Media downloads work behind fake-IP proxies that resolve names into 198.18.0.0/15.
 

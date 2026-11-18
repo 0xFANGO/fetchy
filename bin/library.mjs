@@ -19,12 +19,8 @@ import {siteCookieHeader, withSiteCookies} from './accounts.mjs';
 
 // A worker in this process reads post pages itself, with that site's desktop sign-in.
 const workerOptions = {
-	readDetails: async (item, {signal} = {}) =>
-		fetchPostPage(item, {
-			url: item.sourceUrl,
-			signal,
-			cookie: await siteCookieHeader(item.sourceUrl),
-		}),
+	readDetails: (item, {signal} = {}) =>
+		fetchPostPage(item, {signal, cookieHeader: siteCookieHeader}),
 	withSiteCookies,
 };
 

@@ -14,6 +14,7 @@ import {
 	renderWork,
 } from './content.mjs';
 import {browserHeaders} from './post-pages.mjs';
+import {matchingTarget} from '../urls.mjs';
 import {bilibiliFolderId, readBilibiliPage} from './bilibili.mjs';
 import {libraryRoot, openLibrary, problem, transaction, withWorker} from './storage.mjs';
 export {libraryRoot};
@@ -416,19 +417,23 @@ const errorCode = (e) =>
 // Media bytes are always fetched here, never relayed through the browser, so a
 // batch has no combined size limit. A failed file keeps its slot and reason.
 async function fillDetails(ctx, item, details, options) {
+	const served =
+		item.platform === 'xiaohongshu' && details.sourceUrl
+			? matchingTarget(details.sourceUrl, item)
+			: null;
 	const read = await normalizeEntry(
 		{
 			...details,
 			platform: item.platform,
 			id: item.id,
-			sourceUrl: item.sourceUrl,
+			sourceUrl: served?.url ?? item.sourceUrl,
 			attachments: (details.attachments ?? []).map(({kind, alt}) => ({kind, alt})),
 		},
 		null,
 		ctx.root,
 	);
 	const headers = {'user-agent': browserHeaders(details.userAgent)['user-agent']};
-	const referer = new URL(item.sourceUrl).origin + '/';
+	const referer = new URL(read.sourceUrl).origin + '/';
 	for (const [i, a] of read.attachments.entries()) {
 		const url = details.attachments[i]?.url;
 		delete a.missing;
@@ -450,6 +455,7 @@ async function fillDetails(ctx, item, details, options) {
 	}
 	delete item.readError;
 	Object.assign(item, {
+		sourceUrl: read.sourceUrl,
 		kind: details.kind === 'video' ? 'video' : item.kind,
 		title: read.title || item.title,
 		author: read.author || item.author,

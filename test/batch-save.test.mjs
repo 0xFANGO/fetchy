@@ -1,10 +1,15 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import {createServer} from 'node:http';
-import {mkdtemp, rm} from 'node:fs/promises';
+import dns from 'node:dns/promises';
+import https from 'node:https';
+import {syncBuiltinESMExports} from 'node:module';
+import {Readable} from 'node:stream';
+import {mkdir, mkdtemp, rm, writeFile} from 'node:fs/promises';
 import path from 'node:path';
 import {tmpdir} from 'node:os';
 import {LibraryBridge} from '../native/library-bridge.mjs';
+import {getOne} from '../bin/get.mjs';
 import {searchLibrary} from '../src/library/index.mjs';
 import {fetchPostPage, looseJson, parsePostPage} from '../src/library/post-pages.mjs';
 import {downloadAttachment} from '../src/library/content.mjs';
@@ -60,6 +65,30 @@ test('a Xiaohongshu page yields text and ordered media from its initial state', 
 		entry.attachments.map((a) => a.url ?? 'missing'),
 		['https://sns-img.xhscdn.com/1', 'missing'],
 	);
+});
+
+test('rednote pages accept regional media only from the registered CDN domains', () => {
+	const id = ids[0];
+	const pageUrl = 'https://www.rednote.com/explore/' + id;
+	const entry = parsePostPage(
+		listing(id),
+		xhsPage(id, {
+			images: [
+				'https://sns-web-i10.rednotecdn.com/one',
+				'https://rednotecdn.com.attacker.test/two',
+				'https://unlisted.rednote.com/three',
+			],
+		}),
+		pageUrl,
+	);
+	assert.equal(entry.sourceUrl, pageUrl);
+	assert.deepEqual(
+		entry.attachments.map((a) => a.url ?? 'missing'),
+		['https://sns-web-i10.rednotecdn.com/one', 'missing', 'missing'],
+	);
+	assert.equal(knownHost('sns-web-i10.rednotecdn.com'), true);
+	assert.equal(knownHost('www.rednote.com'), true);
+	assert.equal(knownHost('unlisted.rednote.com'), false);
 });
 
 test('a page for another note, a login wall and a captcha have distinct codes', () => {
@@ -151,6 +180,123 @@ test('a sign-in cookie follows a same-origin redirect and is dropped for any oth
 		}),
 		{referer: 'https://www.xiaohongshu.com/'},
 	);
+});
+
+function mockPages(t, reply) {
+	const dnsMock = t.mock.method(dns, 'lookup', async () => [{address: '203.100.0.1', family: 4}]);
+	syncBuiltinESMExports();
+	t.after(() => {
+		dnsMock.mock.restore();
+		syncBuiltinESMExports();
+	});
+	t.mock.method(https, 'get', (url, options, done) => {
+		const {html = '', status = 200, location} = reply(url, options.headers);
+		const response = Readable.from([Buffer.from(html)]);
+		response.statusCode = status;
+		response.headers = location ? {location} : {};
+		done(response);
+		return response;
+	});
+}
+
+test('a native regional redirect reads the destination’s own session only for the requested note', async (t) => {
+	const id = ids[0],
+		cn = 'https://www.xiaohongshu.com',
+		rednote = 'https://www.rednote.com';
+	const note = '/explore/' + id;
+	let next = rednote + note;
+	const sent = [],
+		lookups = [];
+	mockPages(t, (url, headers) => {
+		sent.push([url.origin, headers.cookie]);
+		return url.origin === cn ? {status: 302, location: next} : {html: xhsPage(id)};
+	});
+	const item = listing(id);
+	const options = {
+		cookieHeader: async (href) => {
+			lookups.push(href);
+			return new URL(href).origin === cn ? 'domestic=one' : 'regional=two';
+		},
+	};
+	const entry = await fetchPostPage(item, options);
+	assert.equal(entry.sourceUrl, rednote + note);
+	assert.deepEqual(sent, [
+		[cn, 'domestic=one'],
+		[rednote, 'regional=two'],
+	]);
+	for (const dest of [
+		'https://rednote.com.example.test' + note,
+		rednote + '/explore/' + ids[1],
+		rednote + '/login',
+	]) {
+		next = dest;
+		lookups.length = sent.length = 0;
+		await assert.rejects(fetchPostPage(item, options), {
+			code: dest.endsWith('/login') ? 'login_required' : 'source_unavailable',
+		});
+		assert.deepEqual(lookups, [item.sourceUrl]);
+		assert.equal(sent[1][1], undefined);
+	}
+});
+
+test('CLI info and get read a public Rednote note that yt-dlp does not recognise', async (t) => {
+	const dir = await mkdtemp(path.join(tmpdir(), 'fy-regional-get-'));
+	const app = path.join(dir, 'Fetchy.app'),
+		bin = path.join(app, 'Contents/MacOS');
+	await mkdir(bin, {recursive: true});
+	await writeFile(path.join(bin, 'Fetchy'), `#!/bin/sh\necho '{"ok":true,"cookies":[]}'\n`, {
+		mode: 0o700,
+	});
+	const oldDir = process.env.FETCHY_DATA_DIR,
+		oldApp = process.env.FETCHY_DESKTOP_APP;
+	process.env.FETCHY_DATA_DIR = dir;
+	process.env.FETCHY_DESKTOP_APP = app;
+	t.after(async () => {
+		if (oldDir === undefined) delete process.env.FETCHY_DATA_DIR;
+		else process.env.FETCHY_DATA_DIR = oldDir;
+		if (oldApp === undefined) delete process.env.FETCHY_DESKTOP_APP;
+		else process.env.FETCHY_DESKTOP_APP = oldApp;
+		await rm(dir, {recursive: true, force: true});
+	});
+	const ytDlpPath = path.join(dir, 'yt-dlp');
+	await writeFile(ytDlpPath, '#!/bin/sh\necho "unsupported url" >&2\nexit 1\n', {mode: 0o700});
+	const id = ids[0],
+		url = 'https://www.rednote.com/explore/' + id;
+	let status = 200,
+		reads = 0;
+	mockPages(t, (next, headers) => {
+		reads++;
+		assert.equal(next.href, url);
+		assert.equal(headers.cookie, undefined);
+		return {status, html: xhsPage(id)};
+	});
+	const opts = {
+		root: path.join(dir, 'lib'),
+		ytDlpPath,
+		fetchImpl: async () => new Response(null, {status: 302, headers: {location: url}}),
+	};
+	const info = await getOne('info', 'https://xhslink.com/example', opts);
+	assert.equal(info.id, id);
+	assert.equal(info.kind, 'post');
+	const saved = await getOne('get', url, opts);
+	assert.equal(saved.kind, 'post');
+	assert.equal((await searchLibrary({key: 'xiaohongshu:' + id}, opts))[0].sourceUrl, url);
+	for (const [action, flags] of [
+		['info', {audio: true}],
+		['get', {publicOnly: true}],
+	]) {
+		await assert.rejects(getOne(action, url, {...opts, ...flags}), {code: 'unsupported_content'});
+	}
+	assert.equal(reads, 2);
+	status = 403;
+	await assert.rejects(getOne('info', url, opts), {code: 'login_required'});
+	status = 404;
+	await assert.rejects(getOne('get', url, opts), {code: 'unavailable'});
+	await writeFile(ytDlpPath, '#!/bin/sh\necho "authentication required" >&2\nexit 1\n', {
+		mode: 0o700,
+	});
+	await assert.rejects(getOne('get', url, opts), {code: 'auth_required'});
+	assert.equal(reads, 4);
 });
 
 test('a post page that never answers times out instead of holding the queue', async (t) => {
@@ -276,7 +422,7 @@ test(
 		const fed = await bridge.request('libraryPage', {
 			id: task.id,
 			key: 'xiaohongshu:' + ids[0],
-			url: items[0].visitUrl,
+			url: items[0].visitUrl.replace('xiaohongshu.com', 'rednote.com'),
 			html: xhsPage(ids[0], {images: [origin + '/one.gif', origin + '/two.gif']}),
 			userAgent: 'TestBrowser/1',
 		});
@@ -303,6 +449,7 @@ test(
 		);
 		const [first] = await searchLibrary({key: 'xiaohongshu:' + ids[0]}, bridge.options);
 		assert.equal(first.body, 'Full text ' + ids[0]);
+		assert.equal(first.sourceUrl, 'https://www.rednote.com/explore/' + ids[0]);
 		assert.equal(first.attachments.filter((a) => a.path).length, 2);
 		const [second] = await searchLibrary({key: 'xiaohongshu:' + ids[1]}, bridge.options);
 		assert.deepEqual(
@@ -310,7 +457,11 @@ test(
 			['saved', 'network_error'],
 		);
 		const media = seen.filter((r) => r.path.endsWith('.gif'));
-		assert.ok(media.every((r) => r.referer === 'https://www.xiaohongshu.com/' && !r.cookie));
+		assert.ok(media.every((r) => !r.cookie));
+		assert.ok(media.some((r) => r.path === '/two.gif' && r.referer === 'https://www.rednote.com/'));
+		assert.ok(
+			media.some((r) => r.path === '/missing.gif' && r.referer === 'https://www.xiaohongshu.com/'),
+		);
 		assert.ok(!JSON.stringify(await searchLibrary({}, bridge.options)).includes('viewer-secret'));
 	},
 );

@@ -17,6 +17,7 @@ import {
 import {downloadAttachment, entryIdentity} from '../src/library/content.mjs';
 import {PAGE_LIMIT, fetchPostPage, parsePostPage} from '../src/library/post-pages.mjs';
 import {saveWebFile} from '../src/public-http.mjs';
+import {matchingTarget} from '../src/urls.mjs';
 import {LibraryUploads} from './library-upload.mjs';
 import {EngineError, runProcess} from '../src/process.mjs';
 
@@ -267,8 +268,13 @@ export class LibraryBridge {
 			await delay(250, undefined, {signal});
 		}
 		const url = this.visits.get(k) ?? item.sourceUrl;
-		const cookie = await (await this.session()).cookieHeader(url);
-		return fetchPostPage(item, {url, cookie, signal, localOrigin: this.options.localOrigin});
+		const session = await this.session();
+		return fetchPostPage(item, {
+			url,
+			cookieHeader: (href) => session.cookieHeader(href),
+			signal,
+			localOrigin: this.options.localOrigin,
+		});
 	}
 	async run(task, options, pending) {
 		const root = libraryRoot(options);
@@ -547,7 +553,11 @@ export class LibraryBridge {
 						if (typeof visit !== 'string' || visit.length > 4096) continue;
 						const local =
 							this.options.localOrigin && visit.startsWith(this.options.localOrigin + '/');
-						if (!local && !sameSite(visit, entry.sourceUrl)) continue;
+						const accepted =
+							entry.platform === 'xiaohongshu'
+								? matchingTarget(entry.sourceUrl, entry) && matchingTarget(visit, entry)
+								: sameSite(visit, entry.sourceUrl);
+						if (!local && !accepted) continue;
 						try {
 							visits.set(entryIdentity(entry).key, visit);
 						} catch {

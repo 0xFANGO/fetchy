@@ -6,7 +6,7 @@ import {open, rm} from 'node:fs/promises';
 import {pipeline} from 'node:stream/promises';
 import {Transform} from 'node:stream';
 import {EngineError} from './process.mjs';
-import {sites} from './sites/index.mjs';
+import {siteForHost, sites} from './sites/index.mjs';
 
 const excluded = new BlockList();
 for (const [network, prefix] of [
@@ -65,7 +65,10 @@ const knownDomains = [
 		'gifshow.com',
 	]),
 ];
-export const knownHost = (host) => knownDomains.some((d) => host === d || host.endsWith('.' + d));
+export function knownHost(host) {
+	if (host === 'rednote.com' || host.endsWith('.rednote.com')) return Boolean(siteForHost(host));
+	return knownDomains.some((d) => host === d || host.endsWith('.' + d));
+}
 export function publicAddress({address, family}, resolvedName = false) {
 	if (family === 4)
 		return !excluded.check(address, 'ipv4') || (resolvedName && fakeIp.check(address, 'ipv4'));
@@ -96,7 +99,7 @@ export const withoutCredentials = (headers) =>
 	);
 
 // Resolve once and use the vetted address for the connection, including after a redirect.
-export async function openWeb(input, {signal, localOrigin, headers = {}} = {}) {
+export async function openWeb(input, {signal, localOrigin, headers = {}, cookieForUrl} = {}) {
 	let url = webUrl(input);
 	for (let hop = 0; hop < 7; hop++) {
 		signal?.throwIfAborted();
@@ -124,6 +127,8 @@ export async function openWeb(input, {signal, localOrigin, headers = {}} = {}) {
 			)
 		)
 			throw new EngineError('invalid_url', '此地址不属于允许读取的网络范围。');
+		// A per-URL lookup applies only to this request. Never reuse its result on a redirect.
+		const requestCookie = await cookieForUrl?.(url);
 		const transport = url.protocol === 'https:' ? https : http;
 		const response = await new Promise((resolve, reject) => {
 			const req = transport.get(
@@ -131,7 +136,12 @@ export async function openWeb(input, {signal, localOrigin, headers = {}} = {}) {
 				{
 					agent: false,
 					signal,
-					headers: {'user-agent': 'Fetchy/1.0', 'accept-encoding': 'identity', ...headers},
+					headers: {
+						'user-agent': 'Fetchy/1.0',
+						'accept-encoding': 'identity',
+						...headers,
+						...(requestCookie ? {cookie: requestCookie} : {}),
+					},
 					lookup: (_name, options, done) =>
 						options.all ? done(null, records) : done(null, records[0].address, records[0].family),
 				},

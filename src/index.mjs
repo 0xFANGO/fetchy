@@ -1,5 +1,5 @@
 import {siteForPlatform, usesPageMedia} from './sites/index.mjs';
-import {normalizeUrl, resolveTarget} from './urls.mjs';
+import {matchingTarget, normalizeUrl, resolveTarget} from './urls.mjs';
 import {resolveWithYtDlp, downloadWithYtDlp} from './yt-dlp.mjs';
 import {resolveWithBrowser, downloadWithBrowser} from './browser.mjs';
 import {EngineError} from './process.mjs';
@@ -33,6 +33,15 @@ async function inputTarget(input, options) {
 		)
 			throw new EngineError('identity_mismatch', '浏览器展开的页面与目标视频不一致。');
 		return resolved;
+	}
+	if (
+		target.platform === 'xiaohongshu' &&
+		!target.needsRedirect &&
+		options.engine !== 'yt-dlp' &&
+		options.pageMedia?.resolvedUrl
+	) {
+		// A logged-in tab may have followed the same note to the other regional domain.
+		return matchingTarget(options.pageMedia.resolvedUrl, target) ?? target;
 	}
 	return target.needsRedirect ? resolveTarget(input, options) : target;
 }

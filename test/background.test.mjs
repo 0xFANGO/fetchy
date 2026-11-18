@@ -1,6 +1,7 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import vm from 'node:vm';
+import {readFile} from 'node:fs/promises';
 import {resolveVideo} from '../src/index.mjs';
 import {normalizeUrl} from '../src/urls.mjs';
 import {extractPageMedia} from '../src/page-extract.mjs';
@@ -15,6 +16,9 @@ function event() {
 }
 
 test('background reads page media only from an open tab of the exact video and never opens a tab', async () => {
+	const manifest = JSON.parse(
+		await readFile(new URL('../extension/manifest.json', import.meta.url)),
+	);
 	for (const target of [
 		{
 			platform: 'xiaohongshu',
@@ -29,6 +33,13 @@ test('background reads page media only from an open tab of the exact video and n
 			id: '6adb92b90000000031037a66',
 			input: 'https://www.xiaohongshu.com/explore/6adb92b90000000031037a66',
 			url: 'https://www.xiaohongshu.com/explore/6adb92b90000000031037a66?xsec_token=BROWSER_ONLY_TOKEN',
+			cdn: 'https://sns-video.xhscdn.com/a.mp4',
+		},
+		{
+			platform: 'xiaohongshu',
+			id: '6adb92b90000000031037a66',
+			input: 'https://www.xiaohongshu.com/explore/6adb92b90000000031037a66',
+			url: 'https://www.rednote.com/explore/6adb92b90000000031037a66?xsec_token=BROWSER_ONLY_TOKEN',
 			cdn: 'https://sns-video.xhscdn.com/a.mp4',
 		},
 		{
@@ -93,7 +104,16 @@ test('background reads page media only from an open tab of the exact video and n
 				onUpdated: event(),
 				onActivated: event(),
 				// A short link has no open page of its own.
-				query: async () => (target.shortLink ? [] : [{id: 42, url: target.url}]),
+				query: async (query) => {
+					if (query.url && target.url.includes('rednote.com')) {
+						for (const host of ['rednote.com', 'www.rednote.com']) {
+							assert.ok(query.url.includes('https://' + host + '/*'));
+							assert.ok(manifest.host_permissions.includes('https://' + host + '/*'));
+						}
+						assert.ok(!manifest.host_permissions.includes('https://*.rednote.com/*'));
+					}
+					return target.shortLink ? [] : [{id: 42, url: target.url}];
+				},
 				create: async (options) => {
 					created.push(options);
 					return {id: 42};
@@ -151,7 +171,7 @@ test('background reads page media only from an open tab of the exact video and n
 		globalThis.chrome = chrome;
 		try {
 			await import(
-				`../extension/background.mjs?tab-test=${target.platform}-${target.reuse}-${target.shortLink}`
+				`../extension/background.mjs?tab-test=${target.platform}-${new URL(target.url).hostname}-${target.reuse}-${target.shortLink}`
 			);
 			chrome.runtime.onConnect.listener(popup);
 			const action = (name, data = {}) =>
@@ -172,7 +192,7 @@ test('background reads page media only from an open tab of the exact video and n
 			);
 			for (const {params} of requests) {
 				assert.equal(params.input, target.input);
-				assert.equal(params.pageMedia.resolvedUrl, normalizeUrl(target.input).url);
+				assert.equal(params.pageMedia.resolvedUrl, normalizeUrl(target.url.split('?')[0]).url);
 				assert.equal(params.pageMedia.media.id, target.id);
 			}
 			assert.doesNotMatch(

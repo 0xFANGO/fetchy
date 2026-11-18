@@ -23,6 +23,29 @@ test('sample identities and timestamps survive normalization without tracking', 
 	assert.equal(new URL(note.url).searchParams.get('xsec_token'), 'a+b=');
 	assert.equal(new URL(note.url).searchParams.has('tracking'), false);
 });
+test('rednote shares and collection cards retain their serving host and note identity', async () => {
+	const id = '6adb92b90000000031037a66';
+	for (const host of ['rednote.com', 'www.rednote.com']) {
+		for (const prefix of ['explore', 'discovery/item', 'board/saved', 'user/profile/ab12']) {
+			const target = normalizeUrl(`https://${host}/${prefix}/${id}?xsec_token=a%2Bb&tracking=1`);
+			assert.equal(target.platform, 'xiaohongshu');
+			assert.equal(target.id, id);
+			assert.equal(target.url, `https://${host}/explore/${id}?xsec_token=a%2Bb`);
+		}
+	}
+	const resolved = await resolveTarget('https://xhslink.com/example', {
+		fetchImpl: async () =>
+			new Response(null, {
+				status: 302,
+				headers: {location: `https://www.rednote.com/explore/${id}`},
+			}),
+	});
+	assert.equal(resolved.url, `https://www.rednote.com/explore/${id}`);
+	for (const host of ['evilrednote.com', 'rednote.com.evil.test', 'other.rednote.com'])
+		assert.throws(() => normalizeUrl(`https://${host}/explore/${id}`), {
+			code: 'unsupported_platform',
+		});
+});
 test('share prose, short YouTube URL, and long timestamp', () => {
 	assert.equal(
 		normalizeUrl('来看看 https://youtu.be/EWvNQjAaOHw?t=1h15m38s 复制打开').startTimeSeconds,

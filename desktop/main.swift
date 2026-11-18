@@ -101,6 +101,7 @@ func otherWindowInstance() -> NSRunningApplication? {
     guard let raw = notification.object as? String, let profile = UUID(uuidString: raw) else {
       return
     }
+    XiaohongshuLogin.shared.forget(profile)
     WKWebsiteDataStore(forIdentifier: profile).removeData(
       ofTypes: WKWebsiteDataStore.allWebsiteDataTypes(), modifiedSince: .distantPast
     ) { [weak self] in
@@ -145,6 +146,7 @@ func otherWindowInstance() -> NSRunningApplication? {
       BrowserSession.respond(["ok": false, "error": "invalid_options"], 1)
     }
     if mode == "logout", args.count == 2 {
+      XiaohongshuLogin.shared.forget(id)
       DistributedNotificationCenter.default().postNotificationName(
         Notification.Name("app.fetchy.desktop.logout." + id.uuidString), object: nil,
         userInfo: nil, deliverImmediately: true)
@@ -188,8 +190,7 @@ func otherWindowInstance() -> NSRunningApplication? {
     }
     configuration.websiteDataStore.httpCookieStore.getAllCookies { cookies in
       let rows: [[String: Any]] = cookies.filter { cookie in
-        let domain = cookie.domain.hasPrefix(".") ? String(cookie.domain.dropFirst()) : cookie.domain
-        return hosts.contains { $0 == domain || $0.hasSuffix("." + domain) }
+        hosts.contains { cookie.matches(host: $0) } && XiaohongshuLogin.shared.mayUse(cookie, profile: profile)
       }.map { cookie in
         [
           "name": cookie.name, "value": cookie.value, "domain": cookie.domain, "path": cookie.path,
@@ -199,7 +200,7 @@ func otherWindowInstance() -> NSRunningApplication? {
       }
       // WebKit calls back on the main thread.
       MainActor.assumeIsolated { () -> Void in
-        BrowserSession.respond(["ok": true, "cookies": rows])
+        BrowserSession.respond(["ok": true, "cookies": rows, "xiaohongshuSessionVerification": 1])
       }
     }
   }

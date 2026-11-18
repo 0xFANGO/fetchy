@@ -101,7 +101,7 @@ npm run native:install -- --browser chrome # 注册 native host；Ego Lite 用 -
 
 只下载视频时默认保存到 `~/Downloads/Fetchy`。点击右侧栏底部的目录即可更改。
 
-Fetchy 读取页面时不打开新标签页。小红书和抖音视频直接从已打开的视频页读取播放数据。短链需要先在浏览器里打开。用的是你当前浏览器的登录态。申请的权限：`activeTab`、`storage`、`nativeMessaging`、`scripting`、`sidePanel`，以及 `xiaohongshu.com`、`douyin.com` 和 `iesdouyin.com` 的站点访问权限。
+Fetchy 读取页面时不打开新标签页。小红书和抖音视频直接从已打开的视频页读取播放数据。短链需要先在浏览器里打开。用的是你当前浏览器的登录态。申请的权限：`activeTab`、`storage`、`nativeMessaging`、`scripting`、`sidePanel`，以及 `xiaohongshu.com`、`rednote.com`、`douyin.com` 和 `iesdouyin.com` 的站点访问权限。
 
 各浏览器和站点的实测结果见[扩展验证记录](docs/extension-validation.md)。注册本地组件、登录及故障排查见[安装说明](docs/extension-install.md)。
 
