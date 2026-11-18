@@ -3,7 +3,7 @@ import test from 'node:test';
 import path from 'node:path';
 import {runProcess} from '../src/process.mjs';
 import {tmpdir} from 'node:os';
-import {mkdtemp, rm, writeFile, readFile, readdir} from 'node:fs/promises';
+import {mkdtemp, rm, stat, writeFile, readFile, readdir} from 'node:fs/promises';
 import {
 	importLibrary,
 	prepareLibraryTask,
@@ -11,6 +11,8 @@ import {
 	getLibraryTask,
 	searchLibrary,
 	exportLibrary,
+	removeLibraryWorks,
+	renameLibraryWork,
 	readBilibiliPage,
 	discoverBilibiliFolders,
 } from '../src/library/index.mjs';
@@ -461,4 +463,51 @@ test('retry selection only touches requested failed items and leaves completed r
 	const rest = await runLibraryTask(failed.id, {...opts, retryFailed: true, downloadVideo});
 	assert.equal(rest.counts.failed, 0);
 	assert.deepEqual(attempted, ['702', '701']);
+});
+
+test('renaming keeps the new title through later saves; removing leaves media another work still uses', async (t) => {
+	const opts = await setup(t);
+	const image = {kind: 'image', mimeType: 'image/png', data: png};
+	await importLibrary(
+		manifest([post('1', {attachments: [image]}), post('2', {attachments: [image]})]),
+		opts,
+	);
+	assert.deepEqual(await renameLibraryWork('x:1', '  My  name ', opts), {
+		key: 'x:1',
+		title: 'My name',
+	});
+	await importLibrary(manifest([post('1', {attachments: [image], body: 'Edited'})]), opts);
+	const [renamed] = await searchLibrary({key: 'x:1'}, opts);
+	assert.equal(renamed.customTitle, 'My name');
+	assert.equal(renamed.title, 'Title 1');
+	assert.match(await readFile(renamed.filepath, 'utf8'), /<h1>My name<\/h1>/);
+	assert.equal((await searchLibrary({query: 'my name'}, opts)).length, 1);
+	await renameLibraryWork('x:1', '', opts);
+	assert.equal((await searchLibrary({key: 'x:1'}, opts))[0].customTitle, undefined);
+
+	const [shared] = (await searchLibrary({key: 'x:2'}, opts))[0].attachments;
+	const first = await removeLibraryWorks(['x:1'], opts);
+	assert.deepEqual(first.removed, ['x:1']);
+	assert.deepEqual(first.files, [path.dirname(renamed.filepath)]);
+	const second = await removeLibraryWorks(['x:2', 'x:missing'], opts);
+	assert.deepEqual(second.removed, ['x:2']);
+	assert.ok(second.files.includes(path.join(opts.root, shared.path)));
+	assert.equal((await searchLibrary({}, opts)).length, 0);
+	await assert.rejects(renameLibraryWork('x:2', 'Gone', opts), {code: 'not_found'});
+	await assert.rejects(removeLibraryWorks('x:1', opts), {code: 'invalid_options'});
+	await stat(path.join(opts.root, shared.path));
+});
+test('task entries carry the title and link of entries that never saved', async (t) => {
+	const opts = await setup(t);
+	const task = await importLibrary(
+		manifest([post('1'), post('2', {coverage: 'unavailable_resource', title: 'Gone post'})]),
+		opts,
+	);
+	const items = (await getLibraryTask(task.id, opts)).items;
+	const gone = items.find((i) => i.key === 'x:2');
+	assert.equal(gone.status, 'failed');
+	assert.equal(gone.title, 'Gone post');
+	assert.equal(gone.sourceUrl, 'https://x.com/sample/status/2');
+	assert.equal(gone.platform, 'x');
+	assert.equal(gone.filepath, null);
 });

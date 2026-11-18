@@ -35,7 +35,7 @@ https://github.com/user-attachments/assets/e5ebb617-7dd1-4369-b044-b7e8900cb662
 
 ## 桌面端和本地资料库
 
-在 macOS 14 及以上运行 `npm run desktop:build` 即可构建可双击的 Fetchy.app。桌面端只有一个窗口，分三个区：封面网格形式的资料库、带右侧栏的内置浏览器、账号。在「账号」里登录一次，扩展、命令行和桌面端下载时都会用到。资料库需要 Node 22.13 或更高版本。[桌面端设置](docs/desktop.md) · [收藏清单与命令](docs/library.md)
+在 macOS 14 及以上运行 `npm run desktop:build` 即可构建可双击的 Fetchy.app。桌面端只有一个窗口，分三个区：资料库（封面或列表显示，可多选后打开、在访达中显示、重命名或删除）、带右侧栏的内置浏览器、账号。在「账号」里登录一次，扩展、命令行和桌面端下载时都会用到。资料库需要 Node 22.13 或更高版本。[桌面端设置](docs/desktop.md) · [收藏清单与命令](docs/library.md)
 
 ```sh
 fetchy '<链接>'                      # 保存到资料库，同 fetchy get

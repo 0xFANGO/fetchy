@@ -37,7 +37,7 @@ The registry also includes single-link adapters for Facebook, TikTok, Bluesky, R
 
 ## Desktop and local library
 
-Build a double-clickable Fetchy.app with `npm run desktop:build` on macOS 14 or later. It is one window with three areas: the library as a cover grid, a built-in browser with the same side column as the extension, and accounts. Sign in to a site once under accounts; the extension, the CLI and the app then use that sign-in for downloads. The library requires Node 22.13 or later. [Desktop setup](docs/desktop.md) · [Archive format and commands](docs/library.md)
+Build a double-clickable Fetchy.app with `npm run desktop:build` on macOS 14 or later. It is one window with three areas: the library as a cover grid or list where you can select, rename, reveal in Finder or delete works, a built-in browser with the same side column as the extension, and accounts. Sign in to a site once under accounts; the extension, the CLI and the app then use that sign-in for downloads. The library requires Node 22.13 or later. [Desktop setup](docs/desktop.md) · [Archive format and commands](docs/library.md)
 
 ```sh
 fetchy '<URL>'                       # save to the library (same as fetchy get)

@@ -13,6 +13,8 @@ Notable changes for users, following [Keep a Changelog](https://keepachangelog.c
 - Open the extension in Chrome's side panel beside the current page to save a post, read a collection one screen at a time or to the end, and save the selected entries.
 - Saving selected collection entries starts at once from the list and keeps going after the panel or browser closes. The local component downloads every file, with no combined size limit, and each entry records its result and reason and can be retried on its own.
 - The macOS app is one window with a cover-grid library, a built-in browser with the same side column, and an accounts list showing whether each site is signed in, expired or signed out.
+- Select works in the desktop library one by one, by range or all at once, and open them, show their files in Finder, rename them or move them to the Trash. A list view sits beside the cover grid.
+- The desktop sidebar counts works by type, platform and original folder. Save tasks split into in progress, with progress bars, and needs attention, where failed and partial entries are grouped by reason with the next step and a retry for the group.
 - Sign in once in the desktop app; the CLI, the extension's saves and the app pass that site's cookies to the downloader only for that site's downloads. New commands `login`, `logout`, `accounts`, `folders`, `sync`, `list`, `search` and `retry`; `get` accepts `-o` and `--audio`, and a bare link saves like `get`.
 
 ### Changed
@@ -23,6 +25,7 @@ Notable changes for users, following [Keep a Changelog](https://keepachangelog.c
 
 ### Fixed
 
+- The desktop app's built-in browser identifies as Safari, so Bilibili and similar sites no longer show an outdated-browser page.
 - Media downloads work behind fake-IP proxies that resolve names into 198.18.0.0/15.
 
 ## [0.3.1] - 2026-11-02

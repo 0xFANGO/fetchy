@@ -43,11 +43,6 @@ struct AccountsPane: View {
 
   var body: some View {
     VStack(alignment: .leading, spacing: 14) {
-      HStack {
-        Text("账号").font(.title.bold())
-        Spacer()
-        Button("刷新") { Task { await refresh() } }.disabled(busy)
-      }
       Text("在这里登录一次，浏览器扩展、命令行和桌面端的下载都会用到。登录只在 Fetchy 的内置浏览器里进行。")
         .foregroundStyle(.secondary).fixedSize(horizontal: false, vertical: true)
       ScrollViewReader { proxy in
@@ -82,6 +77,17 @@ struct AccountsPane: View {
       if !notice.isEmpty { Text(notice).foregroundStyle(.secondary) }
     }
     .padding(22)
+    .navigationTitle("账号")
+    .toolbar {
+      ToolbarItem {
+        Button {
+          Task { await refresh() }
+        } label: {
+          Label("刷新", systemImage: "arrow.clockwise")
+        }
+        .disabled(busy).help("重新检查各网站的登录状态")
+      }
+    }
     .task { await refresh() }
     .onChange(of: app.pane) { _, pane in if pane == .accounts { Task { await refresh() } } }
   }

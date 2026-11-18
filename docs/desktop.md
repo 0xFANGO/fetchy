@@ -24,17 +24,30 @@ open dist/Fetchy.app
 
 You can now double-click **Fetchy.app** in Finder, or copy it to Applications. The app contains the JavaScript implementation and records the local Node and media-tool installation paths at build time. Rebuild after moving those tools or updating the source. The browser extension and its native-host registration are optional for the desktop app.
 
-The app is one window with three areas in its sidebar: **资料库**, **浏览器** and **账号**.
+The app is one window. Its sidebar groups the library (**全部作品**, **视频**, **图文**, **文章**), save tasks (**进行中**, **需要处理**), the sites (**浏览器**, **账号**), and the platforms and original folders found in the library. Each row shows its count.
 
 ## Library
 
-Saved works appear as a cover grid. Paste a link into the field at the top and click **保存**; type anything else to search titles, authors and text. Filter by **全部**, **视频**, **图文** or **文章**, and by platform or original folder. Click a card to open its offline page; the context menu reveals it in Finder or opens the original post in the built-in browser.
+Saved works appear as a cover grid or, with the toolbar switch, as a list with type, source, author and folder columns. Type in the toolbar search field to search titles, authors and text. Paste a link instead and a bar offers **保存到资料库**; pressing Return does the same.
 
-**进行中与失败** lists unfinished saves. Each failed or partial entry shows its reason and the next step: **去登录后重试** takes you to that site's row under accounts, **重试** saves that entry again, and **重试失败项** retries a whole task. **更多 → 导入收藏清单…** previews a Fetchy JSON collection manifest so you can tick items before saving. A manifest containing local attachments must keep them under its own directory.
+Click a card to select it, Command-click to add or remove one, Shift-click to select a range, and Command-A to select everything shown. Double-click opens the offline page. With a selection, the bar at the bottom and the context menu offer:
+
+- **打开** the offline pages.
+- **在访达中显示** the saved images and videos, or the offline page when a work has no media. Media files are stored once under content-hash names in the library's `media` folder, so two works that share an image point at the same file.
+- **重命名** the title shown in Fetchy and on the offline page. The new title survives later saves of the same post; an empty title restores the one read from the site.
+- **删除** the selected works. Their offline pages, and images and videos that no other work uses, move to the Trash. Task history stays, and saving the same post again downloads it afresh.
+
+**更多** also opens the library folder in Finder and imports a Fetchy JSON collection manifest, which you can preview and tick before saving. A manifest containing local attachments must keep them under its own directory.
+
+## Save tasks
+
+**进行中** shows each running, queued or interrupted save with its progress, followed by recently finished saves. An interrupted task has **继续**.
+
+**需要处理** lists failed and partial entries, grouped by task and then by reason. Each group says what went wrong, how many entries it covers and what to do next, for example signing in, opening the original post to pass a verification, or simply retrying. Groups have **重试这 n 条**, sign-in reasons add **去登录**, and each entry shows its title and source with **打开原帖**, **离线页** for partial saves, and **重试**.
 
 ## Built-in browser
 
-The browser sits in the main window with an address bar, back, forward and reload. The bar shows whether the current site is signed in. Each site keeps its own WebKit store; registered aliases of the same service share one, while PeerTube instances, tenant-owned Bandcamp or Tumblr hosts and other origins get their own. A link inside a page stays in the current store, so a sign-in that passes through another domain completes. A page that opens a new window continues in the same view.
+The browser sits in the main window with an address bar, back, forward and reload. The bar shows whether the current site is signed in. Its web views identify as the Safari installed on the Mac, because some sites, Bilibili among them, refuse WebKit's default user agent with an outdated-browser page. Each site keeps its own WebKit store; registered aliases of the same service share one, while PeerTube instances, tenant-owned Bandcamp or Tumblr hosts and other origins get their own. A link inside a page stays in the current store, so a sign-in that passes through another domain completes. A page that opens a new window continues in the same view.
 
 Beside the page is the same column as the browser extension: save the open post, read and select a collection, or save media the page has played. Saving hands the list to the local component and then reads each post page from the open page.
 

@@ -47,9 +47,15 @@ try {
 		'SwiftUI',
 		'-o',
 		binary,
-		...['main.swift', 'Workspace.swift', 'Session.swift', 'Browser.swift', 'Accounts.swift'].map(
-			(name) => path.join(root, 'desktop', name),
-		),
+		...[
+			'main.swift',
+			'Workspace.swift',
+			'Library.swift',
+			'Tasks.swift',
+			'Session.swift',
+			'Browser.swift',
+			'Accounts.swift',
+		].map((name) => path.join(root, 'desktop', name)),
 	]);
 	for (const directory of ['bin', 'src', 'native'])
 		await cp(path.join(root, directory), path.join(app, directory), {recursive: true});

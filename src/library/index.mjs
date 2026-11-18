@@ -4,6 +4,7 @@ import {tmpdir} from 'node:os';
 import path from 'node:path';
 import {downloadVideo as defaultDownload} from '../index.mjs';
 import {
+	displayTitle,
 	downloadAttachment,
 	entryIdentity,
 	folderOf,
@@ -270,15 +271,23 @@ function taskResult(ctx, id, details = true) {
 	if (details)
 		task.items = db
 			.prepare(
-				'SELECT i.key,i.status,i.reason,w.record FROM items i LEFT JOIN works w ON i.key=w.key WHERE i.task=? ORDER BY i.rowid',
+				'SELECT i.key,i.status,i.reason,i.input,w.record FROM items i LEFT JOIN works w ON i.key=w.key WHERE i.task=? ORDER BY i.rowid',
 			)
 			.all(id)
-			.map(({key, status, reason, record}) => ({
-				key,
-				status,
-				reason,
-				filepath: record ? workFile(root, JSON.parse(record)) : null,
-			}));
+			.map(({key, status, reason, input, record}) => {
+				const work = record ? JSON.parse(record) : null;
+				const entry = work ?? JSON.parse(input);
+				return {
+					key,
+					status,
+					reason,
+					title: entry.customTitle || entry.title || '',
+					author: entry.author ?? '',
+					platform: entry.platform ?? key.split(':')[0],
+					sourceUrl: entry.sourceUrl ?? null,
+					filepath: work ? workFile(root, work) : null,
+				};
+			});
 	return task;
 }
 export async function prepareLibraryTask(manifest, options = {}) {
@@ -766,6 +775,7 @@ export async function searchLibrary(filters = {}, options = {}) {
 					(!filters.topic || x.topics.includes(filters.topic)) &&
 					(!q ||
 						[
+							x.customTitle,
 							x.title,
 							x.author,
 							x.body,
@@ -783,4 +793,65 @@ export async function searchLibrary(filters = {}, options = {}) {
 export async function exportLibrary(filters = {}, options = {}) {
 	const rows = await searchLibrary(filters, options);
 	return {version: 1, items: rows.map(({filepath, ...record}) => record)};
+}
+
+const ownMedia = (root, relative) => {
+	const file = path.resolve(root, relative);
+	return file.startsWith(path.join(root, 'media') + path.sep) ? file : null;
+};
+/**
+ * Forget saved works. Returns the files that belonged only to them, for the caller to
+ * move to the Trash; media shared with another work stays. Task history is kept, and
+ * saving the same entry again downloads it afresh.
+ */
+export async function removeLibraryWorks(keys, options = {}) {
+	if (!Array.isArray(keys) || !keys.every((k) => typeof k === 'string' && k))
+		throw problem('invalid_options', 'Pass the platform:id keys to remove.');
+	const ctx = await openLibrary(options);
+	try {
+		const wanted = new Set(keys);
+		const removed = [];
+		const kept = new Set();
+		transaction(ctx.db, () => {
+			for (const {key, record} of ctx.db.prepare('SELECT key, record FROM works').all()) {
+				const work = JSON.parse(record);
+				if (!wanted.has(key)) {
+					for (const a of work.attachments) if (a.path) kept.add(path.resolve(ctx.root, a.path));
+					continue;
+				}
+				removed.push(work);
+				ctx.db.prepare('DELETE FROM works WHERE key=?').run(key);
+			}
+		});
+		const files = new Set();
+		for (const work of removed) {
+			files.add(path.dirname(workFile(ctx.root, work)));
+			for (const a of work.attachments) {
+				const file = a.path && ownMedia(ctx.root, a.path);
+				if (file && !kept.has(file)) files.add(file);
+			}
+		}
+		return {removed: removed.map((w) => w.key), files: [...files]};
+	} finally {
+		ctx.db.close();
+	}
+}
+/** Give a saved work its own title; an empty title returns to the one read from the site. */
+export async function renameLibraryWork(key, title, options = {}) {
+	if (typeof key !== 'string' || typeof title !== 'string' || title.length > 512)
+		throw problem('invalid_options', 'Pass a key and a title of at most 512 characters.');
+	const ctx = await openLibrary(options);
+	try {
+		const row = ctx.db.prepare('SELECT record FROM works WHERE key=?').get(key);
+		if (!row) throw problem('not_found', 'No such saved work.');
+		const work = JSON.parse(row.record);
+		const value = title.replace(/\s+/g, ' ').trim();
+		if (value && value !== work.title) work.customTitle = value;
+		else delete work.customTitle;
+		await renderWork(ctx.root, work);
+		ctx.db.prepare('UPDATE works SET record=? WHERE key=?').run(JSON.stringify(work), key);
+		return {key, title: displayTitle(work)};
+	} finally {
+		ctx.db.close();
+	}
 }

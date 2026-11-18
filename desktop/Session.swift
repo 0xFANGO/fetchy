@@ -27,6 +27,7 @@ final class BrowserSession: NSObject, WKNavigationDelegate, WKDownloadDelegate, 
     let configuration = WKWebViewConfiguration()
     configuration.websiteDataStore = WKWebsiteDataStore(forIdentifier: profile)
     configuration.mediaTypesRequiringUserActionForPlayback = []
+    configuration.applicationNameForUserAgent = safariUserAgent
     view = WKWebView(
       frame: NSRect(x: 0, y: 0, width: 1000, height: 720), configuration: configuration)
     super.init()

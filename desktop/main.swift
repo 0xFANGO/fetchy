@@ -58,13 +58,19 @@ func otherWindowInstance() -> NSRunningApplication? {
           .joined()
         return UserDefaults(suiteName: "app.fetchy.desktop." + key)
       } ?? .standard
-    let host = NSHostingView(
+    let host = NSHostingController(
       rootView: MainView().environmentObject(state).defaultAppStorage(defaults))
+    // The panes' titles, search field and toolbar buttons go into the window's own toolbar.
+    host.sceneBridgingOptions = [.toolbars, .title]
+    host.sizingOptions = [.minSize]
     let panel = NSWindow(
       contentRect: NSRect(x: 0, y: 0, width: 1180, height: 760),
-      styleMask: [.titled, .closable, .resizable, .miniaturizable], backing: .buffered, defer: false
+      styleMask: [.titled, .closable, .resizable, .miniaturizable, .fullSizeContentView],
+      backing: .buffered, defer: false
     )
-    panel.contentView = host
+    panel.contentViewController = host
+    panel.toolbarStyle = .unified
+    panel.setContentSize(NSSize(width: 1180, height: 760))
     panel.title = "Fetchy"
     panel.isReleasedWhenClosed = false
     panel.setFrameAutosaveName("FetchyMain")

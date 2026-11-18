@@ -184,3 +184,34 @@ test('native retry forwards selected keys without retrying other failed items', 
 	await bridge.tail;
 	assert.deepEqual(attempts, [items[1].sourceUrl]);
 });
+
+test('the desktop library counts works by kind, filters search by kind and removes works', async (t) => {
+	const {dir} = await fixture(t, imageResponse);
+	const bridge = new LibraryBridge(dir);
+	const items = [
+		{...post('79001', [inline]), title: 'Pictures'},
+		{...post('79002', []), title: 'Long read', bodyFormat: 'markdown'},
+	];
+	await bridge.request('libraryStart', {manifest: {version: 1, items}});
+	await bridge.tail;
+	assert.deepEqual(await bridge.request('libraryStats', {}), {
+		root: path.join(dir, 'library'),
+		total: 2,
+		kinds: {post: 1, article: 1},
+		platforms: {x: 2},
+		folders: {},
+	});
+	const [article] = await bridge.request('librarySearch', {filters: {kind: 'article'}});
+	assert.equal(article.title, 'Long read');
+	const [picture] = await bridge.request('librarySearch', {filters: {kind: 'post'}});
+	assert.equal(picture.files.length, 1);
+	await bridge.request('libraryRename', {key: 'x:79001', title: 'Renamed'});
+	assert.equal(
+		(await bridge.request('librarySearch', {filters: {key: 'x:79001'}}))[0].title,
+		'Renamed',
+	);
+	const removed = await bridge.request('libraryRemove', {keys: ['x:79001']});
+	assert.deepEqual(removed.removed, ['x:79001']);
+	assert.ok(removed.files.includes(picture.files[0]));
+	assert.equal((await bridge.request('libraryStats', {})).total, 1);
+});

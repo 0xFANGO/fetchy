@@ -9,6 +9,8 @@ import {
 	markLibraryTaskInterrupted,
 	markLibraryTaskQueued,
 	prepareLibraryTask,
+	removeLibraryWorks,
+	renameLibraryWork,
 	runLibraryTask,
 	searchLibrary,
 } from '../src/library/index.mjs';
@@ -66,6 +68,14 @@ function boundedRows(rows, budget) {
 		used += Buffer.byteLength(JSON.stringify(row)) + 1;
 		return used <= budget;
 	});
+}
+/** video, post (images and text) or article (long text), for the desktop filters. */
+function desktopKind({kind, platform, bodyFormat, attachments}) {
+	if (kind === 'video' || kind === 'audio') return kind;
+	return bodyFormat === 'markdown' ||
+		(platform === 'zhihu' && !attachments.some((a) => a.kind === 'video'))
+		? 'article'
+		: 'post';
 }
 function summary(task, offset = 0) {
 	const {items, folders, ...record} = task;
@@ -427,8 +437,13 @@ export class LibraryBridge {
 					this.options,
 				);
 				const root = libraryRoot(this.options);
+				const kind = params.filters?.kind;
 				return boundedRows(
 					results
+						.filter((work) => {
+							const k = desktopKind(work);
+							return !kind || k === kind || (kind === 'video' && k === 'audio');
+						})
 						.slice(params.offset || 0)
 						.slice(0, Math.min(100, Number(params.filters?.limit) || 100))
 						.map(
@@ -437,6 +452,7 @@ export class LibraryBridge {
 								id,
 								key,
 								title,
+								customTitle,
 								author,
 								filepath,
 								status,
@@ -455,20 +471,15 @@ export class LibraryBridge {
 									platform,
 									id,
 									key,
-									title,
+									title: customTitle || title,
 									author,
 									filepath,
 									status,
 									sourceUrl,
-									// video, post (images and text) or article (long text), for the desktop filters.
-									kind:
-										kind === 'video' || kind === 'audio'
-											? kind
-											: bodyFormat === 'markdown' ||
-												  (platform === 'zhihu' && !attachments.some((a) => a.kind === 'video'))
-												? 'article'
-												: 'post',
+									kind: desktopKind({kind, platform, bodyFormat, attachments}),
 									cover: cover ? path.join(root, cover.path) : null,
+									// Saved media, for showing a work's files in Finder.
+									files: attachments.filter((a) => a.path).map((a) => path.join(root, a.path)),
 									coverKind: cover?.kind ?? null,
 									missing: missing ?? [],
 									folders: boundedRows(folders, 32768),
@@ -479,6 +490,28 @@ export class LibraryBridge {
 					460 * 1024,
 				);
 			}
+			case 'libraryStats': {
+				const stats = {
+					root: libraryRoot(this.options),
+					total: 0,
+					kinds: {},
+					platforms: {},
+					folders: {},
+				};
+				const add = (map, name) => (map[name] = (map[name] ?? 0) + 1);
+				for (const work of await searchLibrary({}, this.options)) {
+					stats.total++;
+					add(stats.kinds, desktopKind(work));
+					add(stats.platforms, work.platform);
+					for (const name of new Set(work.folders.map((f) => f.name).filter(Boolean)))
+						add(stats.folders, name);
+				}
+				return stats;
+			}
+			case 'libraryRemove':
+				return removeLibraryWorks(params.keys, this.options);
+			case 'libraryRename':
+				return renameLibraryWork(params.key, params.title, this.options);
 			case 'libraryRetry':
 			case 'libraryResume': {
 				const task = await getLibraryTask(params.id, this.options);

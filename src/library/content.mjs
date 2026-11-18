@@ -333,6 +333,8 @@ export async function normalizeEntry(raw, folder, root, options = {}) {
 			.filter(Boolean),
 	};
 }
+/** A title the owner gave in the library outlives later saves of the same entry. */
+export const displayTitle = (item) => item.customTitle || item.title || item.id;
 export function workFile(root, item) {
 	return path.join(root, 'works', item.platform, digest(item.id), 'index.html');
 }
@@ -390,9 +392,9 @@ export async function renderWork(root, item, file = workFile(root, item)) {
 		.join('');
 	const markup =
 		'<!doctype html><html><head><meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1"><title>' +
-		html(item.title || item.id) +
+		html(displayTitle(item)) +
 		'</title><style>body{font:18px/1.55 system-ui;max-width:48rem;margin:2rem auto;padding:0 1rem}img,video{max-width:100%;height:auto;display:block;margin:1rem 0}p{white-space:pre-wrap;overflow-wrap:anywhere}</style></head><body><article><h1>' +
-		html(item.title || item.id) +
+		html(displayTitle(item)) +
 		'</h1><p>' +
 		html(item.author) +
 		' · <a rel="noreferrer" href="' +

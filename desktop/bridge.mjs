@@ -94,18 +94,31 @@ try {
 			result = await requestNative('libraryTasks', {offset: Number(args[0]) || 0});
 			break;
 		case 'search': {
-			const [query, platform, folder, topic, offset] = args;
+			const [query, platform, folder, topic, offset, kind] = args;
 			result = await requestNative('librarySearch', {
-				filters: {query, platform, folder, topic},
+				filters: {query, platform, folder, topic, kind},
 				offset: Number(offset) || 0,
 			});
 			break;
 		}
+		case 'stats':
+			result = await requestNative('libraryStats', {});
+			break;
+		case 'remove':
+			// Keys on stdin; the app moves the returned files to the Trash.
+			result = await requestNative('libraryRemove', {keys: JSON.parse(await readStdin(1024 ** 2))});
+			break;
+		case 'rename':
+			result = await requestNative('libraryRename', {
+				key: args[0],
+				title: await readStdin(8192),
+			});
+			break;
 		case 'retry':
 		case 'resume':
 			result = await requestNative(command === 'retry' ? 'libraryRetry' : 'libraryResume', {
 				id: args[0],
-				...(command === 'retry' && args[1] ? {selected: [args[1]]} : {}),
+				...(command === 'retry' && args.length > 1 ? {selected: args.slice(1)} : {}),
 			});
 			break;
 		case 'task':

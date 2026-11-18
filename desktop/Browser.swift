@@ -2,19 +2,20 @@ import AppKit
 import SwiftUI
 import WebKit
 
-enum Pane: String, CaseIterable, Identifiable {
-  case library = "资料库"
-  case browser = "浏览器"
-  case accounts = "账号"
-  var id: String { rawValue }
-  var symbol: String {
-    switch self {
-    case .library: return "square.grid.2x2"
-    case .browser: return "globe"
-    case .accounts: return "person.crop.circle"
-    }
-  }
+enum Pane {
+  case library, browser, accounts
 }
+
+/// WebKit's default user agent names no browser, and some sites (Bilibili among them) answer
+/// it with an "upgrade your browser" page. Every Fetchy web view presents as this Mac's Safari.
+let safariUserAgent: String = {
+  let plist = URL(fileURLWithPath: "/Applications/Safari.app/Contents/Info.plist")
+  let major = ProcessInfo.processInfo.operatingSystemVersion.majorVersion
+  // Safari 17 shipped with macOS 14 and 18 with 15; from macOS 26 the numbers match.
+  let fallback = major >= 26 ? "\(major).0" : "\(major + 3).0"
+  let version = NSDictionary(contentsOf: plist)?["CFBundleShortVersionString"] as? String ?? fallback
+  return "Version/\(version) Safari/605.1.15"
+}()
 
 /// What Node knows about a site: its WebKit store and which cookies mean "signed in".
 struct SiteInfo: Equatable {
@@ -27,10 +28,29 @@ struct SiteInfo: Equatable {
 }
 
 @MainActor final class AppState: ObservableObject {
-  @Published var pane: Pane = .library
+  @Published var sidebar: SidebarItem = .all
   /// The accounts row to show, for example after a download found a sign-in expired.
   @Published var focusedSite: String?
   let browser = BrowserModel()
+  let library = LibraryModel()
+
+  /// Which of the three areas is showing; every library and task filter belongs to the library.
+  var pane: Pane {
+    get {
+      switch sidebar {
+      case .browser: return .browser
+      case .accounts: return .accounts
+      default: return .library
+      }
+    }
+    set {
+      switch newValue {
+      case .browser: sidebar = .browser
+      case .accounts: sidebar = .accounts
+      case .library: if pane != .library { sidebar = .all }
+      }
+    }
+  }
 
   /// Open a link in the built-in browser with its site's store; sign-in also marks the accounts row.
   func open(_ url: String, signingIn: Bool = false) {
@@ -105,6 +125,7 @@ private func json(_ value: Any) -> Data? {
   private func makeView(_ info: SiteInfo) {
     let configuration = WKWebViewConfiguration()
     configuration.websiteDataStore = WKWebsiteDataStore(forIdentifier: info.profile)
+    configuration.applicationNameForUserAgent = safariUserAgent
     let view = WKWebView(frame: .zero, configuration: configuration)
     view.navigationDelegate = self
     view.uiDelegate = self
@@ -264,7 +285,7 @@ struct BrowserPane: View {
           .onSubmit { browser.go(typed) }
         signInBadge
       }
-      .buttonStyle(.borderless).padding(10)
+      .buttonStyle(.borderless).padding(.horizontal, 12).padding(.vertical, 8)
       .onChange(of: browser.address, initial: true) { _, value in if !editing { typed = value } }
       if !browser.notice.isEmpty {
         Text(browser.notice).font(.callout).foregroundStyle(.secondary)
@@ -275,14 +296,17 @@ struct BrowserPane: View {
         if let view = browser.webView {
           WebViewHost(view: view)
         } else {
-          VStack(spacing: 10) {
-            Text("在地址栏输入网址，或在「账号」里选一个网站登录。").foregroundStyle(.secondary)
-          }.frame(maxWidth: .infinity, maxHeight: .infinity)
+          ContentUnavailableView(
+            "打开一个网站", systemImage: "safari",
+            description: Text("在地址栏输入网址，或在「账号」里选一个网站登录。")
+          )
+          .frame(maxWidth: .infinity, maxHeight: .infinity)
         }
         Divider()
         SitePanel(panel: browser.panel).frame(width: 320)
       }
     }
+    .navigationTitle(browser.site?.label ?? "浏览器")
   }
 
   @ViewBuilder var signInBadge: some View {
@@ -559,7 +583,7 @@ struct PanelItem: Identifiable {
     }
     do {
       let task = try await run(["start"], payload: ["manifest": ["version": 1, "items": [entry]]])
-      notice = "已交给本机保存。进度在「资料库 · 进行中与失败」。"
+      notice = "已交给本机保存。进度在「保存任务 · 进行中」。"
       _ = task
     } catch { notice = error.localizedDescription }
   }
@@ -631,7 +655,7 @@ struct PanelItem: Identifiable {
       notice = "已建立任务，正在读取原帖 \(index + 1) / \(keys.count)…"
     }
     _ = try? await run(["feed-end", id])
-    notice = "原帖已读完，本机正在下载。进度在「资料库 · 进行中与失败」。"
+    notice = "原帖已读完，本机正在下载。进度在「保存任务 · 进行中」。"
   }
 
   func saveMedia(_ url: String) async {
