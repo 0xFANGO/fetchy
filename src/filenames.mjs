@@ -80,7 +80,15 @@ async function removeOwned(filename, identity) {
  * Exclusive publication prevents an existing or concurrently-created file from
  * being replaced, including on volumes without hard-link support.
  */
-export async function publishVideoFile(sourcePath, options = {}) {
+export function publishVideoFile(sourcePath, options = {}) {
+	return publishFile(sourcePath, options, '.mp4');
+}
+
+export function publishAudioFile(sourcePath, options = {}) {
+	return publishFile(sourcePath, options, '.m4a');
+}
+
+async function publishFile(sourcePath, options, extension) {
 	if (
 		typeof sourcePath !== 'string' ||
 		!sourcePath ||
@@ -123,13 +131,16 @@ export async function publishVideoFile(sourcePath, options = {}) {
 	} catch (error) {
 		throw fileWriteError(error) ?? new EngineError('output_invalid', '无法访问视频保存目录。');
 	}
-	const basename = videoFilename(title, {platform, id});
-	const stem = basename.slice(0, -4);
+	const stem = videoFilename(title, {platform, id}).slice(0, -4);
+	const basename = stem + extension;
 	let owned;
 	try {
 		for (let index = 1; index <= 1000; index++) {
 			checkAbort(signal);
-			const destination = path.join(directory, index === 1 ? basename : `${stem} (${index}).mp4`);
+			const destination = path.join(
+				directory,
+				index === 1 ? basename : `${stem} (${index})${extension}`,
+			);
 			if (destination === source) return source;
 			try {
 				try {

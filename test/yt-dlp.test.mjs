@@ -6,6 +6,7 @@ import {chmod, mkdir, mkdtemp, readFile, readdir, realpath, rm, writeFile} from 
 import path from 'node:path';
 import {tmpdir} from 'node:os';
 import {fileURLToPath} from 'node:url';
+import {downloadAudio, resolveAudio} from '../src/audio.mjs';
 import {downloadVideo, resolveVideo} from '../src/index.mjs';
 import {classifyEngineError, downloadWithYtDlp, resolveWithYtDlp} from '../src/yt-dlp.mjs';
 import {runProcess} from '../src/process.mjs';
@@ -89,7 +90,7 @@ async function fixture(
 	const ytDlpPath = path.join(root, 'yt-dlp.mjs');
 	const ffprobePath = path.join(root, 'ffprobe.mjs');
 	const trace = path.join(root, 'trace.jsonl');
-	const {id, display_id, extractor_key, _old_archive_ids} = receiptInfo;
+	const {id, display_id, extractor_key, _old_archive_ids, webpage_url} = receiptInfo;
 	await writeFile(
 		ytDlpPath,
 		[
@@ -120,7 +121,7 @@ async function fixture(
 				') await copyFile(' +
 				JSON.stringify(mediaSource) +
 				', filepath); else await writeFile(filepath, Buffer.from("test-media-data"));',
-			`const record = {filepath, ...${JSON.stringify({id, display_id, extractor_key, _old_archive_ids})}};`,
+			`const record = {filepath, ...${JSON.stringify({id, display_id, extractor_key, _old_archive_ids, webpage_url})}};`,
 			'let receiptText = JSON.stringify(record);',
 			'if (' + JSON.stringify(templatePython) + ') {',
 			'  const rendered = spawnSync(' +
@@ -147,6 +148,63 @@ async function fixture(
 		options: {ytDlpPath, ffprobePath: realProbe ? 'ffprobe' : ffprobePath, outputDir},
 	};
 }
+
+const bandcampUrl = 'https://artist.bandcamp.com/track/example';
+const audioTrack = {
+	id: '124',
+	title: 'Example song',
+	duration: 12,
+	extractor_key: 'Bandcamp',
+	webpage_url: bandcampUrl,
+	formats: [metadata.formats[1]],
+};
+const audioProbe = {...validProbe, streams: [validProbe.streams[1]]};
+
+test('audio API binds a track to both extraction passes and publishes an AAC M4A', async (t) => {
+	const {options, trace} = await fixture(t, {info: audioTrack, mediaExt: 'm4a', probe: audioProbe});
+	const resolved = await resolveAudio(bandcampUrl, options);
+	assert.equal(resolved.kind, 'audio');
+	assert.equal(resolved.sourceId, '124');
+	const result = await downloadAudio(bandcampUrl, options);
+	assert.equal(result.sourceId, resolved.sourceId);
+	assert.equal(result.kind, 'audio');
+	assert.equal(result.validation.container, 'm4a');
+	assert.equal(result.validation.audioCodec, 'aac');
+	assert.equal(result.validation.video, false);
+	assert.deepEqual(await readdir(options.outputDir), ['Example song.m4a']);
+	const calls = (await readFile(trace, 'utf8')).trim().split('\n').map(JSON.parse);
+	assert(calls.every((args) => args[args.indexOf('--use-extractors') + 1] === 'Bandcamp'));
+	assert(calls.at(-1).includes('--extract-audio'));
+});
+
+test('audio receipt drift and invalid output tracks leave the destination empty', async (t) => {
+	for (const [overrides, code] of [
+		[{receiptInfo: {...audioTrack, id: '125'}}, 'wrong_video'],
+		[{receiptInfo: {...audioTrack, webpage_url: bandcampUrl + '-alternate'}}, 'wrong_video'],
+		[{probe: validProbe}, 'output_invalid'],
+		[{probe: {...audioProbe, format: {...validProbe.format, duration: '2'}}}, 'output_invalid'],
+	]) {
+		const {options} = await fixture(t, {
+			info: audioTrack,
+			probe: audioProbe,
+			mediaExt: 'm4a',
+			...overrides,
+		});
+		await assert.rejects(downloadAudio(bandcampUrl, options), {code});
+		assert.deepEqual(await readdir(options.outputDir), []);
+	}
+});
+
+test('a mixed-platform audio post identifies its kind before starting a video download', async (t) => {
+	const url = 'https://odysee.com/@example:1/episode:a';
+	const {options, trace} = await fixture(t, {
+		info: {...audioTrack, id: 'a'.repeat(40), webpage_url: url, extractor_key: 'LBRY'},
+	});
+	await assert.rejects(downloadVideo(url, options), {code: 'no_video'});
+	assert((await readFile(trace, 'utf8')).includes('--skip-download'));
+	assert(!(await readFile(trace, 'utf8')).includes('--no-simulate'));
+	assert.equal((await resolveAudio(url, options)).kind, 'audio');
+});
 
 test('resolve returns format metadata without signed URLs or unrelated private metadata', async (t) => {
 	const {options} = await fixture(t);
