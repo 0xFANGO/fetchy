@@ -83,7 +83,7 @@ npm run native:install -- --browser chrome
 
 ## 7. 数据与权限
 
-扩展使用 `activeTab`、`storage`、`nativeMessaging`、`scripting` 和 `sidePanel`。小红书、抖音、`iesdouyin.com` 的站点权限供视频页提取使用。右侧栏只读取你正在看的标签页，不另开标签页；读取部分站点前会按站点请求额外权限。站点登录由浏览器管理。
+扩展使用 `activeTab`、`storage`、`nativeMessaging`、`scripting` 和 `sidePanel`。小红书、抖音、`iesdouyin.com` 的站点权限供视频页提取使用。右侧栏只读取你正在看的标签页，不另开标签页。读取部分站点前会按站点请求额外权限。站点登录由浏览器管理。
 
 视频下载任务只持久化目录、脱敏状态与成品路径。选择归档时，正文、作者、规范出处、收藏夹关系和本机下载的媒体会写入本机资料库。临时访问参数与签名媒体地址只参与当前读取。文件名会移除嵌入的网址和可识别的凭证赋值。[归档操作和数据范围](extension-library.md)
 

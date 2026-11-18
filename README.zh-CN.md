@@ -14,7 +14,7 @@ https://github.com/user-attachments/assets/e5ebb617-7dd1-4369-b044-b7e8900cb662
 
 ## 特性
 
-- **从页面或链接开始。** 点工具栏图标，Fetchy 在当前页右侧打开；也可以粘贴一条链接。支持短链的平台也可以粘贴含单条链接的分享文案。
+- **从页面或链接开始。** 点工具栏图标，Fetchy 在当前页右侧打开。也可以粘贴一条链接。支持短链的平台也可以粘贴含单条链接的分享文案。
 - **下载在本机执行。** 扩展把下载交给本地组件，无需注册 Fetchy 账号。
 - **经过校验的 MP4。** 每个输出都经 ffprobe 校验。yt-dlp 下载输出 H.264 / yuv420p 视频，有音轨时使用 AAC。浏览器引擎保留源编码，包括 HEVC。文件名使用视频标题，重名自动加序号，不覆盖已有文件。
 - **关掉右侧栏也继续。** 保存由独立本地进程持有，关掉右侧栏或浏览器都不会中断。批量保存的每一条单独记录结果，可以单独重试。
@@ -99,7 +99,7 @@ npm run native:install -- --browser chrome # 注册 native host；Ego Lite 用 -
 
 只下载视频时默认保存到 `~/Downloads/Fetchy`。点击右侧栏底部的目录即可更改。
 
-Fetchy 读取页面时不打开新标签页。小红书和抖音视频直接从已打开的视频页读取播放数据；短链需要先在浏览器里打开。用的是你当前浏览器的登录态。申请的权限：`activeTab`、`storage`、`nativeMessaging`、`scripting`、`sidePanel`，以及 `xiaohongshu.com`、`douyin.com` 和 `iesdouyin.com` 的站点访问权限。
+Fetchy 读取页面时不打开新标签页。小红书和抖音视频直接从已打开的视频页读取播放数据。短链需要先在浏览器里打开。用的是你当前浏览器的登录态。申请的权限：`activeTab`、`storage`、`nativeMessaging`、`scripting`、`sidePanel`，以及 `xiaohongshu.com`、`douyin.com` 和 `iesdouyin.com` 的站点访问权限。
 
 各浏览器和站点的实测结果见[扩展验证记录](docs/extension-validation.md)。注册本地组件、登录及故障排查见[安装说明](docs/extension-install.md)。
 
@@ -155,7 +155,7 @@ bin/         CLI                                 ├─▶ src/index.mjs ─▶ 
 native/      Native Messaging host + daemon     ─┘                  └─▶ 浏览器引擎（扩展从页面读取媒体）
 ```
 
-小红书和抖音由 service worker 把 `src/page-extract.mjs` 注入视频页，只取回目标视频的标题、封面和带签名的媒体地址；native host 从这些地址下载并校验文件。右侧栏只是视图。native host 把每个任务交给独立的 daemon 进程执行，所以关闭右侧栏、service worker 重建或端口断开都不会取消传输。批量保存从清单开始：原帖页面统一由 `src/library/post-pages.mjs` 解析，无论它来自扩展在当前页的同站请求，还是 daemon 用桌面端登录读取，所有媒体文件都由 daemon 下载。持久化的任务记录不含原始输入、token 或签名 URL。
+小红书和抖音由 service worker 把 `src/page-extract.mjs` 注入视频页，只取回目标视频的标题、封面和带签名的媒体地址；native host 从这些地址下载并校验文件。右侧栏只是视图。native host 把每个任务交给独立的 daemon 进程执行，所以关闭右侧栏、service worker 重建或端口断开都不会取消传输。批量保存从清单开始。原帖页面统一由 `src/library/post-pages.mjs` 解析，无论它来自扩展在当前页的同站请求，还是 daemon 用桌面端登录读取，所有媒体文件都由 daemon 下载。持久化的任务记录不含原始输入、token 或签名 URL。
 
 ## 开发
 
