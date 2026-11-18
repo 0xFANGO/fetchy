@@ -102,6 +102,7 @@ export class NativeController extends EventEmitter {
 		this.choosingDirectory = false;
 		this.resolvers = new Map();
 		this.library = null;
+		this.webSaves = 0;
 		this.resolved = new Map();
 		this.recentTaskIds = [];
 		this.persistence = Promise.resolve();
@@ -214,12 +215,17 @@ export class NativeController extends EventEmitter {
 					createDefault: true,
 					defaultDirectory: this.defaultDirectory,
 				});
-				const result = await getOne('get', url, {
-					outputDir,
-					root: process.env.FETCHY_LIBRARY_DIR || path.join(this.directory, 'library'),
-					publicOnly: true,
-				});
-				return {filepath: result.filepath, id: result.id, taskId: result.taskId};
+				this.webSaves++;
+				try {
+					const result = await getOne('get', url, {
+						outputDir,
+						root: process.env.FETCHY_LIBRARY_DIR || path.join(this.directory, 'library'),
+						publicOnly: true,
+					});
+					return {filepath: result.filepath, id: result.id, taskId: result.taskId};
+				} finally {
+					this.webSaves--;
+				}
 			}
 			case 'getState':
 				return this.snapshot();

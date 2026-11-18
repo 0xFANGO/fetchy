@@ -145,9 +145,20 @@ test('direct, declared, HLS and DASH sources produce decodable video and audio; 
 	assert.ok((await readFile(ok.offlinePage, 'utf8')).includes('<video'));
 	const article = JSON.parse(
 		(
-			await exec(process.execPath, ['bin/fetchy.mjs', 'get', '--allow-local', origin + '/reader'], {
-				env,
-			})
+			await exec(
+				process.execPath,
+				[
+					'bin/fetchy.mjs',
+					'get',
+					'--allow-local',
+					'--output',
+					path.join(dir, 'selected'),
+					origin + '/reader',
+				],
+				{
+					env,
+				},
+			)
 		).stdout,
 	);
 	assert.equal(article.kind, 'post');

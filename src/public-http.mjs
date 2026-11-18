@@ -2,7 +2,7 @@ import http from 'node:http';
 import https from 'node:https';
 import {lookup} from 'node:dns/promises';
 import {BlockList, isIP} from 'node:net';
-import {createWriteStream} from 'node:fs';
+import {open, rm} from 'node:fs/promises';
 import {pipeline} from 'node:stream/promises';
 import {Transform} from 'node:stream';
 import {EngineError} from './process.mjs';
@@ -134,9 +134,19 @@ export async function saveWebFile(input, filepath, options) {
 			else done(null, chunk);
 		},
 	});
-	await pipeline(response, bounded, createWriteStream(filepath, {flags: 'wx', mode: 0o600}), {
-		signal: options.signal,
-	});
-	if (!bytes) throw new EngineError('output_invalid', '媒体为空。');
+	let file;
+	try {
+		file = await open(filepath, 'wx', 0o600);
+		await pipeline(response, bounded, file.createWriteStream(), {signal: options.signal});
+		if (!bytes) throw new EngineError('output_invalid', '媒体为空。');
+	} catch (error) {
+		response.destroy();
+		if (file) {
+			await file.close().catch(() => {});
+			await rm(filepath, {force: true});
+		}
+		throw error;
+	}
+
 	return {bytes, mimeType: (response.headers['content-type'] ?? '').split(';')[0].toLowerCase()};
 }

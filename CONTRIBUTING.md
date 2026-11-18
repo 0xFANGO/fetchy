@@ -28,7 +28,7 @@ npm test               # offline contract tests; needs FFmpeg for the MP4 suite
 npm run extension:build
 ```
 
-Tests never hit a real platform or launch a real browser. Tests that need the
+The default test suite runs locally. Desktop and extension end-to-end checks use separate opt-in commands. Tests that need the
 project yt-dlp are skipped when `.venv` is missing. Manual end-to-end checks
 against real sites are recorded in the [CLI validation log](docs/validation.md)
 and the [extension validation log](docs/extension-validation.md).
@@ -71,6 +71,8 @@ that works with the existing yt-dlp engine.
    Record the public source, engine and observed results in the appropriate
    validation log. Reflect the verified content types and surfaces in the
    [capability table](docs/platforms.md), the READMEs and `CHANGELOG.md`.
+
+For an audio or mixed-media adapter, also verify the AAC audio-only receipt and output with `get`. A page adapter should match the requested post identity and verify attachment order, local readability and partial results on a truncated page. An accessible folder should report its declared total, independent member count and last-page evidence. Use synthetic fixtures in version control. Account-level checks belong in a private local profile. [Library format](docs/library.md) · [Desktop session tests](docs/desktop.md)
 
 ## Code style
 

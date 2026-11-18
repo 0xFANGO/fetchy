@@ -2,6 +2,7 @@ export function shouldStopIdle(controller, bridge, now = Date.now(), idleMs = 5 
 	const busy =
 		['running', 'cancelling'].includes(controller.task?.status) ||
 		controller.choosingDirectory ||
+		controller.webSaves > 0 ||
 		controller.library?.active.size > 0 ||
 		controller.library?.preparing > 0 ||
 		controller.resolvers.size > 0;

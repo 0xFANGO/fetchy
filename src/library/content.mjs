@@ -290,9 +290,8 @@ const inlineMarkdown = (value) => {
 	}
 	return out + html(value.slice(last));
 };
-export async function renderWork(root, item) {
-	const file = workFile(root, item),
-		dir = path.dirname(file);
+export async function renderWork(root, item, file = workFile(root, item)) {
+	const dir = path.dirname(file);
 	await mkdir(dir, {recursive: true, mode: 0o700});
 	const body = item.body
 		.split(/\n/)

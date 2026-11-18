@@ -1,9 +1,12 @@
-import {constants} from 'node:fs';
-import {copyFile, link, mkdir, mkdtemp, open, realpath, rm, stat} from 'node:fs/promises';
+import {constants, createReadStream} from 'node:fs';
+import {createHash} from 'node:crypto';
+import {copyFile, lstat, mkdir, mkdtemp, open, realpath, rm, stat} from 'node:fs/promises';
 import {tmpdir} from 'node:os';
 import path from 'node:path';
 import {parseArgs} from 'node:util';
 import {downloadVideo, resolveVideo, resolveTarget, EngineError} from '../src/index.mjs';
+import {resolveWithYtDlp, downloadWithYtDlp} from '../src/yt-dlp.mjs';
+import {ytDlpCommand} from '../src/dependencies.mjs';
 import {downloadAudio, resolveAudio} from '../src/audio.mjs';
 import {
 	downloadGeneric,
@@ -15,7 +18,7 @@ import {explicitLocalOrigin, webUrl} from '../src/public-http.mjs';
 import {siteForHost, siteForPlatform} from '../src/sites/index.mjs';
 import {videoFilename} from '../src/filenames.mjs';
 import {importLibrary, libraryRoot, searchLibrary} from '../src/library/index.mjs';
-import {entryIdentity, publicUrl} from '../src/library/content.mjs';
+import {entryIdentity, publicUrl, renderWork} from '../src/library/content.mjs';
 import {hasSession, downloadWithSession, captureWithSession} from './desktop.mjs';
 
 const invalid = (message) => new EngineError('invalid_arguments', message);
@@ -38,6 +41,28 @@ async function targetFor(input, options) {
 }
 async function media(action, target, input, options) {
 	const downloading = action === 'get';
+	if (target.pageOnly && target.platform === 'instagram' && !(await hasSession(input))) {
+		try {
+			return await (downloading ? downloadWithYtDlp : resolveWithYtDlp)(target, {
+				...options,
+				ytDlpPath: ytDlpCommand(options),
+			});
+		} catch (error) {
+			if (
+				![
+					'not_video',
+					'no_video',
+					'no_formats',
+					'auth_required',
+					'session_required',
+					'unavailable',
+					'network_error',
+					'verification_required',
+				].includes(error.code)
+			)
+				throw error;
+		}
+	}
 	if (target.pageOnly)
 		throw new EngineError('no_formats', '请在扩展或 Fetchy 专属浏览器打开此帖以读取图文。');
 	const category = siteForPlatform(target.platform)?.kind;
@@ -49,6 +74,14 @@ async function media(action, target, input, options) {
 			return await downloadWithSession(input, options);
 		} catch (error) {
 			if (!['no_formats', 'network_error', 'unavailable'].includes(error.code)) throw error;
+			// An explicitly opened loopback site may also be a signed-in article.
+			if (
+				target.platform === 'web' &&
+				explicitLocalOrigin(input, true) &&
+				!options.localOrigin &&
+				error.code === 'no_formats'
+			)
+				throw error;
 		}
 	}
 	if (target.platform === 'web') {
@@ -70,29 +103,51 @@ async function media(action, target, input, options) {
 	}
 }
 
+const cloneFile = (from, to) =>
+	copyFile(from, to, constants.COPYFILE_EXCL | constants.COPYFILE_FICLONE);
 async function copyResult(source, dir, record, ext) {
 	await mkdir(dir, {recursive: true});
-	const name = videoFilename(record.title, {platform: record.platform, id: record.id}).slice(0, -4);
-	const info = await stat(source);
+	const name = videoFilename(record.title, record).slice(0, -4);
+	const size = (await stat(source)).size;
 	for (let n = 1; n <= 1000; n++) {
-		const filename = path.resolve(dir, name + (n === 1 ? '' : ' (' + n + ')') + ext);
+		const file = path.resolve(dir, name + (n === 1 ? '' : ' (' + n + ')') + ext);
 		try {
-			try {
-				await link(source, filename);
-			} catch (e) {
-				if (!['EXDEV', 'EPERM', 'ENOTSUP', 'EOPNOTSUPP', 'ENOSYS'].includes(e.code)) throw e;
-				await copyFile(source, filename, constants.COPYFILE_EXCL);
-			}
-			return filename;
+			await cloneFile(source, file);
+			return file;
 		} catch (e) {
 			if (e.code !== 'EEXIST') throw e;
-			const current = await stat(filename);
-			if (current.dev === info.dev && current.ino === info.ino) return filename;
+		}
+		const existing = await lstat(file);
+		if (existing.isFile() && existing.size === size) {
+			const digest = createHash('sha256');
+			for await (const bytes of createReadStream(file)) digest.update(bytes);
+			if (digest.digest('hex') === path.basename(source, path.extname(source))) return file;
 		}
 	}
 	throw new EngineError('output_exists', '保存目录有过多同名文件。');
 }
 
+async function exportPost(record, root, destination) {
+	const output = path.resolve(destination);
+	await mkdir(output, {recursive: true});
+	const title = videoFilename(record.title, record).slice(0, -4);
+	const dir = await mkdtemp(path.join(output, title + '-'));
+	try {
+		const files = new Set(record.attachments.map((a) => a.path).filter(Boolean));
+		if (files.size) await mkdir(path.join(dir, 'media'));
+		for (const relative of files) {
+			if (!/^media[/\\][a-f0-9]{64}\.[a-z0-9]+$/.test(relative))
+				throw new EngineError('invalid_attachment', '无效附件路径。');
+			const from = path.join(root, relative),
+				to = path.join(dir, relative);
+			await cloneFile(from, to);
+		}
+		return await renderWork(dir, record, path.join(dir, 'index.html'));
+	} catch (e) {
+		await rm(dir, {recursive: true, force: true});
+		throw e;
+	}
+}
 async function postFor(target, input, settings, error) {
 	let entry;
 	if (
@@ -128,6 +183,7 @@ export async function getOne(action, input, options = {}) {
 		} catch (error) {
 			if (error.code !== 'no_formats') throw error;
 			const entry = await postFor(target, input, settings, error);
+
 			return {
 				platform: entry.platform,
 				id: entry.id,
@@ -169,13 +225,17 @@ export async function getOne(action, input, options = {}) {
 				{root, sourceDir: tmp, signal: options.signal},
 			);
 			if (!task.items[0]?.filepath) throw new EngineError('output_invalid', '无法写入离线正文。');
+			const [record] = await searchLibrary({key: task.items[0].key}, {root});
+			const filepath = options.outputDir
+				? await exportPost(record, root, options.outputDir)
+				: record.filepath;
 			return {
 				platform: entry.platform,
 				id: entry.id,
 				title: entry.title,
 				kind: 'post',
 				engine: 'article',
-				filepath: task.items[0].filepath,
+				filepath,
 				offlinePage: task.items[0].filepath,
 				taskId: task.id,
 				status: task.items[0].status,
