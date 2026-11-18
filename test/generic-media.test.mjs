@@ -2,7 +2,7 @@ import assert from 'node:assert/strict';
 import test from 'node:test';
 import http from 'node:http';
 import {createReadStream} from 'node:fs';
-import {mkdtemp, readFile, rm, stat} from 'node:fs/promises';
+import {mkdtemp, readFile, rm, stat, writeFile} from 'node:fs/promises';
 import {tmpdir} from 'node:os';
 import path from 'node:path';
 import {execFile} from 'node:child_process';
@@ -143,6 +143,24 @@ test('direct, declared, HLS and DASH sources produce decodable video and audio; 
 	assert.equal(again.status, 'skipped');
 	assert.equal(ok.filepath, again.filepath);
 	assert.ok((await readFile(ok.offlinePage, 'utf8')).includes('<video'));
+	const outDir = path.join(dir, 'editable');
+	const named = async () =>
+		JSON.parse(
+			(
+				await exec(
+					process.execPath,
+					['bin/fetchy.mjs', 'get', '--allow-local', '--output', outDir, origin + '/sample.mp4'],
+					{env},
+				)
+			).stdout,
+		);
+	const copy = await named();
+	assert.equal((await named()).filepath, copy.filepath);
+	const archiveBefore = await readFile(ok.filepath);
+	await writeFile(copy.filepath, 'user edit');
+	assert.deepEqual(await readFile(ok.filepath), archiveBefore);
+	assert.notEqual((await named()).filepath, copy.filepath);
+
 	const article = JSON.parse(
 		(
 			await exec(
