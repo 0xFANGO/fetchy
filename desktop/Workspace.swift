@@ -69,6 +69,10 @@ struct LocalCommands {
       watchdog.cancel()
       group.wait()
       if process.terminationStatus != 0 {
+        if arguments.first == "get", !stdout.overflow,
+          let result = try? JSONSerialization.jsonObject(with: stdout.contents()) as? [String: Any],
+          result["status"] as? String == "partial", result["filepath"] is String
+        { return result }
         let errorData = stderr.contents()
         if let obj = try? JSONSerialization.jsonObject(with: errorData) as? [String: Any],
           let error = obj["error"] as? [String: Any], let message = error["message"] as? String
@@ -342,7 +346,7 @@ struct Workspace: View {
           let file = result["filepath"] as? String, FileManager.default.fileExists(atPath: file)
         else { throw FetchyFailure(text: "没有收到可打开的文件。") }
         saved = URL(fileURLWithPath: file)
-        notice = "已保存"
+        notice = result["status"] as? String == "partial" ? "部分保存。打开文件可查看缺少的内容。" : "已保存"
       } catch { notice = error.localizedDescription }
     }
   }

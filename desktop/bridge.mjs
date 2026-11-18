@@ -1,4 +1,6 @@
-import {stat, readFile} from 'node:fs/promises';
+import {constants} from 'node:fs';
+import {copyFile, link, mkdtemp, readFile, realpath, rm, stat} from 'node:fs/promises';
+import {tmpdir} from 'node:os';
 import path from 'node:path';
 import {entryIdentity} from '../src/library/content.mjs';
 
@@ -18,6 +20,60 @@ async function readManifest(filename) {
 	}
 	if (entries.length > 5000) throw new Error();
 	return {manifest, entries};
+}
+
+// Only manifests explicitly selected in the desktop picker may refer to local files.
+async function prepareFromFile(manifest, entries, selected, folder) {
+	const {prepareLibraryTask} = await import('../src/library/index.mjs');
+	if (!entries.some((e) => e.attachments?.some((a) => a.url !== undefined)))
+		return prepareLibraryTask(manifest, {sourceDir: folder, selected});
+	const {stageAttachments} = await import('../native/library-bridge.mjs');
+	const parent = await realpath(folder);
+	const scratch = await mkdtemp(path.join(tmpdir(), 'fetchy-manifest-'));
+	try {
+		const selectedKeys = selected && new Set(selected);
+		const included = selectedKeys
+			? entries.filter((e) => selectedKeys.has(entryIdentity(e).key))
+			: entries;
+		let n = 0;
+		const remote = [];
+		for (const entry of included) {
+			const attachments = [];
+			for (const a of entry.attachments ?? []) {
+				if (a.path === undefined) {
+					if (a.url !== undefined) attachments.push(a);
+					continue;
+				}
+				const source = a.path;
+				delete a.path;
+				delete a.url;
+				if (typeof source !== 'string' || path.isAbsolute(source)) continue;
+				let file;
+				try {
+					file = await realpath(path.resolve(parent, source));
+				} catch (err) {
+					if (['ENOENT', 'ENOTDIR'].includes(err.code)) continue;
+					throw err;
+				}
+				if (!file.startsWith(parent + path.sep) || !(await stat(file)).isFile()) continue;
+				const name = 'local-' + ++n + path.extname(file);
+				const destination = path.join(scratch, name);
+				try {
+					await link(file, destination);
+				} catch (error) {
+					if (!['EXDEV', 'EPERM', 'ENOTSUP', 'EOPNOTSUPP', 'ENOSYS'].includes(error.code))
+						throw error;
+					await copyFile(file, destination, constants.COPYFILE_FICLONE | constants.COPYFILE_EXCL);
+				}
+				a.path = name;
+			}
+			remote.push({attachments});
+		}
+		await stageAttachments(remote, scratch);
+		return await prepareLibraryTask(manifest, {sourceDir: scratch, selected});
+	} finally {
+		await rm(scratch, {recursive: true, force: true});
+	}
 }
 
 try {
@@ -68,10 +124,7 @@ try {
 			}
 			const selected = payload ? JSON.parse(payload) : undefined;
 			if (entries.some((entry) => entry.attachments?.some((a) => a.path !== undefined))) {
-				if (entries.some((entry) => entry.attachments?.some((a) => a.url !== undefined)))
-					throw new Error();
-				const {prepareLibraryTask} = await import('../src/library/index.mjs');
-				const task = await prepareLibraryTask(manifest, {sourceDir: path.dirname(file), selected});
+				const task = await prepareFromFile(manifest, entries, selected, path.dirname(file));
 				result = await requestNative('libraryResume', {id: task.id});
 			} else {
 				const {submitArchive} = await import('../extension/archive-rpc.mjs');

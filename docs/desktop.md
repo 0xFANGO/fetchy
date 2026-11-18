@@ -33,7 +33,7 @@ Fetchy uses its own WebKit data store. Cookies, tokens and site storage stay ins
 
 ## Browse the archive
 
-Open **任务** to inspect shared task IDs, progress and counts. Choose **导入收藏清单…** to preview all items from a Fetchy JSON collection manifest, then tick individual items or choose **全选**. The same work appears in the CLI and extension. Resume an interrupted background job or retry its failed entries without repeating completed ones. A manifest containing local attachments must keep them under its own directory. Use separate imports for remote attachments and local relative paths.
+Open **任务** to inspect shared task IDs, progress and counts. Choose **导入收藏清单…** to preview all items from a Fetchy JSON collection manifest, then tick individual items or choose **全选**. The same work appears in the CLI and extension. Resume an interrupted background job or retry its failed entries without repeating completed ones. A manifest containing local attachments must keep them under its own directory. A single manifest can also include public media URLs.
 
 **收藏库** searches source text, title or author and filters by platform, original folder and topic. **离线打开** opens the archived item in the default browser. Search results and completed tasks use the local library shared by Fetchy's tools.
 
