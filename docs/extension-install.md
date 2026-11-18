@@ -83,7 +83,9 @@ npm run native:install -- --browser chrome
 
 ## 7. 数据与权限
 
-扩展申请 `activeTab`、`storage`、`nativeMessaging`、`scripting`，以及 `xiaohongshu.com`、`douyin.com`、`iesdouyin.com` 的站点权限。脚本只注入这三个站点的视频页，且只执行仓库内的 `src/page-extract.mjs`；不申请 Cookie 或下载权限。当前输入、临时封面及任务上下文只在本机内存和 `chrome.storage.session` 中保留；目录和脱敏任务结果写入权限受限的本地状态文件。原始分享输入、token、签名媒体 URL 和原始标题字段不写入持久任务记录；成功文件路径包含清理后的标题文件名。命名时也去除标题中嵌入的 URL 与可识别的访问凭据赋值。
+扩展使用 `activeTab`、`storage`、`nativeMessaging` 和 `scripting`。小红书、抖音、`iesdouyin.com` 的站点权限供视频页提取使用。打开收藏库时，扩展可读取你选中的标签页。需要打开收藏条目或下一页时，会按站点请求额外权限。站点登录由浏览器管理。
+
+视频下载任务只持久化目录、脱敏状态与成品路径。选择归档时，正文、作者、规范出处、收藏夹关系和可读取的媒体会写入本机资料库。临时访问参数与签名媒体地址只参与当前读取。文件名会移除嵌入的网址和可识别的凭证赋值。[归档操作和数据范围](extension-library.md)
 
 host 仅允许注册的扩展来源。文件定位只能操作记录中的成功输出；目录保存只能使用当前/默认/系统选择器选中的路径。所有页面文本按普通文本渲染，执行进程使用参数数组，不将 URL 或标题拼成 shell 命令。
 
