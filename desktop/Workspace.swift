@@ -1,3 +1,4 @@
+import AVKit
 import SwiftUI
 import UniformTypeIdentifiers
 
@@ -164,6 +165,15 @@ private struct SelectionSheet: View {
   }
 }
 
+private struct MoviePreview: Identifiable {
+  let id = UUID()
+  let url: URL
+  let player: AVPlayer
+  init(_ url: URL) {
+    self.url = url
+    player = AVPlayer(url: url)
+  }
+}
 struct Workspace: View {
   private let commands = LocalCommands()
   @State private var section = "保存"
@@ -173,6 +183,7 @@ struct Workspace: View {
   @State private var running = false
   @State private var notice = ""
   @State private var saved: URL?
+  @State private var movie: MoviePreview?
   @State private var query = ""
   @State private var platform = ""
   @State private var folder = ""
@@ -205,6 +216,18 @@ struct Workspace: View {
     }
     .padding(26).frame(minWidth: 650, minHeight: 420, alignment: .topLeading)
     .tint(Color(red: 0.76, green: 0.24, blue: 0.14))
+    .sheet(item: $movie) { item in
+      VStack(alignment: .leading, spacing: 10) {
+        HStack {
+          Text(item.url.lastPathComponent).font(.headline).lineLimit(2)
+          Spacer()
+          Button("关闭") { movie = nil }
+        }
+        VideoPlayer(player: item.player).frame(minWidth: 600, minHeight: 340)
+          .onAppear { item.player.play() }
+          .onDisappear { item.player.pause() }
+      }.padding()
+    }
     .sheet(item: $preview) { selection in
       SelectionSheet(selection) { keys in
         let data = try? JSONSerialization.data(withJSONObject: keys)
@@ -263,7 +286,13 @@ struct Workspace: View {
       }
       if let saved {
         HStack {
-          Button("打开文件") { NSWorkspace.shared.open(saved) }
+          Button("打开文件") {
+            if saved.pathExtension.lowercased() == "mp4" {
+              movie = MoviePreview(saved)
+            } else {
+              NSWorkspace.shared.open(saved)
+            }
+          }
           Text(saved.lastPathComponent).lineLimit(2).textSelection(.enabled)
         }
       }
