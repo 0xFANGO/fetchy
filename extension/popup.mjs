@@ -79,6 +79,7 @@ function render(state = {}) {
 	show('main-view', !view.isSettings);
 	show('settings-view', view.isSettings);
 	show('back-button', view.isSettings);
+	show('archive-button', !view.isSettings);
 	show('connection', Boolean(view.connectionNotice));
 	setText('connection-message', view.connectionNotice);
 	byId('connection').classList.toggle('is-error', state.connection?.status === 'disconnected');
@@ -247,6 +248,14 @@ byId('settings-reconnect').addEventListener('click', () => {
 		connectionAttempts = 0;
 		connect();
 	}
+});
+
+byId('archive-button').addEventListener('click', async () => {
+	const [tab] = await chrome.tabs.query({active: true, currentWindow: true});
+	const url = new URL(chrome.runtime.getURL('archive.html'));
+	if (Number.isInteger(tab?.id)) url.searchParams.set('tab', String(tab.id));
+	await chrome.tabs.create({url: url.href});
+	window.close();
 });
 
 for (const site of sites) {

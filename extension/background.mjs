@@ -257,6 +257,45 @@ async function collectPageMedia(input, {fresh = false, signal} = {}) {
 }
 
 chrome.runtime.onConnect.addListener((port) => {
+	if (port.name === 'archive') {
+		if (port.sender?.url?.split('?')[0] !== chrome.runtime.getURL('archive.html')) return;
+		const methods = new Set([
+			'libraryTasks',
+			'libraryTask',
+			'librarySearch',
+			'libraryStart',
+			'libraryRetry',
+			'libraryResume',
+			'libraryOpen',
+			'libraryUploadStart',
+			'libraryUploadPart',
+			'libraryUploadFinish',
+		]);
+		port.onMessage.addListener(async (message) => {
+			if (typeof message?.id !== 'string' || !methods.has(message.method)) return;
+			let response;
+			try {
+				const long = ['libraryStart', 'libraryUploadFinish'].includes(message.method);
+				response = {
+					id: message.id,
+					ok: true,
+					result: await rpc(message.method, message.params || {}, long ? 660000 : 30000),
+				};
+			} catch (e) {
+				response = {
+					id: message.id,
+					ok: false,
+					code: typeof e.code === 'string' ? e.code : 'unavailable',
+				};
+			}
+			try {
+				port.postMessage(response);
+			} catch {
+				/* The native worker owns accepted tasks. */
+			}
+		});
+		return;
+	}
 	if (port.name !== 'popup') return;
 	popups.add(port);
 	port.onDisconnect.addListener(() => popups.delete(port));

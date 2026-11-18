@@ -30,5 +30,16 @@
 	},
 	"content_security_policy": {
 		"extension_pages": "script-src 'self'; object-src 'none'; img-src 'self' https: data:; style-src 'self'"
-	}
+	},
+	"optional_host_permissions": [
+		"https://x.com/*",
+		"https://www.x.com/*",
+		"https://twitter.com/*",
+		"https://www.twitter.com/*",
+		"https://www.zhihu.com/*",
+		"https://zhuanlan.zhihu.com/*",
+		"https://space.bilibili.com/*",
+		"https://www.youtube.com/*",
+		"https://m.youtube.com/*"
+	]
 }
