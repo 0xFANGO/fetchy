@@ -6,7 +6,13 @@ import {tmpdir} from 'node:os';
 import path from 'node:path';
 import {randomBytes} from 'node:crypto';
 import {setTimeout as delay} from 'node:timers/promises';
-import {browse, downloadWithSession, hasSession, logout} from '../bin/desktop.mjs';
+import {
+	browse,
+	captureWithSession,
+	downloadWithSession,
+	hasSession,
+	logout,
+} from '../bin/desktop.mjs';
 import {runProcess} from '../src/process.mjs';
 
 test('the browser rejects credentials, local files and cleartext remote origins', async () => {
@@ -82,6 +88,17 @@ test(
 				res.writeHead(200, {'Content-Type': 'text/html'}).end('<title>Signed in</title>');
 				return;
 			}
+			if (req.url === '/article' || req.url === '/summary') {
+				const more = req.url === '/summary' ? '<button>Read more</button>' : '';
+				res
+					.writeHead(200, {'Content-Type': 'text/html; charset=utf-8'})
+					.end(
+						'<article><h1>Owned fixture report</h1><p>First line.</p><h2>Middle</h2><p>Last line.</p><img alt="Original" src="data:image/gif;base64,R0lGODlhAQABAIAAAAAAAP///ywAAAAAAQABAAACAUwAOw==">' +
+							more +
+							'</article>',
+					);
+				return;
+			}
 			if (req.url === '/watch') {
 				res
 					.writeHead(200, {'Content-Type': 'text/html'})
@@ -155,8 +172,17 @@ test(
 			assert.equal(saved.validation.audio, true);
 			assert.equal(saved.bytes, (await stat(saved.filepath)).size);
 		}
+		const article = await captureWithSession(site + '/article', opts);
+		assert.equal(article.type, 'post');
+		assert.equal(article.entry.bodyComplete, true);
+		assert.match(article.entry.body, /First line[\s\S]*## Middle[\s\S]*Last line/);
+		assert.equal(article.entry.attachments[0].mimeType, 'image/gif');
+		assert.equal((await captureWithSession(site + '/summary', opts)).entry.bodyComplete, false);
 		assert.ok(authorizedDownloads >= 3);
 		session = null;
+		await assert.rejects(() => captureWithSession(site + '/article', opts), {
+			code: 'auth_required',
+		});
 		await assert.rejects(() => downloadWithSession(site + '/watch', opts), {code: 'auth_required'});
 		await enter();
 		assert.ok((await downloadWithSession(site + '/watch', opts)).validation.video);

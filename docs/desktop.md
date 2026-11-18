@@ -12,7 +12,7 @@ You can now double-click **Fetchy.app** in Finder, or copy it to Applications. T
 
 ## Download a link
 
-Paste a public video URL under **保存**, choose a folder and click **下载**. When the file passes validation, **打开文件** opens that exact result in the default player. Existing files keep their names. The native folder picker remembers your choice.
+Paste a public video URL under **保存**, choose a folder and click **下载**. When the file passes validation, **打开文件** plays that exact MP4 in the app. Existing files keep their names. The native folder picker remembers your choice.
 
 ## Sign in with Fetchy Browser
 
@@ -24,6 +24,8 @@ node bin/fetchy.mjs logout '<page URL>'
 ```
 
 **在专属浏览器打开** opens the same WebKit browser from the desktop. Registered platform hosts share their Fetchy profile. Other origins, including different loopback ports, receive separate profiles. The site controls login, expiration and access. Open the original page with `browse` to renew a session, then repeat `get`. Explicit logout clears the site's Fetchy website data and closes its open Fetchy login window.
+
+The article capture path uses the same page adapter as the extension to read a matching post and its ordered attachments. Missing media and truncated text remain marked as partial when archived.
 
 The session path loads the page and downloads inside WebKit. It can save a direct MP4 or WebM response, a single video referenced by the page, or one matching progressive media request from a player that exposes a blob URL. Only the requested site's allowed origins participate in this authenticated download. Its files pass the local media checks before publication. Adaptive manifests, encrypted content, cross-site media requests and ambiguous players require a different supported path. A platform's public video support does not establish its authenticated support.
 

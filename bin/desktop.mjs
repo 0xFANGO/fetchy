@@ -223,3 +223,108 @@ export async function downloadWithSession(input, options = {}) {
 		await rm(folder, {recursive: true, force: true});
 	}
 }
+
+function samePost(input, candidate, entry) {
+	let a, b;
+	try {
+		a = new URL(input);
+		b = new URL(candidate);
+	} catch {
+		return false;
+	}
+	if (b.username || b.password) return false;
+	try {
+		const expected = normalizeUrl(a.href),
+			captured = normalizeUrl(b.href);
+		if (expected.id && captured.id)
+			return (
+				expected.platform === captured.platform &&
+				expected.id === captured.id &&
+				entry.platform === expected.platform &&
+				entry.id === expected.id
+			);
+	} catch {}
+	return a.origin === b.origin && a.pathname.replace(/\/$/, '') === b.pathname.replace(/\/$/, '');
+}
+
+/** Temporary attachment URLs are consumed by the library worker and must never be logged. */
+export async function captureWithSession(input, options = {}) {
+	const {url, hosts, profile} = sessionTarget(input);
+	const binary = path.join(await appBundle(), 'Contents/MacOS/Fetchy');
+	const result = await runProcess(binary, ['post', profile, url.href, hosts.join(',')], {
+		signal: options.signal,
+		timeoutMs: options.timeoutMs ?? 45000,
+		maxOutputBytes: 48 * 1024 * 1024,
+	});
+	let payload;
+	try {
+		payload = JSON.parse(result.stdout);
+	} catch {}
+	if (result.code !== 0 || !payload?.ok) {
+		const code = Object.hasOwn(messages, payload?.error) ? payload.error : 'unavailable';
+		throw new EngineError(
+			code,
+			code === 'no_formats' ? '专属浏览器未找到可归档的正文。' : messages[code],
+		);
+	}
+	const e = payload.entry;
+	if (
+		!e ||
+		typeof e.id !== 'string' ||
+		typeof e.platform !== 'string' ||
+		!samePost(input, payload.observed, e) ||
+		!samePost(input, e.sourceUrl, e)
+	)
+		throw new EngineError('identity_mismatch', '浏览器当前作品与输入链接不一致。');
+	const source = new URL(e.sourceUrl);
+	source.username = '';
+	source.password = '';
+	source.search = '';
+	source.hash = '';
+	let remaining = 32 * 1024 * 1024;
+	const attachments = (Array.isArray(e.attachments) ? e.attachments : []).map((a) => {
+		const media = {kind: a.kind, alt: typeof a.alt === 'string' ? a.alt.slice(0, 1500) : ''};
+		if (
+			typeof a.data === 'string' &&
+			a.data.length > 0 &&
+			a.data.length <= remaining &&
+			typeof a.mimeType === 'string' &&
+			/^(?:image\/(?:jpeg|png|gif|webp|avif)|video\/(?:webm|mp4))$/.test(a.mimeType) &&
+			a.mimeType.startsWith(a.kind + '/') &&
+			/^[A-Za-z0-9+/]+=*$/.test(a.data)
+		) {
+			remaining -= a.data.length;
+			return {...media, mimeType: a.mimeType, data: a.data};
+		}
+		try {
+			const url = new URL(a.url);
+			if (
+				!a.missing &&
+				['image', 'audio', 'video'].includes(a.kind) &&
+				url.protocol === 'https:' &&
+				!url.username &&
+				!url.password &&
+				!url.port
+			)
+				return {...media, url: url.href};
+		} catch {}
+		return {...media, missing: true};
+	});
+	return {
+		type: 'post',
+		entry: {
+			platform: e.platform,
+			id: e.id,
+			sourceUrl: source.href,
+			title: String(e.title ?? ''),
+			author: String(e.author ?? ''),
+			body: String(e.body ?? ''),
+			bodyFormat: e.bodyFormat === 'markdown' ? 'markdown' : 'text',
+			bodyComplete: e.bodyComplete === true,
+			attachments,
+			...(Array.isArray(e.missing)
+				? {missing: e.missing.filter((v) => typeof v === 'string')}
+				: {}),
+		},
+	};
+}

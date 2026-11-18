@@ -24,7 +24,9 @@ import WebKit
         }
         return
       }
-      guard (mode == "browse" && args.count == 3) || (mode == "capture" && args.count == 5),
+      guard
+        (mode == "browse" && args.count == 3) || (mode == "capture" && args.count == 5)
+          || (mode == "post" && args.count == 4),
         let url = URL(string: args[2]), let host = url.host,
         url.scheme == "https"
           || (url.scheme == "http" && ["localhost", "127.0.0.1", "::1", "[::1]"].contains(host)),
@@ -32,7 +34,8 @@ import WebKit
       else { BrowserSession.respond(["ok": false, "error": "invalid_options"], 1) }
       session = BrowserSession(
         url, profile: id,
-        hosts: mode == "capture" ? Set(args[4].split(separator: ",").map(String.init)) : [host],
+        hosts: mode != "browse" ? Set(args.last!.split(separator: ",").map(String.init)) : [host],
+        readingPost: mode == "post",
         destination: mode == "capture" ? URL(fileURLWithPath: args[3]) : nil)
       return
     }
@@ -59,7 +62,7 @@ import WebKit
 }
 MainActor.assumeIsolated {
   let app = NSApplication.shared
-  let hidden = ["logout", "capture"].contains(CommandLine.arguments.dropFirst().first ?? "")
+  let hidden = ["logout", "capture", "post"].contains(CommandLine.arguments.dropFirst().first ?? "")
   app.setActivationPolicy(hidden ? .accessory : .regular)
   if !hidden {
     let bar = NSMenu()

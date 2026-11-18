@@ -2,6 +2,8 @@ import {cp, mkdir, mkdtemp, readFile, rename, rm, stat, writeFile} from 'node:fs
 import path from 'node:path';
 import {fileURLToPath} from 'node:url';
 import {findExecutable, ytDlpCommand} from '../src/dependencies.mjs';
+import {captureArchivePage, hydrateArchiveEntry} from '../extension/capture-page.mjs';
+import {captureSocialPost} from '../extension/social-post.mjs';
 import {runProcess} from '../src/process.mjs';
 
 if (process.platform !== 'darwin')
@@ -46,6 +48,19 @@ try {
 		await cp(path.join(root, directory), path.join(app, directory), {recursive: true});
 	await mkdir(path.join(app, 'desktop'));
 	await cp(path.join(root, 'desktop/bridge.mjs'), path.join(app, 'desktop/bridge.mjs'));
+	await writeFile(
+		path.join(resources, 'capture-post.js'),
+		`if(document.readyState==='loading') return {type:'unsupported',reason:'source_not_ready'};
+		if (document.querySelector('input[type=password]')?.getClientRects().length || /\\/(login|signin|sign_in)(\\/|$)/i.test(location.pathname)) return {type:'unsupported',reason:'auth_required'};
+		let capture = (${captureArchivePage.toString()})(true);
+		const hostname=location.hostname.replace(/^www[.]/,'');
+		if (['threads.net','threads.com','instagram.com','kuaishou.com'].includes(hostname)
+		  && (capture.type==='unsupported' || capture.entry?.platform==='web')) {
+		  capture=(${captureSocialPost.toString()})();
+		}
+		if(capture.type==='post') capture.entry=await (${hydrateArchiveEntry.toString()})(capture.entry);
+		return JSON.stringify(capture).length<=40*1024*1024?capture:{type:'unsupported',reason:'too_large'};`,
+	);
 	await cp(path.join(root, 'package.json'), path.join(app, 'package.json'));
 	const binaries = [
 		process.execPath,

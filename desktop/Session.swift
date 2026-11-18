@@ -7,6 +7,8 @@ final class BrowserSession: NSObject, WKNavigationDelegate, WKDownloadDelegate, 
   let input: URL
   let hosts: Set<String>
   let destination: URL?
+  let readingPost: Bool
+  var interactive: Bool { destination == nil && !readingPost }
   let view: WKWebView
   var window: NSWindow?
   var download: WKDownload?
@@ -17,9 +19,10 @@ final class BrowserSession: NSObject, WKNavigationDelegate, WKDownloadDelegate, 
   var observation: NSKeyValueObservation?
   let limit: Int64 = 2 * 1024 * 1024 * 1024
 
-  init(_ url: URL, profile: UUID, hosts: Set<String>, destination: URL?) {
+  init(_ url: URL, profile: UUID, hosts: Set<String>, readingPost: Bool, destination: URL?) {
     input = url
     self.hosts = hosts
+    self.readingPost = readingPost
     self.destination = destination
     let configuration = WKWebViewConfiguration()
     configuration.websiteDataStore = WKWebsiteDataStore(forIdentifier: profile)
@@ -39,7 +42,7 @@ final class BrowserSession: NSObject, WKNavigationDelegate, WKDownloadDelegate, 
     window.contentView = view
     window.delegate = self
     self.window = window
-    if destination == nil {
+    if interactive {
       window.title = "Fetchy Browser · " + (url.host ?? "")
       window.center()
       window.makeKeyAndOrderFront(nil)
@@ -56,13 +59,13 @@ final class BrowserSession: NSObject, WKNavigationDelegate, WKDownloadDelegate, 
   }
 
   func fail(_ code: String) {
-    guard !finished, destination != nil else { return }
+    guard !finished, !interactive else { return }
     finished = true
     Self.respond(["ok": false, "error": code], 1)
   }
 
   @objc func endSiteSession() {
-    if destination != nil { fail("auth_required") } else { NSApp.terminate(nil) }
+    if !interactive { fail("auth_required") } else { NSApp.terminate(nil) }
   }
 
   func sameSite(_ url: URL?) -> Bool {
@@ -90,13 +93,13 @@ final class BrowserSession: NSObject, WKNavigationDelegate, WKDownloadDelegate, 
       fail("unavailable")
       return
     }
-    if destination != nil && action.targetFrame?.isMainFrame == true && !sameSite(url) {
+    if !interactive && action.targetFrame?.isMainFrame == true && !sameSite(url) {
       decisionHandler(.cancel)
       fail("auth_required")
       return
     }
     // Login providers may open a new window. Keep the user's sign-in within this profile.
-    if destination == nil && action.targetFrame == nil
+    if interactive && action.targetFrame == nil
       && ["http", "https"].contains(url.scheme ?? "")
     {
       decisionHandler(.cancel)
@@ -110,7 +113,7 @@ final class BrowserSession: NSObject, WKNavigationDelegate, WKDownloadDelegate, 
     _ webView: WKWebView, decidePolicyFor response: WKNavigationResponse,
     decisionHandler: @escaping (WKNavigationResponsePolicy) -> Void
   ) {
-    guard destination != nil, response.isForMainFrame else {
+    guard !interactive, response.isForMainFrame else {
       decisionHandler(.allow)
       return
     }
@@ -126,6 +129,11 @@ final class BrowserSession: NSObject, WKNavigationDelegate, WKDownloadDelegate, 
       return
     }
     let mime = response.response.mimeType?.lowercased() ?? ""
+    if readingPost && !["text/html", "application/xhtml+xml"].contains(mime) {
+      decisionHandler(.cancel)
+      fail("no_formats")
+      return
+    }
     if mime == "video/mp4" || mime == "video/webm" || mime == "application/octet-stream" {
       handingOffNavigation = true
       decisionHandler(.download)
@@ -138,10 +146,17 @@ final class BrowserSession: NSObject, WKNavigationDelegate, WKDownloadDelegate, 
     _ webView: WKWebView, navigationResponse: WKNavigationResponse, didBecome download: WKDownload
   ) { attach(download) }
 
+  func webView(_ webView: WKWebView, didCommit navigation: WKNavigation!) {
+    if readingPost && tries == 0 {
+      tries = 1
+      inspectPost()
+    }
+  }
+
   func webView(_ webView: WKWebView, didFinish navigation: WKNavigation!) {
-    if destination == nil {
+    if interactive {
       window?.title = "Fetchy Browser · " + (webView.url?.host ?? "")
-    } else {
+    } else if !readingPost {
       inspectPage()
     }
   }
@@ -158,6 +173,45 @@ final class BrowserSession: NSObject, WKNavigationDelegate, WKDownloadDelegate, 
   func webView(_ webView: WKWebView, didFail navigation: WKNavigation!, withError error: Error) {
     if !handingOffNavigation && (error as NSError).code != NSURLErrorCancelled && download == nil {
       fail("network_error")
+    }
+  }
+
+  func inspectPost() {
+    guard !finished, sameSite(view.url),
+      let file = Bundle.main.url(forResource: "capture-post", withExtension: "js"),
+      let script = try? String(contentsOf: file, encoding: .utf8)
+    else {
+      fail("unavailable")
+      return
+    }
+    // The XiaoHongShu adapter reads the selected note from the page's own state.
+    // The remote view has no native script-message handlers or privileged callbacks.
+    view.callAsyncJavaScript(script, arguments: [:], in: nil, in: .page) { [weak self] result in
+      guard let self, !self.finished, self.sameSite(self.view.url) else { return }
+      if case .success(let value) = result, let info = value as? [String: Any] {
+        if info["reason"] as? String == "auth_required" {
+          self.fail("auth_required")
+          return
+        }
+        if info["type"] as? String == "post", let entry = info["entry"] as? [String: Any],
+          let observed = self.view.url?.absoluteString
+        {
+          self.finished = true
+          Self.respond(["ok": true, "entry": entry, "observed": observed])
+        }
+        if ["identity_mismatch", "unsupported_page", "too_large"].contains(
+          info["reason"] as? String ?? "")
+        {
+          self.fail("no_formats")
+          return
+        }
+      }
+      self.tries += 1
+      if self.tries >= 60 {
+        self.fail("no_formats")
+        return
+      }
+      DispatchQueue.main.asyncAfter(deadline: .now() + 0.4) { self.inspectPost() }
     }
   }
 
