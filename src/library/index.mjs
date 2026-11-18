@@ -3,7 +3,14 @@ import {mkdtemp, realpath, rm, stat} from 'node:fs/promises';
 import {tmpdir} from 'node:os';
 import path from 'node:path';
 import {downloadVideo as defaultDownload} from '../index.mjs';
-import {folderOf, keyFor, normalizeEntry, stashFile, workFile, renderWork} from './content.mjs';
+import {
+	entryIdentity,
+	folderOf,
+	normalizeEntry,
+	stashFile,
+	workFile,
+	renderWork,
+} from './content.mjs';
 import {bilibiliFolderId, readBilibiliPage} from './bilibili.mjs';
 import {libraryRoot, openLibrary, problem, transaction, withWorker} from './storage.mjs';
 export {libraryRoot};
@@ -11,7 +18,13 @@ export {discoverBilibiliFolders, bilibiliFolderId, readBilibiliPage} from './bil
 
 const unique = (xs) => [...new Set(xs)];
 function memberships(a = [], b = []) {
-	return [...new Map([...a, ...b].map((f) => [JSON.stringify([f.platform, f.id]), f])).values()];
+	const folders = new Map();
+	for (const f of [...a, ...b]) {
+		const key = JSON.stringify([f.platform, f.id]),
+			previous = folders.get(key);
+		folders.set(key, {...f, savedAt: f.savedAt || previous?.savedAt || null});
+	}
+	return [...folders.values()];
 }
 function mergeInput(old, item) {
 	if (!old || !old.sourceUrl || !item.sourceUrl) return item;
@@ -26,6 +39,7 @@ function mergeInput(old, item) {
 	return {
 		...old,
 		...item,
+		kind: old.kind === 'video' && !item.body && !item.attachments.length ? 'video' : item.kind,
 		title: item.title || old.title,
 		author: item.author || old.author,
 		body: body.body,
@@ -51,7 +65,7 @@ async function inputsFor(items, folder, root, options, seed) {
 	const result = [];
 	for (const [n, raw] of items.entries()) {
 		try {
-			const key = keyFor(raw?.platform || folder?.platform, raw?.id);
+			const {key} = entryIdentity(raw, folder);
 			if (options.selected && !options.selected.has(key)) continue;
 			result.push([await normalizeEntry(raw, folder, root, options)]);
 		} catch (e) {
@@ -180,6 +194,8 @@ function taskResult(ctx, id, details = true) {
 export async function prepareLibraryTask(manifest, options = {}) {
 	if (
 		manifest?.version !== 1 ||
+		(manifest.items !== undefined && !Array.isArray(manifest.items)) ||
+		(manifest.folders !== undefined && !Array.isArray(manifest.folders)) ||
 		(!Array.isArray(manifest.folders) && !Array.isArray(manifest.items))
 	)
 		throw problem('invalid_manifest', 'Use a version 1 manifest with items or folders.');
@@ -321,7 +337,11 @@ async function saveItem(ctx, input, old, options) {
 				signal: options.signal,
 				cookiesFile: options.cookiesFile,
 			});
-			if (res.platform !== item.platform || String(res.id) !== item.id)
+			const downloadId =
+				item.platform === 'bilibili' && /_p\d+$/.test(item.id)
+					? item.id.replace(/_p\d+$/, '')
+					: item.id;
+			if (res.platform !== item.platform || String(res.id) !== downloadId)
 				throw problem('wrong_video', 'Saved media does not match the collection member.');
 			const source = await realpath(res.filepath);
 			const actualTmp = await realpath(tmp);
@@ -401,6 +421,14 @@ export async function runLibraryTask(id, options = {}) {
 					);
 				}
 				await options.onProgress?.(taskResult(ctx, id, false));
+			}
+			if (cfg.selected && cfg.folders.every((f) => f.complete)) {
+				transaction(db, () => {
+					const missing = db.prepare(
+						"INSERT OR IGNORE INTO items(task,key,input,status,reason) VALUES(?,?,?,'failed','selection_missing')",
+					);
+					for (const key of cfg.selected) missing.run(id, key, JSON.stringify({key}));
+				});
 			}
 			const c = countsFor(db, id);
 			const partial = c.partial > 0 || cfg.folders.some((f) => !f.complete) || c.pending > 0;

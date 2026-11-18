@@ -6,6 +6,7 @@ import {Readable, Transform} from 'node:stream';
 import {pipeline} from 'node:stream/promises';
 import {problem} from './storage.mjs';
 import {runProcess} from '../process.mjs';
+import {normalizeUrl} from '../urls.mjs';
 
 const text = (v, max = 4096) => (typeof v === 'string' ? v.slice(0, max) : '');
 const digest = (s) => createHash('sha256').update(s).digest('hex');
@@ -44,6 +45,26 @@ export function keyFor(platform, id) {
 	)
 		throw problem('invalid_entry', 'Each item needs a platform and stable string ID.');
 	return platform + ':' + id;
+}
+export function entryIdentity(raw, folder) {
+	const platform = raw?.platform || folder?.platform;
+	let id = raw?.id;
+	// Bilibili represents parts of one BV/av URL with different video files.
+	if (platform === 'bilibili') {
+		let target;
+		try {
+			target = normalizeUrl(raw.sourceUrl);
+		} catch {
+			/* Imported articles need not be video URLs. */
+		}
+		if (target?.platform === 'bilibili' && target.page > 1) {
+			const partId = target.id + '_p' + target.page;
+			if (id !== target.id && id !== partId)
+				throw problem('invalid_entry', 'Bilibili part ID does not match its source.');
+			id = partId;
+		}
+	}
+	return {platform, id, key: keyFor(platform, id)};
 }
 export function folderOf(f) {
 	if (!f || typeof f.id !== 'string' || !f.id || f.id.length > 256)
@@ -171,10 +192,8 @@ export async function stashFile(root, file, kind, mimeType) {
 }
 export async function normalizeEntry(raw, folder, root, options = {}) {
 	if (!raw || typeof raw !== 'object') throw problem('invalid_entry', 'Expected an item object.');
-	const platform = raw.platform || folder?.platform,
-		id = raw.id;
-	const key = keyFor(platform, id),
-		sourceUrl = publicUrl(raw.sourceUrl);
+	const {platform, id, key} = entryIdentity(raw, folder);
+	const sourceUrl = publicUrl(raw.sourceUrl);
 	if (!sourceUrl) throw problem('invalid_entry', 'A source URL is required.');
 	const attachments = [];
 	if (raw.attachments !== undefined && raw.attachments !== null && !Array.isArray(raw.attachments))

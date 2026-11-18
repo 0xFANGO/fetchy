@@ -315,3 +315,25 @@ test('Bilibili account discovery scopes cookies to its HTTPS API and reports par
 	assert.equal(result.complete, false);
 	assert.equal(result.folders[0].id, '1');
 });
+
+test('different Bilibili parts have different archive identities, and absent selections stay visible', async (t) => {
+	const opts = await setup(t),
+		platform = 'bilibili',
+		id = 'BV1TeJ96EE5t';
+	const base = {
+		platform,
+		id,
+		sourceUrl: 'https://www.bilibili.com/video/' + id + '/',
+		body: 'part one',
+		bodyComplete: true,
+	};
+	const result = await importLibrary(
+		manifest([base, {...base, sourceUrl: base.sourceUrl + '?p=2', body: 'part two'}]),
+		{...opts, selected: ['bilibili:' + id, 'bilibili:' + id + '_p2', 'bilibili:gone']},
+	);
+	assert.equal(result.counts.added, 2);
+	assert.equal(result.counts.failed, 1);
+	assert.equal(result.items.find((x) => x.key === 'bilibili:gone').reason, 'selection_missing');
+	const rows = await searchLibrary({platform}, opts);
+	assert.notEqual(rows[0].filepath, rows[1].filepath);
+});
