@@ -5,14 +5,14 @@ Choose the row for the platform and the column for the kind of content you want 
 | Platform         | Examples to test                    | Video      | Audio    | Images    | Post text | Folder URL | All folders | History   |
 | ---------------- | ----------------------------------- | ---------- | -------- | --------- | --------- | ---------- | ----------- | --------- |
 | Bilibili         | Video; named favorites folder       | Saved¹     | —        | —         | —         | Saved⁷     | Untested⁷   | Public⁷   |
-| Douyin           | Video post; album                   | Saved²     | —        | —         | —         | —          | —           | —         |
+| Douyin           | Video post; album                   | Saved²     | —        | —         | —         | Fixture⁹   | Partial⁹    | Fixture⁹  |
 | Facebook         | Video post                          | Saved      | —        | —         | —         | —          | —           | —         |
-| Instagram        | Reel; carousel                      | Saved⁴     | —        | Untested  | Partial⁶  | —          | —           | —         |
+| Instagram        | Reel; carousel                      | Saved⁴     | —        | Untested  | Partial⁶  | Fixture⁹   | Fixture⁹    | Fixture⁹  |
 | Kuaishou         | Video post                          | Partial⁶   | —        | Untested⁶ | Partial⁶  | —          | —           | —         |
 | Pinterest        | Pin; board                          | Resolved   | —        | —         | —         | —          | —           | —         |
 | Reddit           | Video post; gallery                 | Restricted | —        | —         | —         | —          | —           | —         |
-| Threads          | Post; carousel                      | Saved⁶     | —        | Partial⁶  | Saved⁶    | —          | —           | —         |
-| TikTok           | Video; photo post                   | Saved      | —        | —         | —         | —          | —           | —         |
+| Threads          | Post; carousel                      | Saved⁶     | —        | Partial⁶  | Saved⁶    | Fixture⁹   | —           | Fixture⁹  |
+| TikTok           | Video; photo post                   | Saved      | —        | —         | —         | Fixture⁹   | —           | Fixture⁹  |
 | Weibo            | Video post                          | Saved      | —        | —         | —         | —          | —           | —         |
 | X (Twitter)      | Video post; text-only post          | Saved³     | —        | Fixture⁸  | Fixture⁸  | Fixture⁸   | Untested⁸   | Fixture⁸  |
 | Xiaohongshu      | Video note; photo note with caption | Saved²     | —        | Saved⁵    | Saved⁵    | Browser⁵   | Counted⁵    | Partial⁵  |
@@ -23,7 +23,7 @@ Choose the row for the platform and the column for the kind of content you want 
 | Dailymotion      | Video                               | Saved      | —        | —         | —         | —          | —           | —         |
 | Imgur            | Image; album                        | Untested   | —        | —         | —         | —          | —           | —         |
 | Internet Archive | Item containing a video file        | Saved      | —        | —         | —         | —          | —           | —         |
-| Kick             | Clip; recorded broadcast            | —          | —        | —         | —         | —          | —           | —         |
+| Kick             | Clip; recorded broadcast            | Resolved   | —        | —         | —         | —          | —           | —         |
 | Loom             | Recording                           | Saved      | —        | —         | —         | —          | —           | —         |
 | Mixcloud         | Track; set                          | —          | Resolved | —         | —         | —          | —           | —         |
 | Odysee           | Video or audio claim                | Untested   | Saved    | —         | —         | —          | —           | —         |
@@ -51,6 +51,7 @@ Earlier Bilibili, Douyin and Xiaohongshu video saves came from the October 24, 2
 
 7. The Bilibili folder reader enumerated two pages of a public folder with 22 distinct IDs and a matching total. Account discovery is implemented for a signed-in user. Private and account-wide history have separate access requirements. [Bilibili validation](library.md)
 8. The Chrome toolbar archived text, long-form Markdown and mixed attachments, and selected an item from a second bookmarks page on controlled fixtures. YouTube and Zhihu readers identify supported open lists and posts from their visible pages. These checks do not establish full authenticated histories on those platforms. [Browser archive and checks](extension-library.md)
+9. Chromium fixtures cover Instagram’s Saved directory and named collections, Douyin’s selected favorites and identifiable mixes, Threads Saved, and TikTok Favorites and shared collections. Douyin folder tiles without stable links remain unread. Private histories on these four platforms have not been verified against an account. [Collection routes and limits](collections.md)
 
 The comparison covers the 31 services in Downbit’s list plus Zhihu. The named adapters accept individual items. Bandcamp, Mixcloud and SoundCloud route individual tracks or shows to M4A. Odysee can route a claim to either video or audio after inspecting the formats. Albums, sets, boards, channels and live streams have separate semantics. PeerTube accepts UUID and /w/ share links on FramaTube and Blender Video. Rumble accepts single-video and embed pages. Internet Archive accepts a single-video item or a named video file within an item. [Downbit’s site list](https://downbit.app/docs/sites) · [Fetchy site registry](../src/sites/index.mjs) · [Single-link validation](platform-validation.md)
 

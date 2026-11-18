@@ -21,11 +21,26 @@ async function inject(tabId, func, args = []) {
 	if (!execution?.result) throw error('source_not_ready');
 	return execution.result;
 }
+function isCollectionRoute(url) {
+	const host = url.hostname.replace(/^www\./, '');
+	if (host === 'instagram.com') return /^\/[\w.]+\/saved(?:\/|$)/.test(url.pathname);
+	if (['threads.com', 'threads.net'].includes(host)) return /^\/saved\/?$/.test(url.pathname);
+	if (host === 'tiktok.com') return /^\/@[\w.]+(?:\/collection\/[^/]+)?\/?$/.test(url.pathname);
+	return (
+		host === 'douyin.com' && /^\/(?:user\/self|(?:collection|mix)\/\d+)\/?$/.test(url.pathname)
+	);
+}
 async function capture(tabId, attempts = 10) {
 	let snap;
 	for (let i = 0; i < attempts; i++) {
 		try {
-			snap = await inject(tabId, captureArchivePage);
+			const tab = await chrome.tabs.get(tabId);
+			if (tab.url && isCollectionRoute(new URL(tab.url))) {
+				const {captureSocialCollection} = await import('./collection-page.mjs');
+				snap = await inject(tabId, captureSocialCollection);
+			} else {
+				snap = await inject(tabId, captureArchivePage);
+			}
 		} catch {
 			snap = {type: 'unsupported', reason: 'page_access'};
 		}

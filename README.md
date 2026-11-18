@@ -53,7 +53,7 @@ node bin/fetchy.mjs library tasks
 
 | Tool                    | Needed for                                       | macOS install          |
 | ----------------------- | ------------------------------------------------ | ---------------------- |
-| Node.js 22+             | everything                                       | `brew install node`    |
+| Node.js 22.13+          | all features                                     | `brew install node`    |
 | FFmpeg + ffprobe        | merging, remuxing, validation                    | `brew install ffmpeg`  |
 | Python 3.10+            | running the pinned yt-dlp version                | `brew install python`  |
 | yt-dlp (pinned version) | all CLI downloads and yt-dlp extension downloads | `npm run deps:install` |

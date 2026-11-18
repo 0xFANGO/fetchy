@@ -40,6 +40,16 @@
 		"https://zhuanlan.zhihu.com/*",
 		"https://space.bilibili.com/*",
 		"https://www.youtube.com/*",
-		"https://m.youtube.com/*"
+		"https://m.youtube.com/*",
+		"https://instagram.com/*",
+		"https://www.instagram.com/*",
+		"https://threads.net/*",
+		"https://www.threads.net/*",
+		"https://threads.com/*",
+		"https://www.threads.com/*",
+		"https://kuaishou.com/*",
+		"https://www.kuaishou.com/*",
+		"https://tiktok.com/*",
+		"https://www.tiktok.com/*"
 	]
 }

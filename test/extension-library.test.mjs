@@ -231,6 +231,7 @@ test('virtualized collections return to the top and keep moving through overlapp
 	const realSetTimeout = setTimeout;
 	t.mock.method(globalThis, 'setTimeout', (callback) => realSetTimeout(callback, 0));
 	const mockChrome = {
+		tabs: {get: async () => ({url: 'https://www.xiaohongshu.com/board/album'})},
 		scripting: {
 			async executeScript({func, args}) {
 				if (func === advanceArchivePage) {

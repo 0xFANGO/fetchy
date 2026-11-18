@@ -51,7 +51,7 @@ node bin/fetchy.mjs library tasks
 
 | 工具               | 用途                              | macOS 安装             |
 | ------------------ | --------------------------------- | ---------------------- |
-| Node.js 22+        | 全部                              | `brew install node`    |
+| Node.js 22.13+     | 所有功能                          | `brew install node`    |
 | FFmpeg + ffprobe   | 合并、重封装、校验                | `brew install ffmpeg`  |
 | Python 3.10+       | 运行固定版本的 yt-dlp             | `brew install python`  |
 | yt-dlp（固定版本） | 所有 CLI 下载及扩展的 yt-dlp 下载 | `npm run deps:install` |
