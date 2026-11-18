@@ -15,6 +15,8 @@ macOS arm64，Google Chrome for Testing 157.0.8103.50（headless），独立的�
 
 四份文件都在测试浏览器断网后从本地播放成功。独立 ffprobe 核对的尺寸、音视频编码、时长和字节数，分别与同一帖子在 [CLI 实测表](validation.md) 中的数值一致。分别运行 `ffmpeg -nostdin -v error -xerror -protocol_whitelist file,pipe -i <文件> -map 0:v -map '0:a?' -f null -` 均退出 0。本轮覆盖两站的单视频链接和弹窗任务恢复。其余内容类型和收藏支持见[逐站能力表](platforms.md)。
 
+另在 [NASA 的 Reel 作者路径](https://www.instagram.com/nasa/reel/Dd1gQBsCWE8/) 打开工具栏，扩展通过当前标签页自动识别作品。把 [NASA Johnson 的复数路径](https://www.instagram.com/reels/DfF3eqGSKKc/) 粘贴到弹窗也能保存。两次均在下载开始后关闭、重开弹窗，恢复同一个任务；成品可离线播放并通过全片解码，SHA-256 分别与对应规范链接的成品一致。
+
 同一条 Mauna Loa 链接在 v0.3.1 和本次源码构建中的工具栏识别结果（360 × 580）。[v0.3.1 弹窗](assets/validation/x-post-before.png) · [新增 X 适配后的弹窗](assets/validation/x-post-ready.png)
 
 ## 2026-10-25 验收状态

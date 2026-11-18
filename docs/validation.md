@@ -37,6 +37,8 @@ macOS，Node 25.8.0，项目锁定的 yt-dlp 2026.10.21，ffprobe 8.0.1。以下
 | [抖音 7695202760953793827](https://www.douyin.com/jingxuan?modal_id=7695202760953793827)        | `--max-height 1024 --timeout-ms 240000`                | 1.94 秒返回 `session_required`，无成品                             |
 | [小红书 6ad9e45b000000003303249c](https://www.xiaohongshu.com/explore/6ad9e45b000000003303249c) | `--timeout-ms 150000`                                  | 无分享参数的详情页在 2.75 秒返回 `no_formats`，无成品              |
 
+将四个原有站点迁移到共享注册表后，用相同的匿名 CLI 参数复测。YouTube 短片 `jNQXAC9IVRw` 再次保存成功，ffprobe 检出 320×240 H.264/yuv420p 与 AAC，18.947256 秒、635,340 字节。B站 `BV1TeJ96EE5t`、抖音和小红书的样例仍在上表所列阶段返回相同错误码。
+
 早期扩展实测记录了小红书、抖音在可播放页面上的成功下载。两个入口的会话和取流条件不同。[扩展实测](extension-validation.md)
 
 ## 2026-10-24 原始实测环境
