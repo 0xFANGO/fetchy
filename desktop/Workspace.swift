@@ -1,4 +1,5 @@
-import AVKit
+import AVFoundation
+import AppKit
 import SwiftUI
 import UniformTypeIdentifiers
 
@@ -94,32 +95,6 @@ struct LocalCommands {
   }
 }
 
-private struct LibraryItem: Identifiable {
-  let id: String, title: String, detail: String, file: URL?
-  init?(_ row: [String: Any]) {
-    guard let key = row["key"] as? String else { return nil }
-    id = key
-    title = row["title"] as? String ?? key
-    detail = [row["platform"] as? String, row["author"] as? String, row["status"] as? String]
-      .compactMap { $0 }.filter { !$0.isEmpty }.joined(separator: " · ")
-    file = (row["filepath"] as? String).map { URL(fileURLWithPath: $0) }
-  }
-}
-
-private struct CollectionTask: Identifiable {
-  let id: String, status: String, counts: [String: Int]
-  init?(_ row: [String: Any]) {
-    guard let value = row["id"] as? String else { return nil }
-    id = value
-    status = row["status"] as? String ?? ""
-    counts = row["counts"] as? [String: Int] ?? [:]
-  }
-  var summary: String {
-    [("added", "新增"), ("skipped", "跳过"), ("partial", "部分"), ("failed", "失败"), ("pending", "待处理")]
-      .map { "\($0.1) \(counts[$0.0] ?? 0)" }.joined(separator: "  ·  ")
-  }
-}
-
 private struct ManifestItem: Identifiable {
   let id: String, title: String, platform: String
 }
@@ -173,247 +148,382 @@ private struct SelectionSheet: View {
   }
 }
 
-private struct MoviePreview: Identifiable {
-  let id = UUID()
-  let url: URL
-  let player: AVPlayer
-  init(_ url: URL) {
-    self.url = url
-    player = AVPlayer(url: url)
-  }
-}
-private struct LocalVideoPlayer: NSViewRepresentable {
-  let player: AVPlayer
-  func makeNSView(context: Context) -> AVPlayerView {
-    let view = AVPlayerView()
-    view.controlsStyle = .inline
-    view.player = player
-    return view
-  }
-  func updateNSView(_ view: AVPlayerView, context: Context) {
-    if view.player !== player { view.player = player }
+struct LibraryEntry: Identifiable {
+  let id: String
+  let title: String
+  let platform: String
+  let author: String
+  let status: String
+  let kind: String
+  let folders: [String]
+  let file: URL?
+  let cover: URL?
+  let coverKind: String?
+  let sourceUrl: String?
+  init?(_ row: [String: Any]) {
+    guard let key = row["key"] as? String else { return nil }
+    id = key
+    title = (row["title"] as? String).flatMap { $0.isEmpty ? nil : $0 } ?? key
+    platform = row["platform"] as? String ?? ""
+    author = row["author"] as? String ?? ""
+    status = row["status"] as? String ?? ""
+    kind = row["kind"] as? String ?? "post"
+    folders = (row["folders"] as? [[String: Any]] ?? []).compactMap { $0["name"] as? String }
+    file = (row["filepath"] as? String).map { URL(fileURLWithPath: $0) }
+    cover = (row["cover"] as? String).map { URL(fileURLWithPath: $0) }
+    coverKind = row["coverKind"] as? String
+    sourceUrl = row["sourceUrl"] as? String
   }
 }
 
-struct Workspace: View {
+struct FailureRow: Identifiable {
+  let task: String
+  let key: String
+  let status: String
+  let reason: String?
+  var id: String { task + "\n" + key }
+  var platform: String { String(key.split(separator: ":").first ?? "") }
+}
+
+struct TaskSummary: Identifiable {
+  let id: String
+  let status: String
+  let counts: [String: Int]
+  init?(_ row: [String: Any]) {
+    guard let value = row["id"] as? String else { return nil }
+    id = value
+    status = row["status"] as? String ?? ""
+    counts = row["counts"] as? [String: Int] ?? [:]
+  }
+  var open: Bool {
+    ["queued", "running", "interrupted"].contains(status) || (counts["failed"] ?? 0) > 0
+      || (counts["partial"] ?? 0) > 0 || (counts["pending"] ?? 0) > 0
+  }
+  var summary: String {
+    let names = [
+      ("added", "已保存"), ("skipped", "已有"), ("partial", "部分"), ("failed", "失败"), ("pending", "等待"),
+    ]
+    return names.compactMap { (name, label) -> String? in
+      guard let count = counts[name], count > 0 else { return nil }
+      return label + " \(count)"
+    }.joined(separator: " · ")
+  }
+}
+
+/// The same reasons and next steps as the extension's side panel.
+let failureReasons: [String: String] = [
+  "login_required": "需要登录", "login_expired": "登录已过期", "auth_required": "媒体拒绝访问",
+  "verification_required": "网站要求验证：在浏览器打开原帖完成验证后重试",
+  "source_unavailable": "原帖不可用或已删除", "unavailable": "原帖不可用或已删除",
+  "network_error": "网络中断", "timeout": "读取超时", "size_limit": "文件超过单个文件上限",
+  "invalid_attachment": "下载到的文件无法识别", "invalid_url": "媒体地址无法访问",
+  "full_text": "正文可能不完整", "attachments": "部分图片或视频缺失",
+  "selection_missing": "收藏夹里已找不到这条", "wrong_video": "下载到的视频与原帖不一致",
+  "no_formats": "没有可下载的视频格式", "save_failed": "保存失败",
+]
+let loginReasons: Set<String> = ["login_required", "login_expired", "auth_required"]
+let statusNames: [String: String] = [
+  "queued": "等待中", "pending": "等待中", "running": "保存中", "completed": "已完成", "partial": "部分完成",
+  "failed": "失败", "interrupted": "已中断", "added": "已保存", "skipped": "已有",
+]
+
+struct MainView: View {
+  @EnvironmentObject var app: AppState
+  var body: some View {
+    NavigationSplitView {
+      List(
+        Pane.allCases,
+        selection: Binding(get: { Optional(app.pane) }, set: { if let pane = $0 { app.pane = pane } })
+      ) { pane in
+        Label(pane.rawValue, systemImage: pane.symbol).tag(pane)
+      }
+      .navigationSplitViewColumnWidth(min: 140, ideal: 160, max: 220)
+    } detail: {
+      switch app.pane {
+      case .library: LibraryPane()
+      case .browser: BrowserPane(browser: app.browser)
+      case .accounts: AccountsPane()
+      }
+    }
+    .frame(minWidth: 900, minHeight: 560)
+    .tint(Color(red: 0.76, green: 0.24, blue: 0.14))
+  }
+}
+
+struct CoverImage: View {
+  let url: URL?
+  let kind: String?
+  @State private var image: NSImage?
+  var body: some View {
+    ZStack {
+      Rectangle().fill(Color.secondary.opacity(0.12))
+      if let image {
+        Image(nsImage: image).resizable().scaledToFill()
+      } else {
+        Image(systemName: kind == "video" ? "play.rectangle" : "doc.richtext")
+          .font(.largeTitle).foregroundStyle(.secondary)
+      }
+    }
+    .frame(height: 150).clipped()
+    .task(id: url) { image = await load() }
+  }
+  private func load() async -> NSImage? {
+    guard let url else { return nil }
+    if kind == "video" {
+      let generator = AVAssetImageGenerator(asset: AVURLAsset(url: url))
+      generator.appliesPreferredTrackTransform = true
+      generator.maximumSize = CGSize(width: 480, height: 480)
+      guard let frame = try? await generator.image(at: .zero).image else { return nil }
+      return NSImage(cgImage: frame, size: .zero)
+    }
+    return NSImage(contentsOf: url)
+  }
+}
+
+struct EntryCard: View {
+  let entry: LibraryEntry
+  var body: some View {
+    VStack(alignment: .leading, spacing: 6) {
+      CoverImage(url: entry.cover, kind: entry.coverKind ?? (entry.kind == "video" ? "video" : nil))
+        .clipShape(RoundedRectangle(cornerRadius: 8))
+      Text(entry.title).font(.headline).lineLimit(2)
+      Text([entry.platform, entry.author].filter { !$0.isEmpty }.joined(separator: " · "))
+        .font(.caption).foregroundStyle(.secondary).lineLimit(1)
+      if entry.status == "partial" {
+        Text("部分保存").font(.caption).foregroundStyle(.orange)
+      }
+    }
+    .contentShape(Rectangle())
+  }
+}
+
+struct LibraryPane: View {
+  @EnvironmentObject var app: AppState
   private let commands = LocalCommands()
-  @State private var section = "保存"
-  @State private var link = ""
-  @AppStorage("outputDirectory") private var output = FileManager.default
-    .homeDirectoryForCurrentUser.appendingPathComponent("Downloads/Fetchy").path
-  @State private var running = false
-  @State private var notice = ""
-  @State private var saved: URL?
-  @State private var movie: MoviePreview?
-  @State private var query = ""
+  private let filters = ["全部", "视频", "图文", "文章", "进行中与失败"]
+  @State private var text = ""
+  @State private var filter = "全部"
   @State private var platform = ""
   @State private var folder = ""
-  @State private var topic = ""
-  @State private var items: [LibraryItem] = []
-  @State private var jobs: [CollectionTask] = []
-  @State private var history: [Int] = [0]
-  @State private var nextPage: Int?
-  @State private var serviceNotice = ""
-  @State private var updating = false
+  @State private var entries: [LibraryEntry] = []
+  @State private var platforms: Set<String> = []
+  @State private var folderNames: Set<String> = []
+  @State private var tasks: [TaskSummary] = []
+  @State private var failures: [String: [FailureRow]] = [:]
+  @State private var more = false
+  @State private var notice = ""
+  @State private var saving = false
   @State private var preview: ManifestPreview?
-  var filters: [String] { [query, platform, folder, topic] }
+
+  private var isLink: Bool {
+    let value = text.trimmingCharacters(in: .whitespacesAndNewlines)
+    return value.contains("://") || value.range(of: #"^[\w-]+(\.[\w-]+)+/"#, options: .regularExpression) != nil
+  }
+  private var query: String { isLink ? "" : text.trimmingCharacters(in: .whitespacesAndNewlines) }
+  private var visible: [LibraryEntry] {
+    entries.filter { entry in
+      switch filter {
+      case "视频": return entry.kind == "video" || entry.kind == "audio"
+      case "图文": return entry.kind == "post"
+      case "文章": return entry.kind == "article"
+      default: return true
+      }
+    }
+  }
 
   var body: some View {
-    VStack(alignment: .leading, spacing: 18) {
+    VStack(alignment: .leading, spacing: 12) {
       HStack {
-        Image(nsImage: NSApp.applicationIconImage).resizable().frame(width: 30, height: 30)
-        Text("Fetchy").font(.title2.bold())
+        TextField("粘贴链接保存，或输入关键词搜索", text: $text)
+          .textFieldStyle(.roundedBorder).controlSize(.large).onSubmit(submit)
+        if isLink {
+          Button("保存", action: submit).buttonStyle(.borderedProminent).disabled(saving)
+        }
+        Menu("更多") { Button("导入收藏清单…", action: selectManifest) }.fixedSize()
+      }
+      HStack {
+        Picker("筛选", selection: $filter) { ForEach(filters, id: \.self) { Text($0) } }
+          .pickerStyle(.segmented).labelsHidden().frame(maxWidth: 440)
         Spacer()
-        Picker("工作区", selection: $section) {
-          ForEach(["保存", "收藏库", "任务"], id: \.self) { Text($0) }
-        }.pickerStyle(.segmented).labelsHidden().frame(width: 226)
+        Picker("平台", selection: $platform) {
+          Text("全部平台").tag("")
+          ForEach(platforms.sorted(), id: \.self) { Text($0).tag($0) }
+        }.frame(width: 170)
+        Picker("收藏夹", selection: $folder) {
+          Text("全部收藏夹").tag("")
+          ForEach(folderNames.sorted(), id: \.self) { Text($0).tag($0) }
+        }.frame(width: 190)
       }
-      Divider()
-      if section == "保存" { downloadView }
-      if section == "收藏库" { libraryView }
-      if section == "任务" { taskView }
-      if section != "保存" && (history.count > 1 || nextPage != nil) {
+      if saving {
         HStack {
-          Button("上一页") { if history.count > 1 { history.removeLast(); Task { await refresh() } } }
-            .disabled(history.count <= 1)
-          Button("下一页") { if let nextPage { history.append(nextPage); Task { await refresh() } } }
-            .disabled(nextPage == nil)
+          ProgressView().controlSize(.small)
+          Text("正在保存…").foregroundStyle(.secondary)
         }
       }
-      if section != "保存", !serviceNotice.isEmpty {
-        Text(serviceNotice).foregroundStyle(.secondary).textSelection(.enabled)
+      if !notice.isEmpty {
+        Text(notice).textSelection(.enabled).fixedSize(horizontal: false, vertical: true)
       }
-      Spacer(minLength: 0)
+      if filter == "进行中与失败" { failureList } else { grid }
     }
-    .padding(26).frame(minWidth: 650, minHeight: 420, alignment: .topLeading)
-    .tint(Color(red: 0.76, green: 0.24, blue: 0.14))
-    .sheet(item: $movie) { item in
-      VStack(alignment: .leading, spacing: 10) {
-        HStack {
-          Text(item.url.lastPathComponent).font(.headline).lineLimit(2)
-          Spacer()
-          Button("关闭") { movie = nil }
-        }
-        LocalVideoPlayer(player: item.player).frame(minWidth: 600, minHeight: 340)
-          .onAppear { item.player.play() }
-          .onDisappear { item.player.pause() }
-      }.padding()
-    }
-    .sheet(item: $preview) { selection in
-      SelectionSheet(selection) { keys in
-        let data = try? JSONSerialization.data(withJSONObject: keys)
-        perform(["import", selection.source.path], payload: data)
-      }
-    }
-    .task(id: section + "\u{1f}" + filters.joined(separator: "\u{1e}")) {
-      history = [0]
-      nextPage = nil
-      guard section != "保存" else { return }
-      try? await Task.sleep(nanoseconds: 220_000_000)
+    .padding(22)
+    .task(id: [query, platform, folder, filter].joined(separator: "\u{1f}")) {
+      try? await Task.sleep(nanoseconds: 200_000_000)
       guard !Task.isCancelled else { return }
       await refresh()
-      while section == "任务" && !Task.isCancelled {
+      while filter == "进行中与失败" && !Task.isCancelled {
         try? await Task.sleep(nanoseconds: 3_000_000_000)
         guard !Task.isCancelled else { return }
         await refresh()
       }
     }
-  }
-
-  var downloadView: some View {
-    VStack(alignment: .leading, spacing: 15) {
-      Text("保存链接").font(.title.bold())
-      TextField("粘贴作品或媒体链接", text: $link).textFieldStyle(.roundedBorder)
-        .controlSize(.large).accessibilityLabel("视频链接").onSubmit { save() }
-      HStack {
-        Button("下载", action: save).buttonStyle(.borderedProminent).keyboardShortcut(.defaultAction)
-          .disabled(running || link.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
-        Button("在专属浏览器打开") {
-          Task {
-            do {
-              _ = try await commands.run(["browse", link])
-              notice = "已打开专属浏览器。登录后可在此下载。"
-            } catch { notice = error.localizedDescription }
-          }
-        }
-        .disabled(link.isEmpty || running)
-        if running {
-          ProgressView().controlSize(.small)
-          Text("正在保存…").foregroundStyle(.secondary)
-        }
-      }
-      HStack {
-        Image(systemName: "folder")
-        Text(output).lineLimit(1).truncationMode(.middle).help(output)
-        Spacer()
-        Button("更改目录") {
-          let panel = NSOpenPanel()
-          panel.canChooseDirectories = true
-          panel.canChooseFiles = false
-          panel.canCreateDirectories = true
-          if panel.runModal() == .OK, let url = panel.url { output = url.path }
-        }.disabled(running)
-      }.font(.callout)
-      if !notice.isEmpty {
-        Text(notice).textSelection(.enabled).fixedSize(horizontal: false, vertical: true)
-      }
-      if let saved {
-        HStack {
-          Button("打开文件") {
-            if saved.pathExtension.lowercased() == "mp4" {
-              movie = MoviePreview(saved)
-            } else {
-              NSWorkspace.shared.open(saved)
-            }
-          }
-          Text(saved.lastPathComponent).lineLimit(2).textSelection(.enabled)
+    .onChange(of: app.pane) { _, pane in if pane == .library { Task { await refresh() } } }
+    .sheet(item: $preview) { selection in
+      SelectionSheet(selection) { keys in
+        let data = try? JSONSerialization.data(withJSONObject: keys)
+        Task {
+          do {
+            _ = try await commands.run(["import", selection.source.path], bridge: true, payload: data)
+            filter = "进行中与失败"
+          } catch { notice = error.localizedDescription }
         }
       }
     }
   }
 
-  private func save() {
-    let url = link.trimmingCharacters(in: .whitespacesAndNewlines)
-    guard !running, !url.isEmpty else { return }
-    running = true
-    saved = nil
+  var grid: some View {
+    ScrollView {
+      if visible.isEmpty {
+        Text(entries.isEmpty ? "资料库还是空的。粘贴一个链接，或在浏览器里打开收藏夹保存。" : "没有符合筛选的作品。")
+          .foregroundStyle(.secondary).padding(.top, 40)
+      }
+      LazyVGrid(columns: [GridItem(.adaptive(minimum: 190), spacing: 16)], spacing: 18) {
+        ForEach(visible) { entry in
+          EntryCard(entry: entry)
+            .onTapGesture { if let file = entry.file { NSWorkspace.shared.open(file) } }
+            .contextMenu {
+              if let file = entry.file {
+                Button("打开离线页") { NSWorkspace.shared.open(file) }
+                Button("在访达中显示") { NSWorkspace.shared.activateFileViewerSelecting([file]) }
+              }
+              if let source = entry.sourceUrl {
+                Button("在内置浏览器打开原帖") { app.open(source) }
+              }
+            }
+        }
+      }
+      if more {
+        Button("加载更多") { Task { await refresh(offset: entries.count) } }.padding()
+      }
+    }
+  }
+
+  var failureList: some View {
+    List {
+      if tasks.isEmpty { Text("没有进行中或失败的保存。").foregroundStyle(.secondary) }
+      ForEach(tasks) { task in
+        Section {
+          ForEach(failures[task.id] ?? []) { row in failureRow(row) }
+        } header: {
+          HStack {
+            Text((statusNames[task.status] ?? task.status) + " · " + task.summary)
+            Spacer()
+            if !["running", "queued"].contains(task.status),
+              (task.counts["failed"] ?? 0) + (task.counts["partial"] ?? 0) > 0
+            {
+              Button("重试失败项") { run(["retry", task.id]) }
+            }
+            if task.status == "interrupted" { Button("继续") { run(["resume", task.id]) } }
+          }
+        }
+      }
+    }
+  }
+
+  @ViewBuilder func failureRow(_ row: FailureRow) -> some View {
+    let title = entries.first { $0.id == row.key }?.title ?? row.key
+    HStack {
+      VStack(alignment: .leading, spacing: 2) {
+        Text(title).lineLimit(1)
+        Text(
+          (statusNames[row.status] ?? row.status)
+            + (row.reason.map { " · " + (failureReasons[$0] ?? $0) } ?? "")
+        ).font(.caption).foregroundStyle(row.status == "failed" ? Color.red : Color.secondary)
+      }
+      Spacer()
+      if let reason = row.reason, loginReasons.contains(reason) {
+        Button("去登录后重试") {
+          app.focusedSite = row.platform
+          app.pane = .accounts
+        }
+      }
+      if ["failed", "partial"].contains(row.status) {
+        Button("重试") { run(["retry", row.task, row.key]) }
+      }
+    }
+  }
+
+  private func submit() {
+    let value = text.trimmingCharacters(in: .whitespacesAndNewlines)
+    guard isLink, !saving else { return }
+    saving = true
     notice = ""
     Task {
-      defer { running = false }
+      defer { saving = false }
       do {
-        guard
-          let result = try await commands.run(["get", url, "--output", output]) as? [String: Any],
-          let file = result["filepath"] as? String, FileManager.default.fileExists(atPath: file)
-        else { throw FetchyFailure(text: "没有收到可打开的文件。") }
-        saved = URL(fileURLWithPath: file)
-        notice = result["status"] as? String == "partial" ? "部分保存。打开文件可查看缺少的内容。" : "已保存"
+        let result = try await commands.run(["get", value]) as? [String: Any]
+        notice = result?["status"] as? String == "partial" ? "部分保存，缺少的内容见离线页。" : "已保存到资料库。"
+        text = ""
+        await refresh()
       } catch { notice = error.localizedDescription }
     }
   }
 
-  var libraryView: some View {
-    VStack(alignment: .leading, spacing: 12) {
-      Text("收藏库").font(.title.bold())
-      TextField("搜索原文、标题或作者", text: $query).textFieldStyle(.roundedBorder)
-      HStack {
-        TextField("平台", text: $platform)
-        TextField("原收藏夹", text: $folder)
-        TextField("主题", text: $topic)
-      }.textFieldStyle(.roundedBorder)
-      if items.isEmpty && serviceNotice.isEmpty { Text("没有匹配的作品。").foregroundStyle(.secondary) }
-      List(items) { item in
-        HStack {
-          VStack(alignment: .leading) {
-            Text(item.title).font(.headline)
-            Text(item.detail).font(.caption).foregroundStyle(.secondary)
-          }
-          Spacer()
-          if let file = item.file { Button("离线打开") { NSWorkspace.shared.open(file) } }
-        }.padding(.vertical, 4)
-      }
+  private func run(_ args: [String]) {
+    Task {
+      do {
+        _ = try await commands.run(args, bridge: true)
+        await refresh()
+      } catch { notice = error.localizedDescription }
     }
   }
 
-  var taskView: some View {
-    VStack(alignment: .leading, spacing: 12) {
-      HStack {
-        Text("收藏任务").font(.title.bold())
-        Spacer()
-        Button("导入收藏清单…", action: selectManifest).disabled(updating)
+  private func refresh(offset: Int = 0) async {
+    do {
+      if filter == "进行中与失败" {
+        let rows = try await commands.run(["tasks", "0"], bridge: true) as? [[String: Any]] ?? []
+        let open = rows.compactMap(TaskSummary.init).filter(\.open)
+        var details: [String: [FailureRow]] = [:]
+        for task in open.prefix(20) {
+          let detail = try await commands.run(["task", task.id], bridge: true) as? [String: Any]
+          details[task.id] = (detail?["items"] as? [[String: Any]] ?? []).compactMap { item in
+            guard let key = item["key"] as? String, let status = item["status"] as? String,
+              ["failed", "partial", "pending"].contains(status)
+            else { return nil }
+            return FailureRow(task: task.id, key: key, status: status, reason: item["reason"] as? String)
+          }
+        }
+        tasks = Array(open.prefix(20))
+        failures = details
       }
-      if jobs.isEmpty && serviceNotice.isEmpty { Text("暂无收藏任务。").foregroundStyle(.secondary) }
-      List(jobs) { job in
-        HStack {
-          VStack(alignment: .leading, spacing: 3) {
-            Text(
-              [
-                "queued": "排队中", "running": "进行中", "completed": "已完成", "partial": "部分保存",
-                "failed": "失败", "interrupted": "已中断",
-              ][job.status] ?? job.status
-            ).font(.headline)
-            Text(job.summary).font(.callout)
-            Text(job.id).font(.caption.monospaced()).foregroundStyle(.secondary).textSelection(
-              .enabled)
-          }
-          Spacer()
-          if ["interrupted", "queued"].contains(job.status) {
-            Button("继续") { perform(["resume", job.id]) }.disabled(updating)
-          }
-          if (job.counts["failed"] ?? 0) > 0 {
-            Button("重试失败项") { perform(["retry", job.id]) }.disabled(updating)
-          }
-        }.padding(.vertical, 4)
+      let rows =
+        try await commands.run(["search", query, platform, folder, "", String(offset)], bridge: true)
+        as? [[String: Any]] ?? []
+      let found = rows.compactMap(LibraryEntry.init)
+      entries = offset == 0 ? found : entries + found
+      more = rows.count >= 100
+      for entry in found {
+        if !entry.platform.isEmpty { platforms.insert(entry.platform) }
+        folderNames.formUnion(entry.folders)
       }
-    }
+    } catch { notice = error.localizedDescription }
   }
+
   private func selectManifest() {
     let panel = NSOpenPanel()
     panel.allowedContentTypes = [.json]
     panel.canChooseDirectories = false
     guard panel.runModal() == .OK, let url = panel.url else { return }
-    updating = true
     Task {
-      defer { updating = false }
       do {
         let rows =
           try await commands.run(["preview", url.path], bridge: true) as? [[String: String]] ?? []
@@ -424,43 +534,7 @@ struct Workspace: View {
         }
         guard !options.isEmpty else { throw FetchyFailure(text: "清单没有可保存的条目。") }
         preview = ManifestPreview(source: url, items: options)
-      } catch { serviceNotice = error.localizedDescription }
-    }
-  }
-  private func perform(_ args: [String], payload: Data? = nil) {
-    updating = true
-    Task {
-      defer { updating = false }
-      do {
-        _ = try await commands.run(args, bridge: true, payload: payload)
-        await refresh()
-      } catch { serviceNotice = error.localizedDescription }
-    }
-  }
-  private func refresh() async {
-    let selected = section
-    let requested = filters
-    let offset = history.last ?? 0
-    do {
-      let args = (selected == "收藏库" ? ["search"] + requested : ["tasks"]) + [String(offset)]
-      let result = try await commands.run(args, bridge: true)
-      guard !Task.isCancelled, selected == section, requested == filters, offset == history.last else { return }
-      guard let rows = result as? [[String: Any]] else {
-        throw FetchyFailure(text: "收藏服务返回了无法读取的结果。")
-      }
-      let argument = selected == "收藏库" ? ["search"] + requested : ["tasks"]
-      let count = rows.count
-      let probe = count > 0 ? try await commands.run(argument + [String(offset + count)], bridge: true) as? [[String: Any]] : nil
-      guard !Task.isCancelled, selected == section, requested == filters, offset == history.last else { return }
-      nextPage = probe?.isEmpty == false ? offset + count : nil
-      if selected == "收藏库" {
-        items = rows.compactMap(LibraryItem.init)
-      } else {
-        jobs = rows.compactMap(CollectionTask.init)
-      }
-      serviceNotice = ""
-    } catch {
-      if !Task.isCancelled, selected == section { serviceNotice = error.localizedDescription }
+      } catch { notice = error.localizedDescription }
     }
   }
 }

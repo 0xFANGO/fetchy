@@ -76,6 +76,15 @@ async function prepareFromFile(manifest, entries, selected, folder) {
 	}
 }
 
+async function readStdin(limit) {
+	let payload = '';
+	for await (const chunk of process.stdin) {
+		payload += chunk;
+		if (payload.length > limit) throw new Error();
+	}
+	return payload;
+}
+
 try {
 	const [command, ...args] = process.argv.slice(2);
 	const {requestNative} = await import('../native/client.mjs');
@@ -96,7 +105,46 @@ try {
 		case 'resume':
 			result = await requestNative(command === 'retry' ? 'libraryRetry' : 'libraryResume', {
 				id: args[0],
+				...(command === 'retry' && args[1] ? {selected: [args[1]]} : {}),
 			});
+			break;
+		case 'task':
+			result = await requestNative('libraryTask', {id: args[0], offset: Number(args[1]) || 0});
+			break;
+		case 'site': {
+			// The app opens each site with its own WebKit store; Node owns the site rules.
+			const {findAccount} = await import('../bin/accounts.mjs');
+			const {site, label, url, profile, hosts, session} = await findAccount(args[0]);
+			result = {site, label, url, profile, hosts, session: session ?? []};
+			break;
+		}
+		case 'account-add': {
+			const {addAccount} = await import('../bin/accounts.mjs');
+			const {site, label, url} = await addAccount(args[0]);
+			result = {site, label, url};
+			break;
+		}
+		case 'start': {
+			// {manifest, selected, feed} from the app's side column.
+			const payload = JSON.parse(await readStdin(48 * 1024 ** 2));
+			const {submitArchive} = await import('../extension/archive-rpc.mjs');
+			result = await submitArchive(
+				payload.manifest,
+				payload.selected,
+				null,
+				(method, params) => requestNative(method, params, {timeoutMs: 15 * 60_000}),
+				{feed: payload.feed === true},
+			);
+			break;
+		}
+		case 'page':
+			result = await requestNative('libraryPage', JSON.parse(await readStdin(1024 ** 2)));
+			break;
+		case 'feed-end':
+			result = await requestNative('libraryFeed', {id: args[0], active: false});
+			break;
+		case 'web-save':
+			result = await requestNative('webSave', {url: args[0]}, {timeoutMs: 31 * 60_000});
 			break;
 		case 'preview': {
 			const {entries} = await readManifest(args[0]);
@@ -117,11 +165,7 @@ try {
 		case 'import': {
 			const file = path.resolve(args[0]);
 			const {manifest, entries} = await readManifest(file);
-			let payload = '';
-			for await (const chunk of process.stdin) {
-				payload += chunk;
-				if (payload.length > 1024 ** 2) throw new Error();
-			}
+			const payload = await readStdin(1024 ** 2);
 			const selected = payload ? JSON.parse(payload) : undefined;
 			if (entries.some((entry) => entry.attachments?.some((a) => a.path !== undefined))) {
 				const task = await prepareFromFile(manifest, entries, selected, path.dirname(file));

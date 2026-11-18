@@ -107,6 +107,7 @@ export async function stageAttachments(entries, directory, selected, options = {
 						mime = await saveWebFile(uri, file, {
 							signal: state.signal,
 							localOrigin: options.localOrigin,
+							headers: options.headers,
 							maxBytes: limit,
 						});
 					} catch (error) {
@@ -394,6 +395,7 @@ export class LibraryBridge {
 					{...params.filters, limit: Math.min(100, Number(params.filters?.limit) || 50)},
 					this.options,
 				);
+				const root = libraryRoot(this.options);
 				return boundedRows(
 					results
 						.slice(params.offset || 0)
@@ -410,18 +412,38 @@ export class LibraryBridge {
 								sourceUrl,
 								folders,
 								topics,
-							}) => ({
-								platform,
-								id,
-								key,
-								title,
-								author,
-								filepath,
-								status,
-								sourceUrl,
-								folders: boundedRows(folders, 32768),
-								topics: boundedRows(topics, 8192),
-							}),
+								kind,
+								bodyFormat,
+								attachments,
+								missing,
+							}) => {
+								const cover =
+									attachments.find((a) => a.path && a.kind === 'image') ??
+									attachments.find((a) => a.path && a.kind === 'video');
+								return {
+									platform,
+									id,
+									key,
+									title,
+									author,
+									filepath,
+									status,
+									sourceUrl,
+									// video, post (images and text) or article (long text), for the desktop filters.
+									kind:
+										kind === 'video' || kind === 'audio'
+											? kind
+											: bodyFormat === 'markdown' ||
+												  (platform === 'zhihu' && !attachments.some((a) => a.kind === 'video'))
+												? 'article'
+												: 'post',
+									cover: cover ? path.join(root, cover.path) : null,
+									coverKind: cover?.kind ?? null,
+									missing: missing ?? [],
+									folders: boundedRows(folders, 32768),
+									topics: boundedRows(topics, 8192),
+								};
+							},
 						),
 					460 * 1024,
 				);

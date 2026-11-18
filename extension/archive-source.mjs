@@ -21,7 +21,7 @@ async function inject(tabId, func, args = []) {
 	if (!execution?.result) throw error('source_not_ready');
 	return execution.result;
 }
-function isCollectionRoute(url) {
+export function isCollectionRoute(url) {
 	const host = url.hostname.replace(/^www\./, '');
 	if (host === 'instagram.com') return /^\/[\w.]+\/saved(?:\/|$)/.test(url.pathname);
 	if (['threads.com', 'threads.net'].includes(host)) return /^\/saved\/?$/.test(url.pathname);

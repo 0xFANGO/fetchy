@@ -2,8 +2,15 @@ import {cp, mkdir, mkdtemp, readFile, rename, rm, stat, writeFile} from 'node:fs
 import path from 'node:path';
 import {fileURLToPath} from 'node:url';
 import {findExecutable, ytDlpCommand} from '../src/dependencies.mjs';
-import {captureArchivePage, hydrateArchiveEntry} from '../extension/capture-page.mjs';
+import {
+	advanceArchivePage,
+	captureArchivePage,
+	discoverArchiveMedia,
+	readBilibiliCollectionPage,
+} from '../extension/capture-page.mjs';
+import {captureSocialCollection} from '../extension/collection-page.mjs';
 import {captureSocialPost} from '../extension/social-post.mjs';
+import {isCollectionRoute, readPostPage} from '../extension/archive-source.mjs';
 import {runProcess} from '../src/process.mjs';
 
 if (process.platform !== 'darwin')
@@ -40,8 +47,8 @@ try {
 		'SwiftUI',
 		'-o',
 		binary,
-		...['main.swift', 'Workspace.swift', 'Session.swift'].map((name) =>
-			path.join(root, 'desktop', name),
+		...['main.swift', 'Workspace.swift', 'Session.swift', 'Browser.swift', 'Accounts.swift'].map(
+			(name) => path.join(root, 'desktop', name),
 		),
 	]);
 	for (const directory of ['bin', 'src', 'native'])
@@ -63,8 +70,45 @@ try {
 		  && (capture.type==='unsupported' || capture.entry?.platform==='web')) {
 		  capture=(${captureSocialPost.toString()})();
 		}
-		if(capture.type==='post') capture.entry=await (${hydrateArchiveEntry.toString()})(capture.entry);
 		return JSON.stringify(capture).length<=40*1024*1024?capture:{type:'unsupported',reason:'too_large'};`,
+	);
+	// The built-in browser's side column runs the extension's page readers in the open page.
+	// The body receives `action` and `input` and returns JSON text.
+	const tools = {
+		captureArchivePage,
+		captureSocialCollection,
+		captureSocialPost,
+		advanceArchivePage,
+		readBilibiliCollectionPage,
+		discoverArchiveMedia,
+		readPostPage,
+		isCollectionRoute,
+	};
+	await writeFile(
+		path.join(resources, 'page-tools.js'),
+		`const tools = {${Object.entries(tools)
+			.map(([name, fn]) => JSON.stringify(name) + ': ' + fn.toString())
+			.join(',\n')}};
+		const run = async () => {
+			if (action === 'capture') {
+				const u = new URL(location.href);
+				let snap = tools.isCollectionRoute(u) ? tools.captureSocialCollection() : tools.captureArchivePage(false);
+				const social = ['www.kuaishou.com','kuaishou.com','www.threads.com','threads.com','www.threads.net','threads.net','www.instagram.com','instagram.com'];
+				if (snap.type === 'unsupported' && snap.reason === 'unsupported_page' && social.includes(u.hostname))
+					snap = tools.captureSocialPost();
+				if (snap.type === 'folders' && snap.provider === 'bilibili')
+					return tools.readBilibiliCollectionPage(null, 1, snap.ownerId);
+				if (snap.type === 'collection' && snap.provider === 'bilibili')
+					return {...(await tools.readBilibiliCollectionPage(snap.folder.id, 1)), provider: 'bilibili'};
+				return snap;
+			}
+			if (action === 'advance') return tools.advanceArchivePage(input.fromTop === true);
+			if (action === 'bilibili') return tools.readBilibiliCollectionPage(input.folderId, input.page);
+			if (action === 'media') return tools.discoverArchiveMedia();
+			if (action === 'readPost') return tools.readPostPage(input.url, input.maxBytes);
+			return {error: 'unknown_action'};
+		};
+		return JSON.stringify(await run());`,
 	);
 	await cp(path.join(root, 'package.json'), path.join(app, 'package.json'));
 	const binaries = [

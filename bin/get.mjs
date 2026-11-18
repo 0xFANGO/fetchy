@@ -22,6 +22,7 @@ import {importLibrary, libraryRoot, searchLibrary} from '../src/library/index.mj
 import {entryIdentity, publicUrl, renderWork} from '../src/library/content.mjs';
 import {hasSession, downloadWithSession, captureWithSession} from './desktop.mjs';
 import {withSiteCookies} from './accounts.mjs';
+import {browserHeaders} from '../src/library/post-pages.mjs';
 
 const invalid = (message) => new EngineError('invalid_arguments', message);
 async function targetFor(input, options) {
@@ -223,7 +224,14 @@ export async function getOne(action, input, options = {}) {
 				throw error;
 			const entry = await postFor(target, input, settings, error);
 			const {stageAttachments} = await import('../native/library-bridge.mjs');
-			await stageAttachments([entry], tmp, null, settings);
+			// Media hosts often check that the request comes from the post's site.
+			await stageAttachments([entry], tmp, null, {
+				...settings,
+				headers: {
+					'user-agent': browserHeaders()['user-agent'],
+					referer: new URL(entry.sourceUrl || input).origin + '/',
+				},
+			});
 			const task = await importLibrary(
 				{version: 1, items: [entry]},
 				{root, sourceDir: tmp, signal: options.signal},
