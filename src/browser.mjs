@@ -1,3 +1,4 @@
+import {usesPageMedia} from './sites/index.mjs';
 import {mkdir, mkdtemp, rm, stat} from 'node:fs/promises';
 import {publishVideoFile} from './filenames.mjs';
 import {createWriteStream} from 'node:fs';
@@ -114,7 +115,6 @@ export function selectBrowserFormat(formats, {maxHeight} = {}) {
 	return selected[0];
 }
 
-const PAGE_PLATFORMS = ['xiaohongshu', 'douyin'];
 const positive = (value) =>
 	typeof value === 'number' && Number.isFinite(value) && value > 0 ? value : null;
 const bounded = (value, max) => (typeof value === 'string' && value ? value.slice(0, max) : null);
@@ -177,7 +177,7 @@ export function checkPageMedia(pageMedia, target) {
 
 function pageMediaFor(target, options) {
 	check(options);
-	if (!PAGE_PLATFORMS.includes(target.platform))
+	if (!usesPageMedia(target.platform))
 		throw new EngineError('unsupported_platform', '浏览器引擎当前仅支持小红书和抖音。');
 	emit(options, 'resolving');
 	return checkPageMedia(options.pageMedia, target);

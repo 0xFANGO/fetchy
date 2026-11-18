@@ -1,8 +1,23 @@
 # 扩展实现与验收记录
 
-日期：2026-10-25（Asia/Shanghai）。本文件区分模拟/离线证据与真实插件证据，持续记录实际完成的验证。
+本页按日期记录真实浏览器、扩展弹窗、本机组件与离线测试的验证结果。
 
-## 当前状态
+## 2026-11-18 Chrome 工具栏实测：X 和 Instagram
+
+macOS arm64，Google Chrome for Testing 157.0.8103.50（headless），独立的浏览器配置、Native Messaging 注册和输出目录，使用项目锁定的 yt-dlp，未登录平台。通过 `chrome.action.openPopup()` 打开工具栏弹窗，在输入框粘贴公开链接并点击下载。任务开始解析后关闭并重新打开弹窗，四次都恢复了原任务 ID，随后显示完成。
+
+| 弹窗输入                                                                               | 重新打开后恢复的任务 ID                |
+| -------------------------------------------------------------------------------------- | -------------------------------------- |
+| [X · Mauna Loa](https://x.com/USGSVolcanoes/status/1600252502217211904)                | `759b49c5-c7f7-4167-845d-8d90b6ae74a0` |
+| [X · Kīlauea](https://x.com/USGSVolcanoes/status/1666492380332056607)                  | `556525e5-9cfe-4e93-906f-b2634367b861` |
+| [Instagram · NASA 行星防御纪录片预告](https://www.instagram.com/reel/Dd1gQBsCWE8/)     | `71e5b68e-0c95-4b95-bb82-e5c9278c94b7` |
+| [Instagram · NASA Johnson 空间站出舱任务](https://www.instagram.com/reel/DfF3eqGSKKc/) | `a9ee7fe9-4700-474c-ba1f-caa02d919277` |
+
+四份文件都在测试浏览器断网后从本地播放成功。独立 ffprobe 核对的尺寸、音视频编码、时长和字节数，分别与同一帖子在 [CLI 实测表](validation.md) 中的数值一致。分别运行 `ffmpeg -nostdin -v error -xerror -protocol_whitelist file,pipe -i <文件> -map 0:v -map '0:a?' -f null -` 均退出 0。本轮覆盖两站的单视频链接和弹窗任务恢复。其余内容类型和收藏支持见[逐站能力表](platforms.md)。
+
+同一条 Mauna Loa 链接在 v0.3.1 和本次源码构建中的工具栏识别结果（360 × 580）。[v0.3.1 弹窗](assets/validation/x-post-before.png) · [新增 X 适配后的弹窗](assets/validation/x-post-ready.png)
+
+## 2026-10-25 验收状态
 
 Manifest V3 弹窗、后台任务控制、本地 Native Messaging 桥接、目录选择/校验/持久化、Finder 定位、统一封面字段及按视频标题命名已实现。已构建可加载目录 `dist/extension`，并在本机注册 Ego Lite host；安装检测 Node、yt-dlp、FFmpeg、ffprobe、ego-browser 均可用。
 

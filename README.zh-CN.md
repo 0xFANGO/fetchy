@@ -4,19 +4,9 @@
 ![Node >= 22](docs/assets/badges/node.svg)
 ![Platform: macOS](docs/assets/badges/platform.svg)
 
-把 **YouTube、B站、小红书、抖音** 的单个视频保存到你 Mac 上的文件夹。
-一个工具栏按钮、一条命令或一个函数调用，全部在本机完成。
+通过浏览器扩展、CLI 或 Node API，把社交平台上的单个视频保存为本地 MP4。
 
 [English](README.md)
-
-<table align="center">
-  <tr>
-    <td align="center" width="150"><img src="docs/assets/platforms/youtube.svg" width="48" height="48" alt=""><br><b>YouTube</b><br><sub>支持视频下载</sub></td>
-    <td align="center" width="150"><img src="docs/assets/platforms/bilibili.svg" width="48" height="48" alt=""><br><b>B站</b><br><sub>支持视频下载</sub></td>
-    <td align="center" width="150"><img src="docs/assets/platforms/xiaohongshu.svg" width="48" height="48" alt=""><br><b>小红书</b><br><sub>支持视频下载</sub></td>
-    <td align="center" width="150"><img src="docs/assets/platforms/douyin.svg" width="48" height="48" alt=""><br><b>抖音</b><br><sub>支持视频下载</sub></td>
-  </tr>
-</table>
 
 ## 演示
 
@@ -24,31 +14,33 @@ https://github.com/user-attachments/assets/e5ebb617-7dd1-4369-b044-b7e8900cb662
 
 ## 特性
 
-- **四个平台，同一套流程。** 打开视频页点一下，或粘贴链接、粘贴带短链的分享文案。
-- **本地优先。** 下载由本机 native host 执行，没有云端服务，不需要账号，不导出 Cookie。
-- **经过校验的 MP4。** 每个输出都经 ffprobe 校验。YouTube 和 B站使用 H.264 / yuv420p / AAC；浏览器下载保留源编码，包括 HEVC。文件名使用视频标题，重名自动加序号，不覆盖已有文件。
+- **从视频页或链接开始。** 在视频页打开扩展，或粘贴一条视频链接。支持短链的平台也可以粘贴含单条链接的分享文案。
+- **下载在本机执行。** 扩展把下载交给本地组件，无需注册 Fetchy 账号。
+- **经过校验的 MP4。** 每个输出都经 ffprobe 校验。yt-dlp 下载输出 H.264 / yuv420p 视频，有音轨时使用 AAC。浏览器引擎保留源编码，包括 HEVC。文件名使用视频标题，重名自动加序号，不覆盖已有文件。
 - **关掉弹窗也继续。** 下载由独立本地进程持有，重新打开弹窗即可查看进度、取消或在 Finder 中定位文件。
 - **一套核心。** 扩展、CLI 和 Node API 共用同一个 `resolveVideo` / `downloadVideo` 契约和稳定的错误码。
 
 ## 支持的平台
 
-| 平台    | 接受的输入                                             | 引擎             | 说明                                              |
-| ------- | ------------------------------------------------------ | ---------------- | ------------------------------------------------- |
-| YouTube | `youtube.com/watch`、`youtu.be`、Shorts                | yt-dlp           | 优先原生 H.264/AAC，网络错误时有限尝试 HLS        |
-| B站     | `bilibili.com/video/BV…`、`av…`、分 P `?p=`            | yt-dlp           | DASH 音视频合并为 MP4                             |
-| 小红书  | 含 `xsec_token` 的完整分享链接，或含单个链接的分享文案 | 页面读取（扩展） | 直接从你浏览器里的笔记页读取媒体；CLI 退回 yt-dlp |
-| 抖音    | `v.douyin.com` 短链、`modal_id` 链接、详情页           | 页面读取（扩展） | 先展开短链；CLI 退回 yt-dlp                       |
+| 平台         | 接受的输入                                                                      | 引擎             | 说明                                                     |
+| ------------ | ------------------------------------------------------------------------------- | ---------------- | -------------------------------------------------------- |
+| YouTube      | `youtube.com/watch`、`youtu.be`、Shorts                                         | yt-dlp           | 优先原生 H.264/AAC，网络错误时有限尝试 HLS               |
+| B站          | `bilibili.com/video/BV…`、`av…`、分 P `?p=`                                     | yt-dlp           | DASH 音视频合并为 MP4                                    |
+| 小红书       | 含 `xsec_token` 的完整分享链接，或含单个链接的分享文案                          | 页面读取（扩展） | 直接从你浏览器里的笔记页读取媒体；CLI 退回 yt-dlp        |
+| 抖音         | `v.douyin.com` 短链、`modal_id` 链接、详情页                                    | 页面读取（扩展） | 先展开短链；CLI 退回 yt-dlp                              |
+| X（Twitter） | `x.com/<用户名>/status/<帖子 ID>`，也支持 `twitter.com` 和 `/i/web/status/<ID>` | yt-dlp           | 含单个可提取视频的公开帖子                               |
+| Instagram    | `instagram.com/reel/<作品短码>/`                                                | yt-dlp           | 单个公开 Reel，含作者主页下的详情链接和 `/reels/<短码>/` |
 
-只处理单个已完成的视频。合集、直播、图文笔记、DRM 内容和去水印不在范围内，完整说明见 [docs/limitations.md](docs/limitations.md)。
+目前可保存单个已发布的视频。图片、正文、收藏夹与历史分页的逐站进展见[平台能力表](docs/platforms.md)。其他限制见[使用边界](docs/limitations.md)。
 
 ## 环境要求
 
-| 工具               | 用途                           | macOS 安装             |
-| ------------------ | ------------------------------ | ---------------------- |
-| Node.js 22+        | 全部                           | `brew install node`    |
-| FFmpeg + ffprobe   | 合并、重封装、校验             | `brew install ffmpeg`  |
-| Python 3.10+       | 运行固定版本的 yt-dlp          | `brew install python`  |
-| yt-dlp（固定版本） | YouTube、B站；命令行下所有平台 | `npm run deps:install` |
+| 工具               | 用途                              | macOS 安装             |
+| ------------------ | --------------------------------- | ---------------------- |
+| Node.js 22+        | 全部                              | `brew install node`    |
+| FFmpeg + ffprobe   | 合并、重封装、校验                | `brew install ffmpeg`  |
+| Python 3.10+       | 运行固定版本的 yt-dlp             | `brew install python`  |
+| yt-dlp（固定版本） | 所有 CLI 下载及扩展的 yt-dlp 下载 | `npm run deps:install` |
 
 随时运行 `npm run doctor` 查看哪些工具已找到、哪些缺失。
 
@@ -76,10 +68,10 @@ CLI 以 JSON 输出结果，包含文件绝对路径、大小和校验信息；�
 
 ## 浏览器扩展
 
-每个 [Release](https://github.com/0xFANGO/fetchy/releases) 都附带可直接加载的 `fetchy-extension-<版本>.zip`，下载解压后可以跳过下面的构建步骤。本地组件仍然来自这个仓库，所以无论如何都要 clone 一份。
+要在扩展中保存 X 视频或 Instagram Reel，请在包含这些适配的源码目录执行下面两条命令，再加载构建出的扩展。已发布的 v0.3.1 ZIP 支持 YouTube、B站、小红书和抖音。使用该版本时，解压 ZIP 即可跳过构建，本地组件仍需从对应源码安装。[v0.3.1 下载](https://github.com/0xFANGO/fetchy/releases/tag/v0.3.1)
 
 ```sh
-npm run extension:build                 # 输出到 dist/extension（下载了 Release 的 zip 可跳过）
+npm run extension:build                 # 构建当前源码，输出到 dist/extension
 npm run native:install -- --browser chrome # 注册 native host；Ego Lite 用 --browser ego
 ```
 
@@ -91,8 +83,7 @@ npm run native:install -- --browser chrome # 注册 native host；Ego Lite 用 -
 
 小红书和抖音的媒体信息由扩展直接从视频页面读取：已经打开的视频页会被直接使用，否则扩展在后台打开一个标签页，读完就关闭。用的是你当前浏览器的登录态，不导出任何东西。申请的权限：`activeTab`、`storage`、`nativeMessaging`、`scripting`，以及 `xiaohongshu.com`、`douyin.com` 和 `iesdouyin.com` 的站点访问权限。
 
-目前在 macOS + Ego Lite（一款 Chromium 浏览器）上完成了真实验证；Chrome 的注册选项可用，但尚未端到端验证。
-完整安装说明、登录态要求和故障排查见 [docs/extension-install.md](docs/extension-install.md)。
+各浏览器和站点的实测结果见[扩展验证记录](docs/extension-validation.md)。注册本地组件、登录及故障排查见[安装说明](docs/extension-install.md)。
 
 ## 命令行
 

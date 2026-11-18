@@ -6,6 +6,7 @@ import {chmod, mkdir, mkdtemp, readFile, readdir, realpath, rm, writeFile} from 
 import path from 'node:path';
 import {tmpdir} from 'node:os';
 import {fileURLToPath} from 'node:url';
+import {downloadVideo, resolveVideo} from '../src/index.mjs';
 import {classifyEngineError, downloadWithYtDlp, resolveWithYtDlp} from '../src/yt-dlp.mjs';
 import {runProcess} from '../src/process.mjs';
 
@@ -43,6 +44,14 @@ const metadata = {
 		{vcodec: 'none', acodec: 'aac'},
 	],
 };
+const xInfo = {
+	...metadata,
+	extractor_key: 'Twitter',
+	thumbnail: 'https://pbs.twimg.com/ext_tw_video_thumb/test.jpg?name=large',
+	display_id: '1600252502217211904',
+	id: '1600251292424757252',
+};
+const xPost = `https://x.com/i/web/status/${xInfo.display_id}`;
 const validProbe = {
 	streams: [
 		{
@@ -62,6 +71,7 @@ async function fixture(
 	t,
 	{
 		info = metadata,
+		receiptInfo = info,
 		probe = validProbe,
 		failure = '',
 		noReceipt = false,
@@ -79,6 +89,7 @@ async function fixture(
 	const ytDlpPath = path.join(root, 'yt-dlp.mjs');
 	const ffprobePath = path.join(root, 'ffprobe.mjs');
 	const trace = path.join(root, 'trace.jsonl');
+	const {id, display_id, extractor_key, _old_archive_ids} = receiptInfo;
 	await writeFile(
 		ytDlpPath,
 		[
@@ -109,12 +120,7 @@ async function fixture(
 				') await copyFile(' +
 				JSON.stringify(mediaSource) +
 				', filepath); else await writeFile(filepath, Buffer.from("test-media-data"));',
-			'const record = {filepath, id: ' +
-				JSON.stringify(info.id) +
-				', _old_archive_ids: ' +
-				JSON.stringify(info._old_archive_ids ?? null) +
-				'};',
-			'if(record._old_archive_ids===null)delete record._old_archive_ids;',
+			`const record = {filepath, ...${JSON.stringify({id, display_id, extractor_key, _old_archive_ids})}};`,
 			'let receiptText = JSON.stringify(record);',
 			'if (' + JSON.stringify(templatePython) + ') {',
 			'  const rendered = spawnSync(' +
@@ -383,6 +389,7 @@ test('unbounded process output is stopped instead of accumulating in memory', as
 
 test('format and stale-session errors keep their specific meaning', () => {
 	assert.equal(classifyEngineError('Requested format is not available').code, 'no_formats');
+	assert.equal(classifyEngineError('No video could be found in this tweet').code, 'no_formats');
 	assert.equal(classifyEngineError('Fresh cookies are needed').code, 'session_required');
 });
 
@@ -445,6 +452,49 @@ test('AV aliases must identify the requested part', async (t) => {
 	});
 });
 
+test('the public API resolves and saves X posts with separate post and media identities', async (t) => {
+	const {options, trace} = await fixture(t, {info: xInfo});
+	const link = `https://twitter.com/USGSVolcanoes/status/${xInfo.display_id}?s=20`;
+	const info = await resolveVideo(link, options);
+	const saved = await downloadVideo(link, options);
+	assert.equal(info.thumbnailUrl, 'https://pbs.twimg.com/ext_tw_video_thumb/test.jpg');
+	for (const result of [info, saved]) {
+		assert.equal(result.platform, 'x');
+		assert.equal(result.id, xInfo.display_id);
+		assert.equal(result.sourceId, xInfo.id);
+		assert.equal(result.engine, 'yt-dlp');
+	}
+	assert.equal(saved.validation.video, true);
+	assert.equal(await readFile(saved.filepath, 'utf8'), 'test-media-data');
+	const calls = (await readFile(trace, 'utf8')).trim().split('\n').map(JSON.parse);
+	assert.equal(calls.length, 3);
+	for (const args of calls) {
+		assert.equal(args.at(-1), xPost);
+		assert.equal(args[args.indexOf('--use-extractors') + 1], 'Twitter');
+	}
+});
+
+test('X metadata must identify one Twitter video in the requested post', async (t) => {
+	for (const fields of [
+		{extractor_key: 'Youtube'},
+		{display_id: xInfo.id},
+		{id: 'not-a-media-id'},
+	]) {
+		const {options} = await fixture(t, {info: {...xInfo, ...fields}});
+		await assert.rejects(resolveVideo(xPost, options), {code: 'wrong_video'});
+	}
+	const playlist = await fixture(t, {info: {...xInfo, _type: 'playlist', entries: [xInfo, xInfo]}});
+	await assert.rejects(resolveVideo(xPost, playlist.options), {code: 'unavailable'});
+});
+
+test('X discards the staged file when the receipt changes extractor, post, or media', async (t) => {
+	for (const fields of [{extractor_key: 'Generic'}, {display_id: '123'}, {id: '456'}]) {
+		const {options} = await fixture(t, {info: xInfo, receiptInfo: {...xInfo, ...fields}});
+		await assert.rejects(downloadVideo(xPost, options), {code: 'wrong_video'});
+		assert.deepEqual(await readdir(options.outputDir), []);
+	}
+});
+
 test('bitrate is reported in bit/s rather than yt-dlp kbit/s', async (t) => {
 	const {options} = await fixture(t, {
 		info: {...metadata, formats: [{...metadata.formats[0], tbr: 1000}]},
@@ -462,7 +512,7 @@ const hasTemplateRenderer =
 	existsSync(templatePython) &&
 	spawnSync(templatePython, ['-c', 'import yt_dlp'], {stdio: 'ignore', timeout: 5000}).status === 0;
 test(
-	'actual yt-dlp renderer produces valid receipts with absent and present optional archive IDs',
+	'actual yt-dlp renderer preserves YouTube, Bilibili and X receipt identities',
 	{
 		skip: hasTemplateRenderer
 			? false
@@ -490,6 +540,10 @@ test(
 		const avOutput = await downloadWithYtDlp(avTarget, av.options);
 		assert.equal(avOutput.sourceId, avInfo.id);
 		assert.equal(avOutput.validation.audio, true);
+		const x = await fixture(t, {templatePython, info: xInfo});
+		const xOutput = await downloadVideo(xPost, x.options);
+		assert.equal(xOutput.id, xInfo.display_id);
+		assert.equal(xOutput.sourceId, xInfo.id);
 	},
 );
 

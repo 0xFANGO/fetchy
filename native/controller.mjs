@@ -1,3 +1,4 @@
+import {usesPageMedia} from '../src/sites/index.mjs';
 import {EventEmitter} from 'node:events';
 import {realpath, stat} from 'node:fs/promises';
 import path from 'node:path';
@@ -298,8 +299,7 @@ export class NativeController extends EventEmitter {
 		this.downloadPromise = this.download(
 			task,
 			controller,
-			refreshOnValidationFailure === true &&
-				['xiaohongshu', 'douyin'].includes(pageMedia?.media?.platform),
+			refreshOnValidationFailure === true && usesPageMedia(pageMedia?.media?.platform),
 		);
 		return this.snapshot();
 	}

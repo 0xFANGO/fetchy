@@ -30,13 +30,47 @@ npm run extension:build
 
 Tests never hit a real platform or launch a real browser. Tests that need the
 project yt-dlp are skipped when `.venv` is missing. Manual end-to-end checks
-against real sites are recorded in `docs/extension-validation.md`.
+against real sites are recorded in the [CLI validation log](docs/validation.md)
+and the [extension validation log](docs/extension-validation.md).
 
 PRs and pushes to `main` run CI on Node 22 and 24 with the pinned yt-dlp,
 Python 3.12 and FFmpeg. CI verifies media-test dependencies before running
 formatting, lint, tests and extension packaging. Keep `requirements.txt` as
 the shared yt-dlp version source; after updating it, rerun `npm run deps:install`
 and the tests.
+
+## Adding a video platform
+
+The [Instagram Reel adapter](src/sites/instagram.mjs) shows how to add a site
+that works with the existing yt-dlp engine.
+
+1. Check two public posts you have permission to save with the project’s
+   pinned yt-dlp. Inspect the extractor key and media ID. Verify that a
+   format choice is a rendition of the same video and that the input
+   resolves to one video.
+2. Add a module in `src/sites/` and register it in
+   [the site list](src/sites/index.mjs). Supply an `id`, `label`, exact
+   `hosts`, the yt-dlp `extractor` key and a `parse(url)` function. Instagram
+   recognizes Reel permalinks and preserves the case of the shortcode
+   and returns its canonical URL. Use `invalidUrl()` for unsupported paths.
+   Fetchy checks the requested ID and extractor at resolve time and again on
+   the downloaded file’s receipt. If yt-dlp uses separate IDs for a post
+   and its media, implement `matchesSource(target, info)` as in the
+   [X adapter](src/sites/x.mjs).
+3. Exercise accepted URLs, tracking parameters, unsupported paths and
+   lookalike hosts through `normalizeUrl`. See the
+   [Instagram tests](test/instagram.test.mjs). Add a regression test for any
+   special identity rule. Run `npm run check`, `npm test` and
+   `npm run extension:build`.
+4. Run `node bin/fetchy.mjs resolve <url>` and
+   `node bin/fetchy.mjs download <url> --output .local/validation`.
+   Load the built extension, start a download from the popup and open the
+   saved file. Match the saved result to the post and check the duration,
+   dimensions and tracks with ffprobe. Decode the entire file with
+   `ffmpeg -nostdin -v error -xerror -i <file> -f null -`.
+   Record the public source, engine and observed results in the appropriate
+   validation log. Reflect the verified content types and surfaces in the
+   [capability table](docs/platforms.md), the READMEs and `CHANGELOG.md`.
 
 ## Code style
 

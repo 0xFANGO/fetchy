@@ -1,3 +1,4 @@
+import {sites} from '../src/sites/index.mjs';
 import {deriveView, displayPath, taskIsVisible, withPendingDraft} from './view-model.mjs';
 
 const byId = (id) => document.getElementById(id);
@@ -247,6 +248,12 @@ byId('settings-reconnect').addEventListener('click', () => {
 		connect();
 	}
 });
+
+for (const site of sites) {
+	const label = document.createElement('span');
+	label.textContent = site.label;
+	byId('supported-platforms').append(label);
+}
 
 render();
 connect();

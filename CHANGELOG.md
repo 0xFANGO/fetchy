@@ -4,6 +4,10 @@ Notable changes for users, following [Keep a Changelog](https://keepachangelog.c
 
 ## [Unreleased]
 
+### Added
+
+- Save a single video from a public X post or Instagram Reel using the CLI, Node API or browser extension.
+
 ## [0.3.1] - 2026-11-02
 
 ### Fixed

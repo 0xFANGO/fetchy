@@ -4,19 +4,9 @@
 ![Node >= 22](docs/assets/badges/node.svg)
 ![Platform: macOS](docs/assets/badges/platform.svg)
 
-Save a single video from **YouTube, Bilibili, Xiaohongshu or Douyin** to a folder on your Mac.
-One toolbar button, one command, or one function call. Everything runs locally.
+Save a video from a social media post to a local MP4 using the browser extension, CLI or Node API.
 
 [中文文档](README.zh-CN.md)
-
-<table align="center">
-  <tr>
-    <td align="center" width="150"><img src="docs/assets/platforms/youtube.svg" width="48" height="48" alt=""><br><b>YouTube</b><br><sub>Video download</sub></td>
-    <td align="center" width="150"><img src="docs/assets/platforms/bilibili.svg" width="48" height="48" alt=""><br><b>Bilibili</b><br><sub>Video download</sub></td>
-    <td align="center" width="150"><img src="docs/assets/platforms/xiaohongshu.svg" width="48" height="48" alt=""><br><b>Xiaohongshu</b><br><sub>Video download</sub></td>
-    <td align="center" width="150"><img src="docs/assets/platforms/douyin.svg" width="48" height="48" alt=""><br><b>Douyin</b><br><sub>Video download</sub></td>
-  </tr>
-</table>
 
 ## Demo
 
@@ -26,32 +16,33 @@ https://github.com/user-attachments/assets/e5ebb617-7dd1-4369-b044-b7e8900cb662
 
 ## Features
 
-- **Four platforms, one workflow.** Paste a link or open a video page, click once. Share text with a short link works too.
-- **Local first.** Downloads run on your machine through a native host. No cloud service, no account, no cookie export.
-- **Validated MP4 files.** ffprobe checks every output. YouTube and Bilibili use H.264 / yuv420p / AAC; browser downloads retain the source codec, including HEVC. Files use the video title and never overwrite existing files.
+- **Start from a page or a link.** Open the extension on a video page or paste a link. On sites that support short links, you can also paste share text containing a single link.
+- **Downloads run locally.** The extension sends downloads to a native host on your machine. Fetchy works without a Fetchy account.
+- **Validated MP4 files.** ffprobe checks every output. The yt-dlp engine produces H.264 / yuv420p video with AAC when audio is present. The browser engine retains the source codec, including HEVC. Files use the video title and never overwrite existing files.
 - **Keeps going.** Close the popup and the download continues; reopen it to see progress, cancel or reveal the file in Finder.
 - **Same core everywhere.** The extension, the CLI and the Node API share one `resolveVideo` / `downloadVideo` contract with stable error codes.
 
 ## Supported platforms
 
-| Platform    | Accepted input                                                       | Engine              | Notes                                                                              |
-| ----------- | -------------------------------------------------------------------- | ------------------- | ---------------------------------------------------------------------------------- |
-| YouTube     | `youtube.com/watch`, `youtu.be`, Shorts                              | yt-dlp              | Prefers native H.264/AAC, falls back to HLS on network errors                      |
-| Bilibili    | `bilibili.com/video/BV…`, `av…`, multi-part `?p=`                    | yt-dlp              | DASH video and audio merged into MP4                                               |
-| Xiaohongshu | Full share link with `xsec_token`, or share text containing one link | In-page (extension) | Media is read from the note page in your own browser; the CLI falls back to yt-dlp |
-| Douyin      | `v.douyin.com` short links, `modal_id` links, detail pages           | In-page (extension) | Short links are expanded first; the CLI falls back to yt-dlp                       |
+| Platform    | Accepted input                                                            | Engine              | Notes                                                                              |
+| ----------- | ------------------------------------------------------------------------- | ------------------- | ---------------------------------------------------------------------------------- |
+| YouTube     | `youtube.com/watch`, `youtu.be`, Shorts                                   | yt-dlp              | Prefers native H.264/AAC, falls back to HLS on network errors                      |
+| Bilibili    | `bilibili.com/video/BV…`, `av…`, multi-part `?p=`                         | yt-dlp              | DASH video and audio merged into MP4                                               |
+| Xiaohongshu | Full share link with `xsec_token`, or share text containing one link      | In-page (extension) | Media is read from the note page in your own browser; the CLI falls back to yt-dlp |
+| Douyin      | `v.douyin.com` short links, `modal_id` links, detail pages                | In-page (extension) | Short links are expanded first; the CLI falls back to yt-dlp                       |
+| X (Twitter) | `x.com/<handle>/status/<post-id>`, `twitter.com`, or `/i/web/status/<id>` | yt-dlp              | Public posts with one extractable video                                            |
+| Instagram   | `instagram.com/reel/<shortcode>/`                                         | yt-dlp              | Public Reels, including profile and `/reels/<shortcode>/` links                    |
 
-Single, finished videos only. Playlists, live streams, image notes, DRM content and watermark removal are out of scope.
-See [docs/limitations.md](docs/limitations.md) for the full list.
+Fetchy currently saves individual, finished videos. See the [platform capability table](docs/platforms.md) for support by content type, collection and history, and the [limitations](docs/limitations.md) for other restrictions.
 
 ## Requirements
 
-| Tool                    | Needed for                                   | macOS install          |
-| ----------------------- | -------------------------------------------- | ---------------------- |
-| Node.js 22+             | everything                                   | `brew install node`    |
-| FFmpeg + ffprobe        | merging, remuxing, validation                | `brew install ffmpeg`  |
-| Python 3.10+            | running the pinned yt-dlp version            | `brew install python`  |
-| yt-dlp (pinned version) | YouTube, Bilibili; every platform on the CLI | `npm run deps:install` |
+| Tool                    | Needed for                                       | macOS install          |
+| ----------------------- | ------------------------------------------------ | ---------------------- |
+| Node.js 22+             | everything                                       | `brew install node`    |
+| FFmpeg + ffprobe        | merging, remuxing, validation                    | `brew install ffmpeg`  |
+| Python 3.10+            | running the pinned yt-dlp version                | `brew install python`  |
+| yt-dlp (pinned version) | all CLI downloads and yt-dlp extension downloads | `npm run deps:install` |
 
 Run `npm run doctor` at any time to see what is found and what is missing.
 
@@ -81,10 +72,10 @@ The CLI prints a JSON result with the absolute file path, size and validation de
 
 ## Browser extension
 
-Every [release](https://github.com/0xFANGO/fetchy/releases) ships a ready-to-load `fetchy-extension-<version>.zip`. Download it, unzip it, and skip the build step below. The native host still comes from this repository, so clone it either way.
+To save X videos or Instagram Reels from the extension, run both commands below from a source checkout containing those adapters and load the resulting build. The published v0.3.1 ZIP supports YouTube, Bilibili, Xiaohongshu and Douyin. For that version, unzip the release instead of building the extension and install the native host from the matching source. [Download v0.3.1](https://github.com/0xFANGO/fetchy/releases/tag/v0.3.1)
 
 ```sh
-npm run extension:build                 # writes dist/extension (skip if you downloaded the release zip)
+npm run extension:build                 # builds the current source into dist/extension
 npm run native:install -- --browser chrome # registers the native host (--browser ego for Ego Lite)
 ```
 
@@ -96,8 +87,7 @@ Downloads go to `~/Downloads/Fetchy` by default. Click the folder at the bottom 
 
 For Xiaohongshu and Douyin the extension reads the video's playback data from the page itself: an open tab on that video is used directly, otherwise a background tab is opened and closed again. Your logged-in session is used in place, nothing is exported. Permissions requested: `activeTab`, `storage`, `nativeMessaging`, `scripting`, plus host access to `xiaohongshu.com`, `douyin.com` and `iesdouyin.com`.
 
-Verified so far on macOS with Ego Lite (a Chromium browser). Chrome registration is available but not yet verified end to end.
-Full installation notes, session requirements and troubleshooting: [docs/extension-install.md](docs/extension-install.md).
+For results by browser and platform, see the [extension validation log](docs/extension-validation.md). For native host registration, sessions and troubleshooting, see the [installation guide](docs/extension-install.md).
 
 ## CLI
 

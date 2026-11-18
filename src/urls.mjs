@@ -1,22 +1,4 @@
-/** Browser-independent platform routing. Platform IDs are always strings. */
-const SHORT_HOSTS = new Set(['b23.tv', 'xhslink.com', 'www.xhslink.com', 'v.douyin.com']);
-const DOUYIN_SHARE_HOSTS = new Set(['www.iesdouyin.com', 'iesdouyin.com']);
-const HOSTS = new Set([
-	...SHORT_HOSTS,
-	...DOUYIN_SHARE_HOSTS,
-	'youtube.com',
-	'www.youtube.com',
-	'm.youtube.com',
-	'music.youtube.com',
-	'youtu.be',
-	'www.bilibili.com',
-	'bilibili.com',
-	'm.bilibili.com',
-	'www.douyin.com',
-	'douyin.com',
-	'www.xiaohongshu.com',
-	'xiaohongshu.com',
-]);
+import {siteForHost, unsupportedPlatformMessage} from './sites/index.mjs';
 
 function fail(code, message) {
 	throw Object.assign(new Error(message), {code});
@@ -39,86 +21,23 @@ function readUrl(input) {
 	}
 	if (url.protocol !== 'https:' || url.username || url.password || url.port)
 		fail('invalid_url', '仅接受不含凭据和自定义端口的 HTTPS 链接。');
-	if (!HOSTS.has(url.hostname))
-		fail('unsupported_platform', '当前仅支持 YouTube、小红书、抖音和 B 站视频链接。');
 	return url;
 }
 
-function startTime(value) {
-	if (!value) return null;
-	if (/^\d+(?:\.\d+)?s?$/.test(value)) return Number(value.replace(/s$/, ''));
-	const m = /^(?:(\d+)h)?(?:(\d+)m)?(?:(\d+)s)?$/.exec(value);
-	return m && m[0] ? Number(m[1] || 0) * 3600 + Number(m[2] || 0) * 60 + Number(m[3] || 0) : null;
-}
-
 export function normalizeUrl(input) {
-	const u = readUrl(input),
-		host = u.hostname;
-	if (SHORT_HOSTS.has(host))
+	const url = readUrl(input);
+	const site = siteForHost(url.hostname);
+	if (!site) fail('unsupported_platform', unsupportedPlatformMessage);
+	if (site.shortHosts?.includes(url.hostname)) {
 		return {
-			platform: host.includes('douyin')
-				? 'douyin'
-				: host.includes('xhs')
-					? 'xiaohongshu'
-					: 'bilibili',
+			platform: site.id,
 			id: null,
-			url: u.href,
+			url: url.href,
 			needsRedirect: true,
 			startTimeSeconds: null,
 		};
-	if (host.includes('youtube') || host === 'youtu.be') {
-		const id =
-			host === 'youtu.be'
-				? u.pathname.split('/')[1]
-				: u.pathname === '/watch'
-					? u.searchParams.get('v')
-					: /^\/(?:shorts|embed|live)\/([^/]+)/.exec(u.pathname)?.[1];
-		if (!/^[\w-]{11}$/.test(id || ''))
-			fail('invalid_url', '需要具体 YouTube 视频链接，暂不支持频道或播放列表。');
-		return {
-			platform: 'youtube',
-			id,
-			url: `https://www.youtube.com/watch?v=${id}`,
-			startTimeSeconds: startTime(
-				u.searchParams.get('t') ||
-					u.searchParams.get('start') ||
-					new URLSearchParams(u.hash.slice(1)).get('t'),
-			),
-		};
 	}
-	if (host.includes('bilibili')) {
-		const id = /^\/video\/(BV[\w]{10}|av\d+)\/?$/.exec(u.pathname)?.[1];
-		if (!id) fail('invalid_url', '需要具体 B 站 BV/av 视频链接。');
-		const rawPage = u.searchParams.get('p'),
-			page = rawPage === null ? 1 : Number(rawPage);
-		if (!Number.isSafeInteger(page) || page < 1) fail('invalid_url', 'B 站分 P 参数必须为正整数。');
-		return {
-			platform: 'bilibili',
-			id,
-			page,
-			url: `https://www.bilibili.com/video/${id}/${page === 1 ? '' : `?p=${page}`}`,
-			startTimeSeconds: startTime(u.searchParams.get('t')),
-		};
-	}
-	if (host.includes('douyin')) {
-		const id = DOUYIN_SHARE_HOSTS.has(host)
-			? /^\/share\/video\/(\d+)\/?$/.exec(u.pathname)?.[1]
-			: /^\/video\/(\d+)\/?$/.exec(u.pathname)?.[1] || u.searchParams.get('modal_id');
-		if (!/^\d{10,25}$/.test(id || ''))
-			fail('invalid_url', '需要具体抖音视频链接或含 modal_id 的页面。');
-		return {
-			platform: 'douyin',
-			id,
-			url: `https://www.douyin.com/video/${id}`,
-			startTimeSeconds: null,
-		};
-	}
-	const id = /^\/(?:explore|discovery\/item)\/([a-f\d]{24})\/?$/i.exec(u.pathname)?.[1];
-	if (!id) fail('invalid_url', '需要具体小红书笔记链接。');
-	const canonical = new URL(`https://www.xiaohongshu.com/explore/${id}`);
-	for (const key of ['xsec_token', 'xsec_source'])
-		if (u.searchParams.has(key)) canonical.searchParams.set(key, u.searchParams.get(key));
-	return {platform: 'xiaohongshu', id, url: canonical.href, startTimeSeconds: null};
+	return {platform: site.id, startTimeSeconds: null, ...site.parse(url)};
 }
 
 export async function resolveTarget(input, {signal, fetchImpl = fetch} = {}) {

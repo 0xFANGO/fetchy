@@ -1,9 +1,5 @@
-const PLATFORMS = Object.freeze({
-	youtube: 'YouTube',
-	bilibili: 'B站',
-	xiaohongshu: '小红书',
-	douyin: '抖音',
-});
+import {siteForPlatform, unsupportedPlatformMessage} from '../src/sites/index.mjs';
+
 const STAGES = Object.freeze({
 	resolving: '正在解析视频…',
 	downloading: '正在下载…',
@@ -39,7 +35,7 @@ export function displayPath(value) {
 export function errorMessage(error, fallback = '暂时无法完成，请稍后重试。') {
 	const messages = {
 		invalid_url: '请输入一个有效的视频链接；分享文案中请只保留一个链接。',
-		unsupported_platform: '暂不支持此网站，请使用 YouTube、B站、小红书或抖音链接。',
+		unsupported_platform: unsupportedPlatformMessage,
 		identity_mismatch: '无法确认目标视频，请重新打开视频后重试。',
 		output_invalid: '下载文件校验失败，请重新下载。',
 		no_formats: '没有找到可下载的视频，请确认这是单个视频内容。',
@@ -123,7 +119,10 @@ export function deriveView(state = {}) {
 			: null;
 	const title =
 		typeof metadata?.title === 'string' && metadata.title.trim() ? metadata.title : '未命名视频';
-	const platform = PLATFORMS[metadata?.platform] ?? PLATFORMS[task?.result?.platform] ?? '视频';
+	const platform =
+		siteForPlatform(metadata?.platform)?.label ??
+		siteForPlatform(task?.result?.platform)?.label ??
+		'视频';
 	const duration = formatDuration(metadata?.durationSeconds);
 	const view = {
 		isSettings: state.view === 'settings',

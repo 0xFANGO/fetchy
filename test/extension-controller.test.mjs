@@ -347,6 +347,26 @@ test('session persistence failure releases startup lock without sending a downlo
 	assert.equal(controller.pendingStart, null);
 });
 
+test('X post tabs resolve and start through native messaging without collecting page media', async () => {
+	const input = 'https://x.com/USGSVolcanoes/status/1600252502217211904';
+	const {controller, calls} = harness({
+		readActiveTab: async () => ({id: 1, url: input}),
+		collectPageMedia: async () => assert.fail('X does not use the page-media engine'),
+	});
+	await controller.initialize();
+	assert.equal(controller.state.context.status, 'ready');
+	await controller.start();
+	assert.deepEqual(
+		calls.map(({method}) => method),
+		['resolve', 'start'],
+	);
+	for (const {params} of calls) {
+		assert.equal(params.input, input);
+		assert.equal(params.pageMedia, undefined);
+	}
+	assert.equal(calls[1].params.refreshOnValidationFailure, false);
+});
+
 test('page media collected from the tab travels with resolve and start; collection errors stay local', async () => {
 	const X = 'https://www.xiaohongshu.com/explore/6adb92b90000000031037a66';
 	const pageMedia = {media: {platform: 'xiaohongshu', id: '6adb92b90000000031037a66'}};

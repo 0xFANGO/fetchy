@@ -1,8 +1,8 @@
 # Fetchy
 
-Browser extension plus local download core for single videos from YouTube,
-Bilibili, Xiaohongshu and Douyin. Pure ESM JavaScript (`.mjs`), Node 22+,
-no runtime npm dependencies. Tests use `node:test`.
+Browser extension, CLI and Node API for saving individual videos locally.
+The platform registry lives in `src/sites/index.mjs`. Pure ESM JavaScript
+(`.mjs`), Node 22+, no runtime npm dependencies. Tests use `node:test`.
 
 ## Coding guardrails
 
@@ -48,14 +48,17 @@ Dependency direction is one-way; never import upwards.
 
 ```
 bin/        CLI                       → src/index.mjs
-extension/  MV3 popup + background    → src/urls.mjs, src/page-extract.mjs (copied at build)
+extension/  MV3 popup + background    → src/urls.mjs, src/sites/, src/page-extract.mjs
 native/     messaging host + daemon   → src/index.mjs, src/process.mjs
 src/index.mjs  public API, engine routing, bounded fallbacks
-  ├─ yt-dlp.mjs   → mp4.mjs, filenames.mjs, thumbnails.mjs, process.mjs
+  ├─ yt-dlp.mjs   → sites/, mp4.mjs, filenames.mjs, thumbnails.mjs, process.mjs
   ├─ browser.mjs  → filenames.mjs, thumbnails.mjs, process.mjs (downloads caller-supplied page media)
-  └─ urls.mjs     link normalisation and content identity (no imports)
+  └─ urls.mjs     → sites/ (accepted hosts, canonical URLs and content identity)
 ```
 
+- Each adapter in `src/sites/` runs in both Node and the extension. The
+  extension build copies the registry, adapters and URL parser into
+  `dist/extension/shared/`. See [Adding a video platform](CONTRIBUTING.md#adding-a-video-platform).
 - `src/page-extract.mjs` is serialised and injected into the video page by
   the extension (see `scripts/page-extract-inject.mjs`). It must stay
   self-contained: no imports, no closures over module scope.

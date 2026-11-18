@@ -1,3 +1,4 @@
+import {siteForPlatform} from './sites/index.mjs';
 import {copyFile, chmod, mkdir, mkdtemp, readFile, realpath, rm, stat} from 'node:fs/promises';
 import {tmpdir} from 'node:os';
 import path from 'node:path';
@@ -61,7 +62,11 @@ export function classifyEngineError(text = '') {
 		)
 	)
 		return new EngineError('dependency_missing', '缺少下载所需的本地依赖。');
-	if (/requested format is not available|no video formats|no formats|only images/i.test(text))
+	if (
+		/requested format is not available|no video (?:formats|could be found)|no formats|only images/i.test(
+			text,
+		)
+	)
 		return new EngineError('no_formats', '没有符合要求的视频格式。');
 	if (
 		/not available|unavailable|deleted|removed|private video|not found|404|geo.?restrict|not support|直播/i.test(
@@ -126,8 +131,10 @@ function formatSelector(options, compatible = false) {
 	return `bv*${height}${protocol}${avc}${compatibleAudio}+ba${protocol}${aac}/b${height}${protocol}${avc}${aac}/bv${height}${protocol}${avc}+ba${protocol}/b${height}${protocol}${avc}/${source}`;
 }
 
-function argsFor(options, compatible = false) {
+function argsFor(target, options, compatible = false) {
 	const args = [...COMMON_ARGS, '--format', formatSelector(options, compatible)];
+	const extractor = siteForPlatform(target.platform)?.extractor;
+	if (extractor) args.push('--use-extractors', extractor);
 	// This project already requires Node >= 22; make it available for YouTube's JS challenges.
 	args.push('--js-runtimes', `node:${process.execPath}`);
 	if (options.ffmpegLocation) args.push('--ffmpeg-location', options.ffmpegLocation);
@@ -194,27 +201,24 @@ function selectedFormats(info) {
 	return [info];
 }
 
-function assertIdentity(target, info) {
-	const id = String(info.id ?? '');
-	let matches = id === target.id;
-	if (target.platform === 'bilibili') {
-		const page = target.page ?? 1;
-		if (/^BV[\w]{10}$/.test(target.id)) {
-			matches = (id === target.id && page === 1) || id === target.id + '_p' + page;
-		} else if (/^av\d+$/.test(target.id)) {
-			// Upstream maps AV IDs to BV IDs and retains the original aid/part archive alias.
-			const aliases = Array.isArray(info._old_archive_ids) ? info._old_archive_ids : [];
-			matches = aliases.includes('bilibili ' + target.id.slice(2) + '_part' + page);
-		}
-	}
-	if (!matches)
+function assertIdentity(target, info, expectedSourceId) {
+	const site = siteForPlatform(target.platform);
+	const sourceMatches = site?.matchesSource
+		? site.matchesSource(target, info)
+		: String(info.id ?? '') === target.id;
+	if (
+		!sourceMatches ||
+		(site?.extractor && info.extractor_key !== site.extractor) ||
+		(expectedSourceId !== undefined && String(info.id) !== String(expectedSourceId))
+	) {
 		throw new EngineError('wrong_video', '解析结果与目标视频或分 P 不一致，已停止下载。');
+	}
 }
 
 async function metadata(target, options) {
 	const result = await runProcess(
 		options.ytDlpPath ?? 'yt-dlp',
-		[...argsFor(options), '--dump-single-json', '--skip-download', '--', target.url],
+		[...argsFor(target, options), '--dump-single-json', '--skip-download', '--', target.url],
 		{
 			signal: options.signal,
 			timeoutMs: Math.min(options.timeoutMs ?? 60_000, 60_000),
@@ -410,7 +414,7 @@ export async function downloadWithYtDlp(target, options = {}) {
 			const result = await runProcess(
 				settings.ytDlpPath ?? 'yt-dlp',
 				[
-					...argsFor(settings, true),
+					...argsFor(target, settings, true),
 					'--no-simulate',
 					'--no-overwrites',
 					'--merge-output-format',
@@ -421,7 +425,7 @@ export async function downloadWithYtDlp(target, options = {}) {
 					path.join(directory.replaceAll('%', '%%'), 'media.%(ext)s'),
 					// Serialize the projected object once: optional missing fields otherwise render bare NA.
 					'--print-to-file',
-					'after_move:%(.{filepath,id,_old_archive_ids})j',
+					'after_move:%(.{filepath,id,display_id,extractor_key,_old_archive_ids})j',
 					receipt.replaceAll('%', '%%'),
 					'--',
 					target.url,
@@ -440,7 +444,7 @@ export async function downloadWithYtDlp(target, options = {}) {
 			} catch {
 				throw new EngineError('output_invalid', '下载工具没有确认最终媒体文件。');
 			}
-			assertIdentity(target, record);
+			assertIdentity(target, record, info.id);
 			await validateTaskFile(filepath, directory);
 			const sourceFilepath = await realpath(filepath);
 			emit(options, 'postprocessing');

@@ -1,3 +1,4 @@
+import {siteForPlatform, usesPageMedia} from './sites/index.mjs';
 import {normalizeUrl, resolveTarget} from './urls.mjs';
 import {resolveWithYtDlp, downloadWithYtDlp} from './yt-dlp.mjs';
 import {resolveWithBrowser, downloadWithBrowser} from './browser.mjs';
@@ -19,7 +20,7 @@ async function inputTarget(input, options) {
 	const target = normalizeUrl(input);
 	if (
 		target.needsRedirect &&
-		['xiaohongshu', 'douyin'].includes(target.platform) &&
+		usesPageMedia(target.platform) &&
 		options.engine !== 'yt-dlp' &&
 		options.pageMedia?.resolvedUrl !== undefined
 	) {
@@ -64,7 +65,7 @@ async function execute(action, input, options = {}) {
 		const engine =
 			options.engine && options.engine !== 'auto'
 				? options.engine
-				: options.pageMedia && ['xiaohongshu', 'douyin'].includes(target.platform)
+				: options.pageMedia && usesPageMedia(target.platform)
 					? 'browser'
 					: 'yt-dlp';
 		const fn =
@@ -80,7 +81,7 @@ async function execute(action, input, options = {}) {
 		} catch (error) {
 			if (
 				action === 'download' &&
-				target.platform === 'youtube' &&
+				siteForPlatform(target.platform)?.retryHls &&
 				engine === 'yt-dlp' &&
 				(options.transport ?? 'auto') === 'auto' &&
 				error.code === 'network_error'

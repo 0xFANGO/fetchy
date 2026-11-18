@@ -1,3 +1,4 @@
+import {usesPageMedia} from '../src/sites/index.mjs';
 import {Controller, activeTask} from './controller.mjs';
 import {normalizeUrl} from '../src/urls.mjs';
 
@@ -143,7 +144,6 @@ async function rpc(method, params, timeoutMs) {
 // session instead of a separate automation browser. An open tab on the exact
 // video is used when there is one; otherwise a background tab is opened and
 // closed again. Only the extractor's narrow result crosses into the native host.
-const PAGE_PLATFORMS = ['xiaohongshu', 'douyin'];
 const PAGE_HOSTS = ['https://*.xiaohongshu.com/*', 'https://*.douyin.com/*'];
 const RETRYABLE = ['browser_state_missing', 'browser_unavailable'];
 const delay = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
@@ -226,7 +226,7 @@ async function collectPageMedia(input, {fresh = false, signal} = {}) {
 	} catch {
 		return undefined;
 	}
-	if (!PAGE_PLATFORMS.includes(expected.platform)) return undefined;
+	if (!usesPageMedia(expected.platform)) return undefined;
 	if (!fresh && !expected.needsRedirect) {
 		const tabs = await chrome.tabs.query({url: PAGE_HOSTS}).catch(() => []);
 		for (const tab of tabs) {

@@ -1,8 +1,45 @@
 # 实测与验证记录
 
-日期：2026-10-24（Asia/Shanghai）。记录两轮共八条给定样例，以及第二轮 YouTube / B站文件的 MP4 兼容性转换；不是平台全量兼容性承诺。
+本页记录实际保存结果、输入条件和复测日期。平台当前支持范围见[逐站能力表](platforms.md)。
 
-## 环境
+## 2026-11-18 Instagram Reels
+
+用 `node bin/fetchy.mjs resolve <Reel 链接>` 和 `node bin/fetchy.mjs download <Reel 链接> --output .local/validation` 保存了两条 NASA 官方账号的公开视频。匿名调用，未限制高度。yt-dlp 的 `Instagram` 提取器返回的媒体 ID 和显示 ID 都与 Reel 链接中的短码相同。两条来源在解析时均未提供时长，表中时长来自成品。Fetchy 完成转码后，两条 MP4 都通过独立 ffprobe 检查及 FFmpeg 全片解码。
+
+| 账号与链接                                                                | 内容与来源                                                                                                                                           | 成品                                                        |
+| ------------------------------------------------------------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------- | ----------------------------------------------------------- |
+| [@nasa · Dd1gQBsCWE8](https://www.instagram.com/reel/Dd1gQBsCWE8/)        | [NASA 行星防御纪录片](https://plus.nasa.gov/video/planetary-defenders-this-is-not-an-exercise/)预告                                                  | 608×1080 H.264/yuv420p + AAC，38.740500 秒，21,856,945 字节 |
+| [@nasajohnson · DfF3eqGSKKc](https://www.instagram.com/reel/DfF3eqGSKKc/) | [2026-10-29 空间站出舱任务](https://www.nasa.gov/blogs/spacestation/2026/10/29/spacewalkers-install-roll-out-solar-arrays-for-power-generation/)摘要 | 1080×1920 H.264/yuv420p + AAC，41.517143 秒，9,842,562 字节 |
+
+NASA 的媒体指南说明了教育、信息用途及第三方素材的权利边界。以上记录仅引用帖子及文件规格。[NASA 媒体使用说明](https://www.nasa.gov/nasa-brand-center/images-and-media/)
+
+## 2026-11-18 X 原帖视频
+
+在未登录的终端对下列公开帖子分别运行 `node bin/fetchy.mjs resolve <链接>` 和 `node bin/fetchy.mjs download <链接> --output .local/validation`。yt-dlp 解析到各原帖自带的一段视频。Fetchy 保留帖子 ID 作为作品 ID，把下载的音视频重新封装为 MP4。两个成品均经独立 ffprobe 检查，并通过 `ffmpeg -nostdin -v error -xerror -i <文件> -f null -` 全片解码。
+
+| 帖子（USGS Volcanoes）                                                          | 视频媒体 ID           | 成品                                                       |
+| ------------------------------------------------------------------------------- | --------------------- | ---------------------------------------------------------- |
+| [Mauna Loa，2022-12-05](https://x.com/USGSVolcanoes/status/1600252502217211904) | `1600251292424757252` | 1280×720 H.264/yuv420p + AAC，9.971270 秒，2,950,225 字节  |
+| [Kīlauea，2023-06-07](https://x.com/USGSVolcanoes/status/1666492380332056607)   | `1666492285276545034` | 1280×720 H.264/yuv420p + AAC，22.569167 秒，4,047,218 字节 |
+
+USGS 在两个原片页面分别标注了公共领域状态。[Mauna Loa 原片](https://www.usgs.gov/media/videos/december-5-2022-mauna-loa-fissure-3-lava-channel) · [Kīlauea 原片](https://www.usgs.gov/media/videos/kilauea-summit-eruption-halemaumau-june-7-2023)
+
+## 2026-11-18 匿名 CLI 复测
+
+macOS，Node 25.8.0，项目锁定的 yt-dlp 2026.10.21，ffprobe 8.0.1。以下均从 `node bin/fetchy.mjs download <链接> --output .local/validation` 发起，使用默认引擎，无 Cookie。CLI 返回成功后另用 ffprobe 检查实际 MP4 的轨道、尺寸和时长。
+
+| 平台与链接                                                                                      | 附加参数                                               | 结果                                                               |
+| ----------------------------------------------------------------------------------------------- | ------------------------------------------------------ | ------------------------------------------------------------------ |
+| [YouTube 长视频](https://www.youtube.com/watch?v=eA9Zf2-qYYM)                                   | `--max-height 360 --transport hls --timeout-ms 240000` | 69.78 秒完成，640×360 H.264 + AAC，3535.098549 秒，84,488,498 字节 |
+| [YouTube 短视频](https://www.youtube.com/watch?v=jNQXAC9IVRw)                                   | `--max-height 240 --timeout-ms 120000`                 | 12.68 秒完成，320×240 H.264 + AAC，18.947483 秒，629,172 字节      |
+| [B站 BV1TeJ96EE5t](https://www.bilibili.com/video/BV1TeJ96EE5t/)                                | `--max-height 360 --timeout-ms 240000`                 | 解析成功，下载阶段在 15.47 秒返回 `network_error`，无成品          |
+| [B站 BV19Pnb6REhD](https://www.bilibili.com/video/BV19Pnb6REhD/)                                | `--max-height 360 --timeout-ms 150000`                 | 解析成功，下载阶段在 13.80 秒返回 `network_error`，无成品          |
+| [抖音 7695202760953793827](https://www.douyin.com/jingxuan?modal_id=7695202760953793827)        | `--max-height 1024 --timeout-ms 240000`                | 1.94 秒返回 `session_required`，无成品                             |
+| [小红书 6ad9e45b000000003303249c](https://www.xiaohongshu.com/explore/6ad9e45b000000003303249c) | `--timeout-ms 150000`                                  | 无分享参数的详情页在 2.75 秒返回 `no_formats`，无成品              |
+
+早期扩展实测记录了小红书、抖音在可播放页面上的成功下载。两个入口的会话和取流条件不同。[扩展实测](extension-validation.md)
+
+## 2026-10-24 原始实测环境
 
 - macOS；Node 24.18.0；Python 3.14；项目虚拟环境 yt-dlp 2026.10.21 + yt-dlp-ejs 0.8.0；FFmpeg/ffprobe 8.0.1。
 - 旧全局 yt-dlp 2026.06.29.234344 未更新。旧版对 B站 HTTP 412，新版同样例成功，说明依赖版本属于重现条件。
@@ -75,7 +112,7 @@ CLI 会建立独立任务目录；表中的平台与 ID 目录是本轮下载后
 - **真实平台选流解析**：当前选择器在第二轮 B站样例中选择 1080p AVC `30080` + AAC `30280`；YouTube 的 HLS 路径选择 1080p AVC `270` + 音频 `234-16`。后者元数据未标明音频编码，下载后仍需实际探测，不能仅凭格式 ID 判定兼容。
 - **真实长文件转换**：上表两个本地长文件经当前转换模块处理成功，保留 1080p，输出 H.264/yuv420p/AAC MP4。
 - **自动化执行链**：离线测试以真实 FFmpeg/ffprobe 和合成媒体验证 `downloadWithYtDlp` 到最终 MP4 校验的完整本地流程；上游下载子进程由测试桩代替。
-- **尚未重新执行**：MP4 默认策略修改后，没有再次从 YouTube / B站下载这两条完整视频。上述解析、长文件转换和离线执行链是不同层次的证据。
+- **截至 2026-10-24**：MP4 默认策略修改后，当时没有再次从 YouTube / B站下载这两条完整视频。上述解析、长文件转换和离线执行链是不同层次的证据。
 
 ## 发现与保留边界
 
