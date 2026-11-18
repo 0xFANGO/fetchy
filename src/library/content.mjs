@@ -82,6 +82,7 @@ const MIME = {
 	'image/webp': '.webp',
 	'image/gif': '.gif',
 	'image/avif': '.avif',
+	'audio/mp4': '.m4a',
 	'video/mp4': '.mp4',
 	'video/webm': '.webm',
 	'video/quicktime': '.mov',
@@ -102,6 +103,7 @@ function matchesMediaHeader(bytes, ext) {
 			return brand === 'ftyp' && /avif|avis/.test(bytes.toString('latin1'));
 		case '.webm':
 			return sig.readUInt32BE(0) === 0x1a45dfa3;
+		case '.m4a':
 		case '.mp4':
 		case '.mov':
 			return ['ftyp', 'moov', 'mdat', 'wide', 'free'].includes(brand);
@@ -162,8 +164,12 @@ async function stash(root, stream, ext) {
 		}
 		if (
 			probe.code !== 0 ||
-			!metadata?.streams?.some((v) => v.codec_type === 'video' && v.width > 0 && v.height > 0) ||
-			(['.mp4', '.mov', '.webm'].includes(ext) && !(Number(metadata.format?.duration) > 0))
+			!metadata?.streams?.some((v) =>
+				ext === '.m4a'
+					? v.codec_type === 'audio'
+					: v.codec_type === 'video' && v.width > 0 && v.height > 0,
+			) ||
+			(['.mp4', '.mov', '.webm', '.m4a'].includes(ext) && !(Number(metadata.format?.duration) > 0))
 		)
 			throw problem('invalid_attachment', 'Media could not be verified.');
 		try {
@@ -199,7 +205,7 @@ export async function normalizeEntry(raw, folder, root, options = {}) {
 	if (raw.attachments !== undefined && raw.attachments !== null && !Array.isArray(raw.attachments))
 		throw problem('invalid_entry', 'Attachments must be ordered in an array.');
 	for (const a of raw.attachments ?? []) {
-		const kind = a?.kind === 'video' ? 'video' : 'image';
+		const kind = ['audio', 'video'].includes(a?.kind) ? a.kind : 'image';
 		const item = {kind, name: text(a?.name, 256), alt: text(a?.alt, 1024)};
 		// Import manifests can reference files only beneath a caller-selected export directory.
 		try {
@@ -239,7 +245,7 @@ export async function normalizeEntry(raw, folder, root, options = {}) {
 		sourceUrl,
 		title: text(raw.title),
 		author: text(raw.author),
-		kind: raw.kind === 'video' ? 'video' : 'post',
+		kind: ['audio', 'video'].includes(raw.kind) ? raw.kind : 'post',
 		body,
 		bodyFormat: raw.bodyFormat === 'markdown' ? 'markdown' : 'text',
 		bodyComplete:
@@ -305,6 +311,8 @@ export async function renderWork(root, item) {
 				.split(path.sep)
 				.map(encodeURIComponent)
 				.join('/');
+			if (a.kind === 'audio')
+				return '<audio controls preload="metadata" src="' + url + '"></audio>';
 			return a.kind === 'video'
 				? '<video controls preload="metadata" src="' + url + '"></video>'
 				: '<img loading="lazy" alt="' + html(a.alt || a.name) + '" src="' + url + '">';

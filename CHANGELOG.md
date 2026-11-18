@@ -6,7 +6,10 @@ Notable changes for users, following [Keep a Changelog](https://keepachangelog.c
 
 ### Added
 
-- Save a single video from a public X post or Instagram Reel using the CLI, Node API or browser extension.
+- Save public videos and audio from additional social and media sites. The platform table records file-level checks and access requirements.
+- Inspect links with `info`, save with `get`, and process a file or stdin with `batch`. The generic downloader accepts direct videos, declared media, finite HLS and static DASH.
+- Build a macOS desktop app, sign in with a dedicated site browser, and use the same session for subsequent saves.
+- Archive text and ordered attachments from supported posts and collections. Search the offline library, keep original folder memberships, and resume, retry or export shared tasks.
 
 ## [0.3.1] - 2026-11-02
 

@@ -4,7 +4,7 @@
 ![Node >= 22](docs/assets/badges/node.svg)
 ![Platform: macOS](docs/assets/badges/platform.svg)
 
-Save a video from a social media post to a local MP4 using the browser extension, CLI or Node API.
+Save videos, audio and readable posts to a local library from the CLI, browser extension or macOS app.
 
 [中文文档](README.zh-CN.md)
 
@@ -33,7 +33,21 @@ https://github.com/user-attachments/assets/e5ebb617-7dd1-4369-b044-b7e8900cb662
 | X (Twitter) | `x.com/<handle>/status/<post-id>`, `twitter.com`, or `/i/web/status/<id>` | yt-dlp              | Public posts with one extractable video                                            |
 | Instagram   | `instagram.com/reel/<shortcode>/`                                         | yt-dlp              | Public Reels, including profile and `/reels/<shortcode>/` links                    |
 
-Fetchy currently saves individual, finished videos. See the [platform capability table](docs/platforms.md) for support by content type, collection and history, and the [limitations](docs/limitations.md) for other restrictions.
+The registry also includes single-link adapters for Facebook, TikTok, Bluesky, Reddit, Pinterest, Weibo, video hosts and audio services. Each site has separate evidence for media files, posts and collection history. [Full platform table](docs/platforms.md)
+
+## Desktop and local library
+
+Build a double-clickable Fetchy.app with `npm run desktop:build` on macOS 14 or later. Paste a URL, select a destination, inspect shared tasks, or search local posts by platform, folder or topic. The library requires Node 22.13 or later. [Desktop setup](docs/desktop.md) · [Archive format and commands](docs/library.md)
+
+```sh
+node bin/fetchy.mjs info '<URL>'
+node bin/fetchy.mjs get '<URL>' --output ./downloads
+node bin/fetchy.mjs batch -i links.txt
+node bin/fetchy.mjs browse '<URL>'
+node bin/fetchy.mjs library tasks
+```
+
+`get` prints a JSON result with its task ID and local path. A batch accepts one URL per line or a JSON array and returns one JSON result per input. Partial archives and failed downloads make its exit status nonzero. To save a post with your browser's current session, open the extension on the original post or collection. Archive pages preserve available text and ordered attachments, including a record of missing content. [Web media and validation](docs/web-media.md)
 
 ## Requirements
 
@@ -89,7 +103,7 @@ For Xiaohongshu and Douyin the extension reads the video's playback data from th
 
 For results by browser and platform, see the [extension validation log](docs/extension-validation.md). For native host registration, sessions and troubleshooting, see the [installation guide](docs/extension-install.md).
 
-## CLI
+## Legacy video commands
 
 ```sh
 node bin/fetchy.mjs resolve  <url>   # inspect formats without downloading

@@ -1,5 +1,11 @@
 import {unsupportedPlatformMessage} from '../src/sites/index.mjs';
 const messages = {
+	invalid_manifest: '请检查导入文件的版本及条目格式。',
+	invalid_entry: '收藏条目缺少必要的信息。',
+	not_found: '找不到相应的收藏任务。',
+	invalid_attachment: '无法验证此附件。',
+	unsupported_content: '当前媒体格式无法保存。',
+	size_limit: '媒体或清单超过大小限制。',
 	invalid_request: '本地组件收到无效请求，请重新打开插件。',
 	invalid_url: '请输入一个有效的视频链接。',
 	multiple_urls: '请只保留一个视频链接。',
@@ -37,7 +43,6 @@ const messages = {
 	task_already_finished: '这个启动请求已经处理过，请使用重试按钮开始新任务。',
 	interrupted: '下载已中断，请重新下载。',
 	cancelled: '已取消下载。',
-	size_limit: '视频超过当前下载大小上限。',
 	engine_error: '本次识别或下载未能完成，请稍后重试或检查本地组件。',
 };
 export function bridgeError(code) {

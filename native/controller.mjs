@@ -101,6 +101,7 @@ export class NativeController extends EventEmitter {
 		this.pendingDirectory = null;
 		this.choosingDirectory = false;
 		this.resolvers = new Map();
+		this.library = null;
 		this.resolved = new Map();
 		this.recentTaskIds = [];
 		this.persistence = Promise.resolve();
@@ -193,6 +194,11 @@ export class NativeController extends EventEmitter {
 	async request(method, params = {}) {
 		if (!params || typeof params !== 'object' || Array.isArray(params))
 			throw bridgeError('invalid_request');
+		if (typeof method === 'string' && method.startsWith('library')) {
+			const {LibraryBridge} = await import('./library-bridge.mjs');
+			this.library ??= new LibraryBridge(this.directory);
+			return this.library.request(method, params);
+		}
 		switch (method) {
 			case 'hello':
 				return {
@@ -201,6 +207,20 @@ export class NativeController extends EventEmitter {
 					dependencies: await this.dependencies(),
 					state: this.snapshot(),
 				};
+			case 'webSave': {
+				const {getOne} = await import('../bin/get.mjs');
+				const url = checkedInput(params.url);
+				const outputDir = await validateDirectory(this.settings.outputDir, {
+					createDefault: true,
+					defaultDirectory: this.defaultDirectory,
+				});
+				const result = await getOne('get', url, {
+					outputDir,
+					root: process.env.FETCHY_LIBRARY_DIR || path.join(this.directory, 'library'),
+					publicOnly: true,
+				});
+				return {filepath: result.filepath, id: result.id, taskId: result.taskId};
+			}
 			case 'getState':
 				return this.snapshot();
 			case 'getSettings':

@@ -4,7 +4,7 @@
 ![Node >= 22](docs/assets/badges/node.svg)
 ![Platform: macOS](docs/assets/badges/platform.svg)
 
-通过浏览器扩展、CLI 或 Node API，把社交平台上的单个视频保存为本地 MP4。
+用 CLI、浏览器扩展或 macOS 桌面端把视频、音频和可离线阅读的帖子存进本地资料库。
 
 [English](README.md)
 
@@ -31,7 +31,21 @@ https://github.com/user-attachments/assets/e5ebb617-7dd1-4369-b044-b7e8900cb662
 | X（Twitter） | `x.com/<用户名>/status/<帖子 ID>`，也支持 `twitter.com` 和 `/i/web/status/<ID>` | yt-dlp           | 含单个可提取视频的公开帖子                               |
 | Instagram    | `instagram.com/reel/<作品短码>/`                                                | yt-dlp           | 单个公开 Reel，含作者主页下的详情链接和 `/reels/<短码>/` |
 
-目前可保存单个已发布的视频。图片、正文、收藏夹与历史分页的逐站进展见[平台能力表](docs/platforms.md)。其他限制见[使用边界](docs/limitations.md)。
+另有 Facebook、TikTok、Bluesky、Reddit、Pinterest、微博、视频托管和音乐站点的单链适配。各站已验证的成品、图文和收藏历史范围见[完整平台表](docs/platforms.md)。
+
+## 桌面端和本地资料库
+
+在 macOS 14 及以上运行 `npm run desktop:build` 即可构建可双击的 Fetchy.app。桌面端支持粘贴链接、选择目录、查看共享任务，并按平台、原收藏夹或主题检索。资料库需要 Node 22.13 或更高版本。[桌面端设置](docs/desktop.md) · [收藏清单与命令](docs/library.md)
+
+```sh
+node bin/fetchy.mjs info '<链接>'
+node bin/fetchy.mjs get '<链接>' --output ./downloads
+node bin/fetchy.mjs batch -i links.txt
+node bin/fetchy.mjs browse '<链接>'
+node bin/fetchy.mjs library tasks
+```
+
+`get` 输出包含任务 ID 和本地路径的 JSON。批量输入支持每行一个链接或 JSON 数组，逐条输出结果，遇到部分保存或失败时整体返回非零。用当前浏览器的登录状态保存图文或收藏夹，可从原帖或列表页打开扩展。离线页面保留可读正文、附件顺序及缺失项。[通用网页与验证](docs/web-media.md)
 
 ## 环境要求
 
@@ -85,7 +99,7 @@ npm run native:install -- --browser chrome # 注册 native host；Ego Lite 用 -
 
 各浏览器和站点的实测结果见[扩展验证记录](docs/extension-validation.md)。注册本地组件、登录及故障排查见[安装说明](docs/extension-install.md)。
 
-## 命令行
+## 原有视频命令
 
 ```sh
 node bin/fetchy.mjs resolve  <url>   # 只解析规格，不下载

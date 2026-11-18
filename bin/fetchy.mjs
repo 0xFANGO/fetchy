@@ -3,6 +3,11 @@ import {parseArgs} from 'node:util';
 import {resolveVideo, downloadVideo} from '../src/index.mjs';
 
 const HELP = `Fetchy Video Downloader — 先解析，再下载
+fetchy get <URL> [--output <目录>]       保存到资料库，可另选输出目录
+fetchy info <URL>                       查看来源和格式
+fetchy batch -i <文件或 ->               每行一个 URL；逐条输出 JSON
+fetchy browse <URL> / logout <URL>       打开或退出该站的专属会话
+fetchy library tasks|task|search|export|folders|page|import|sync|resume|retry
 node bin/fetchy.mjs resolve '<视频链接>' [选项]
 node bin/fetchy.mjs download '<视频链接>' [选项]
 
@@ -16,7 +21,7 @@ node bin/fetchy.mjs download '<视频链接>' [选项]
 
 结果JSON写入stdout，阶段信息写入stderr；Ctrl+C取消。
 分享链接的 t= 只记录定位时间，默认下载整片。`;
-try {
+async function legacy() {
 	const {values, positionals} = parseArgs({
 		allowPositionals: true,
 		strict: true,
@@ -51,6 +56,18 @@ try {
 	};
 	const result = await (action === 'resolve' ? resolveVideo : downloadVideo)(input, options);
 	console.log(JSON.stringify(result, null, 2));
+}
+try {
+	const [action, ...args] = process.argv.slice(2);
+	if (['get', 'info', 'batch'].includes(action))
+		await (await import('./get.mjs')).runGetCommand(action, args);
+	else if (action === 'library') await (await import('./library.mjs')).runLibraryCommand(args);
+	else if (['browse', 'logout'].includes(action)) {
+		if (args.length !== 1)
+			throw Object.assign(new Error('请提供一个站点链接。'), {code: 'invalid_arguments'});
+		const desktop = await import('./desktop.mjs');
+		console.log(JSON.stringify(await desktop[action](args[0])));
+	} else await legacy();
 } catch (error) {
 	// Unknown exception text can contain signed URLs; only our bounded errors are public.
 	const known = typeof error.code === 'string' && !error.code.startsWith('ERR_');
