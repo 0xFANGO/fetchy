@@ -24,6 +24,8 @@ A browser-readable attachment may be unavailable to a separate downloader. For r
 
 ## Browser regression
 
+![A completed three-image fixture task in the extension](assets/validation/archive-task.png)
+
 On November 18, 2026, Chrome for Testing 157 on macOS ran the unpacked extension with an isolated profile and native host. The test served locally authored pages and media over HTTPS. Each flow started at the browser's toolbar, submitted through the archive UI, then found the resulting persistent task and local HTML.
 
 | Input                        | Offline check                                                                                                       |
