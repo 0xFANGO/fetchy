@@ -39,7 +39,7 @@ function connect() {
 		return;
 	}
 	try {
-		port = chrome.runtime.connect({name: 'popup'});
+		port = chrome.runtime.connect({name: 'panel'});
 		port.onMessage.addListener((message) => {
 			if (message?.type !== 'state') return;
 			connectionAttempts = 0;
@@ -76,10 +76,10 @@ function render(state = {}) {
 	latestState = state;
 	const presented = withPendingDraft(state, pendingDraft);
 	const view = deriveView(presented);
+	document.body.dataset.settings = String(view.isSettings);
 	show('main-view', !view.isSettings);
 	show('settings-view', view.isSettings);
 	show('back-button', view.isSettings);
-	show('archive-button', !view.isSettings);
 	show('connection', Boolean(view.connectionNotice));
 	setText('connection-message', view.connectionNotice);
 	byId('connection').classList.toggle('is-error', state.connection?.status === 'disconnected');
@@ -136,7 +136,10 @@ function render(state = {}) {
 	show('actions', Boolean(view.primary || view.secondary.length));
 	show('primary-button', Boolean(view.primary));
 	if (view.primary) {
-		setText('primary-label', view.primary.label);
+		// Beside a post the full save is the main action; the video alone is secondary.
+		const onPost = document.body.dataset.page === 'post' && view.primary.action === 'start';
+		setText('primary-label', onPost ? '只下载视频' : view.primary.label);
+		byId('primary-button').classList.toggle('is-secondary', onPost);
 		byId('primary-icon').setAttribute('href', `#i-${view.primary.icon || 'download'}`);
 		byId('primary-button').disabled = Boolean(view.primary.disabled || actionBusy);
 	}
@@ -178,7 +181,7 @@ function render(state = {}) {
 	setText(
 		'settings-hint',
 		view.choosingDirectory
-			? '请在系统窗口中选择；关闭弹窗也会保留选择结果。'
+			? '请在系统窗口中选择；关闭右侧栏也会保留选择结果。'
 			: view.active
 				? '当前下载仍使用原目录，更改只影响后续任务。'
 				: '选择文件夹后，点击保存。',
@@ -248,14 +251,6 @@ byId('settings-reconnect').addEventListener('click', () => {
 		connectionAttempts = 0;
 		connect();
 	}
-});
-
-byId('archive-button').addEventListener('click', async () => {
-	const [tab] = await chrome.tabs.query({active: true, currentWindow: true});
-	const url = new URL(chrome.runtime.getURL('archive.html'));
-	if (Number.isInteger(tab?.id)) url.searchParams.set('tab', String(tab.id));
-	await chrome.tabs.create({url: url.href});
-	window.close();
 });
 
 for (const site of sites) {

@@ -1,11 +1,8 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
 import vm from 'node:vm';
-import {
-	captureArchivePage,
-	hydrateArchiveEntry,
-	readBilibiliCollectionPage,
-} from '../extension/capture-page.mjs';
+import {readdir, readFile} from 'node:fs/promises';
+import {captureArchivePage, readBilibiliCollectionPage} from '../extension/capture-page.mjs';
 import {submitArchive} from '../extension/archive-rpc.mjs';
 function invoke(func, args, globals) {
 	const ctx = {URL, URLSearchParams, AbortSignal, ...globals, args};
@@ -58,34 +55,6 @@ test('album discovery deduplicates repeated carousel cards and checks the active
 		Array.from(snap.folders, (x) => x.id),
 		['alpha', 'beta'],
 	);
-});
-test('untrusted attachment URLs cannot trigger page fetches even on the original note', async () => {
-	const entry = {
-		platform: 'xiaohongshu',
-		id,
-		sourceUrl: url,
-		attachments: [
-			{kind: 'image', url: 'https://a.xhscdn.com/unlisted'},
-			{kind: 'image', url: 'http://127.0.0.1/'},
-		],
-	};
-	const calls = [];
-	const globals = {
-		location: {href: url},
-		window: {
-			__INITIAL_STATE__: {
-				note: {
-					noteDetailMap: {
-						[id]: {note: {noteId: id, imageList: [{urlDefault: 'https://a.xhscdn.com/allowed'}]}},
-					},
-				},
-			},
-		},
-		fetch: (u) => calls.push(u),
-	};
-	const out = await invoke(hydrateArchiveEntry, [entry], globals);
-	assert.equal(out.attachments.length, 2);
-	assert.equal(calls.length, 0);
 });
 test('official Bilibili requests are scoped to the active favorite page and account', async () => {
 	const calls = [],
@@ -153,70 +122,9 @@ test('runtime media discovery keeps relevant HTTPS files and manifests from the 
 	assert.equal(capture.page, 'https://example.org/read');
 });
 
-test('one transfer keeps every selected row while replacing excess inline media with original URLs', async () => {
-	const {ArchiveTransfer, manifestFolder} = await import('../extension/archive-transfer.mjs');
-	const one = (id) => ({
-		platform: 'x',
-		id,
-		title: 'item ' + id,
-		sourceUrl: 'https://x.com/archive/status/' + id,
-		attachments: [],
-	});
-	const rows = ['1', '2', '3'].map(one),
-		group = {
-			folder: {id: 'fav', platform: 'x', name: 'F'},
-			pages: [rows],
-			items: rows,
-			total: 3,
-			complete: true,
-		};
-	const chosen = rows.map((i) => 'x:' + i.id);
-	const budget = new ArchiveTransfer([group], chosen, {wireLimit: 2500, inlineLimit: 600});
-	const entries = new Map();
-	for (const row of rows) {
-		const url = 'https://example.org/' + row.id + '.png',
-			original = {...row, body: '原文', attachments: [{kind: 'image', url}]};
-		const filled = {
-			...original,
-			attachments: [{kind: 'image', data: 'A'.repeat(600), mimeType: 'image/png'}],
-		};
-		entries.set('x:' + row.id, budget.record(row, original, filled));
-	}
-	const output = manifestFolder(group, entries).pages[0].items;
-	assert.equal(output.length, 3);
-	assert.ok(output[0].attachments[0].data);
-	assert.equal(output[1].attachments[0].url, 'https://example.org/2.png');
-	assert.equal(output[2].attachments[0].url, 'https://example.org/3.png');
-	assert.equal(budget.urlCount, 2);
-	assert.equal(budget.missingCount, 0);
-	assert.ok(output.every((v) => v.body === '原文'));
-});
-
-test('late text reclaims inline media space, and data-only slots report missing explicitly', async () => {
-	const {ArchiveTransfer} = await import('../extension/archive-transfer.mjs');
-	const first = {
-		platform: 'x',
-		id: '1',
-		body: '',
-		attachments: [{kind: 'image', url: 'https://example.org/one'}],
-	};
-	const second = {platform: 'x', id: '2', body: 'b'.repeat(600), attachments: []};
-	const q = new ArchiveTransfer([], undefined, {wireLimit: 1200, inlineLimit: 1000});
-	const original = q.record({}, first, {
-		...first,
-		attachments: [{kind: 'image', data: 'A'.repeat(650)}],
-	});
-	q.record({}, second, second);
-	assert.equal(original.attachments[0].url, first.attachments[0].url);
-	assert.equal(q.urlCount, 1);
-	const noUrl = {platform: 'x', id: '3', attachments: [{kind: 'image', data: 'A'.repeat(2000)}]};
-	assert.equal(q.record({}, noUrl, noUrl).attachments[0].missing, true);
-	assert.equal(q.missingCount, 1);
-});
-
-test('virtualized collections return to the top and keep moving through overlapping viewports', async (t) => {
+test('reading a virtualized collection starts at the top and moves through overlapping screens', async (t) => {
 	const {advanceArchivePage} = await import('../extension/capture-page.mjs');
-	const {collectArchivePages} = await import('../extension/archive-source.mjs');
+	const {readMore, startCollection, atEnd} = await import('../extension/archive-source.mjs');
 	const folder = {id: 'album', platform: 'xiaohongshu'},
 		calls = [];
 	let offset = 4;
@@ -227,11 +135,14 @@ test('virtualized collections return to the top and keep moving through overlapp
 		complete: false,
 		items: [{platform: 'xiaohongshu', id: String([1, 1, 1, 1, 2, 3, 4][offset])}],
 	});
-	const original = snapshot();
 	const realSetTimeout = setTimeout;
 	t.mock.method(globalThis, 'setTimeout', (callback) => realSetTimeout(callback, 0));
-	const mockChrome = {
-		tabs: {get: async () => ({url: 'https://www.xiaohongshu.com/board/album'})},
+	const previous = globalThis.chrome;
+	globalThis.chrome = {
+		tabs: {
+			get: async () => ({url: 'https://www.xiaohongshu.com/board/album'}),
+			create: () => assert.fail('reading never opens a tab'),
+		},
 		scripting: {
 			async executeScript({func, args}) {
 				if (func === advanceArchivePage) {
@@ -246,17 +157,81 @@ test('virtualized collections return to the top and keep moving through overlapp
 			},
 		},
 	};
-	const previous = globalThis.chrome;
-	globalThis.chrome = mockChrome;
 	t.after(() => {
 		if (previous === undefined) delete globalThis.chrome;
 		else globalThis.chrome = previous;
 	});
-	const result = await collectArchivePages(1, 'https://www.xiaohongshu.com', original);
+	const collection = startCollection(snapshot());
+	await readMore(1, collection, 'https://www.xiaohongshu.com', {fromTop: true});
+	for (let i = 0; i < 20 && !atEnd(collection); i++)
+		await readMore(1, collection, 'https://www.xiaohongshu.com');
 	assert.deepEqual(calls, ['top']);
-	assert.equal(result.complete, true);
-	assert.deepEqual(
-		result.items.map((x) => x.id),
-		['1', '2', '3', '4'],
+	assert.equal(collection.complete, true);
+	assert.deepEqual([...collection.items.values()].map((x) => x.id).sort(), ['1', '2', '3', '4']);
+});
+
+test('a scrolled list that stops growing ends as unconfirmed instead of complete', async (t) => {
+	const {readMore, startCollection, atEnd} = await import('../extension/archive-source.mjs');
+	const folder = {id: 'f', platform: 'xiaohongshu'};
+	const page = {type: 'collection', folder, total: 9, items: [{platform: 'xiaohongshu', id: 'a'}]};
+	const realSetTimeout = setTimeout;
+	t.mock.method(globalThis, 'setTimeout', (callback) => realSetTimeout(callback, 0));
+	const previous = globalThis.chrome;
+	globalThis.chrome = {
+		tabs: {get: async () => ({url: 'https://www.xiaohongshu.com/board/f'})},
+		scripting: {
+			executeScript: async ({args}) => [{result: args?.length ? {before: 0, position: 0} : page}],
+		},
+	};
+	t.after(() => (globalThis.chrome = previous));
+	const collection = startCollection(page);
+	for (let i = 0; i < 5 && !atEnd(collection); i++)
+		await readMore(1, collection, 'https://www.xiaohongshu.com');
+	assert.equal(collection.complete, false);
+	assert.equal(collection.reason, 'end_unconfirmed');
+});
+
+test('a post page read for the native worker keeps only state scripts and meta tags', async () => {
+	const {readPostPage} = await import('../extension/archive-source.mjs');
+	const html =
+		'<html><head><meta property="og:title" content="T"><script src="/app.js"></script></head>' +
+		'<body>' +
+		'x'.repeat(5000) +
+		'<script>window.__INITIAL_STATE__={"note":1}</script><script>other()</script></body></html>';
+	const fetch = async (url, init) => {
+		assert.equal(init.credentials, 'include');
+		return {ok: true, status: 200, url: url + '#final', text: async () => html};
+	};
+	const result = await invoke(readPostPage, ['https://www.xiaohongshu.com/explore/x', 100000], {
+		fetch,
+		TextEncoder,
+		navigator: {userAgent: 'UA'},
+		JSON,
+	});
+	assert.equal(
+		result.html,
+		'<meta property="og:title" content="T">\n<script>window.__INITIAL_STATE__={"note":1}</script>',
 	);
+	assert.equal(result.userAgent, 'UA');
+	const small = await invoke(readPostPage, ['https://www.xiaohongshu.com/explore/x', 10], {
+		fetch,
+		TextEncoder,
+		navigator: {userAgent: 'UA'},
+		JSON,
+	});
+	assert.equal(small.error, 'too_large');
+});
+
+test('the extension opens no tab for reading or saving; only the help page uses tabs.create', async () => {
+	const dir = new URL('../extension/', import.meta.url);
+	const uses = [];
+	for (const name of await readdir(dir)) {
+		if (!name.endsWith('.mjs')) continue;
+		const source = await readFile(new URL(name, dir), 'utf8');
+		for (const line of source.split('\n'))
+			if (/tabs\.create\s*\(/.test(line)) uses.push(name + ': ' + line.trim());
+	}
+	assert.deepEqual(uses, [
+		"background.mjs: openHelp: () => chrome.tabs.create({url: chrome.runtime.getURL('help.html')}),",
+	]);
 });

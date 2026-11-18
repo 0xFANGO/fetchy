@@ -12,7 +12,7 @@ await cp(join(root, 'extension'), output, {recursive: true});
 await mkdir(join(output, 'shared'), {recursive: true});
 await cp(join(root, 'src', 'urls.mjs'), join(output, 'shared', 'urls.mjs'));
 await cp(join(root, 'src', 'sites'), join(output, 'shared', 'sites'), {recursive: true});
-for (const name of ['controller.mjs', 'background.mjs', 'view-model.mjs', 'popup.mjs']) {
+for (const name of ['controller.mjs', 'background.mjs', 'view-model.mjs', 'panel.mjs']) {
 	const source = await readFile(join(output, name), 'utf8');
 	await writeFile(join(output, name), source.replaceAll("'../src/", "'./shared/"));
 }

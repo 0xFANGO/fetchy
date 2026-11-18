@@ -305,16 +305,28 @@ export function captureArchivePage(allowLoopback = false) {
 			for (const tweet of all(primary, 'article[data-testid="tweet"]')) {
 				const a = query(tweet, 'time')?.closest('a[href]');
 				const id = a && xId(a.href);
-				if (id)
-					entries.push({
-						...rawPost(
-							'x',
-							id,
-							new URL(a.href).origin + new URL(a.href).pathname,
-							txt(query(tweet, '[data-testid="tweetText"]')).slice(0, 160),
-						),
-						visitUrl: a.href,
-					});
+				if (!id) continue;
+				// The timeline already shows each post; its text and files come from here.
+				const body = query(tweet, '[data-testid="tweetText"]');
+				const entry = {
+					...rawPost(
+						'x',
+						id,
+						new URL(a.href).origin + new URL(a.href).pathname,
+						txt(body).slice(0, 160),
+						txt(query(tweet, '[data-testid="User-Name"]')),
+					),
+					visitUrl: a.href,
+				};
+				entry.body = txt(body);
+				entry.bodyComplete = Boolean(body) && !isTruncated(tweet);
+				entry.attachments = collectDomMedia(tweet, '[data-testid="tweetPhoto"] img,video', [
+					'pbs.twimg.com',
+					'video.twimg.com',
+				]);
+				// A timeline video plays from a blob; the native worker saves it from the post link.
+				if (query(tweet, 'video')) entry.kind = 'video';
+				entries.push(entry);
 			}
 			const folders = all(primary, 'a[href]')
 				.map((a) => {
@@ -605,153 +617,6 @@ export async function readBilibiliCollectionPage(folderId, page = 1, ownerId = n
 	} catch {
 		return {error: 'network_error'};
 	}
-}
-
-// Run in the original document. Only fetch files that belong to this precise post.
-export async function hydrateArchiveEntry(entry, byteBudget = 24 * 1024 * 1024) {
-	if (!entry || !Array.isArray(entry.attachments) || !entry.attachments.some((a) => a.url))
-		return entry;
-	const current = new URL(location.href);
-	let source;
-	try {
-		source = new URL(entry.sourceUrl);
-	} catch {
-		return entry;
-	}
-	if (current.protocol !== 'https:' || source.protocol !== 'https:') return entry;
-	const domains = {
-		xiaohongshu: ['xhscdn.com', 'xhsimg.com', 'xiaohongshu.com'],
-		x: ['pbs.twimg.com', 'video.twimg.com'],
-		zhihu: ['zhimg.com', 'zhihu.com'],
-	};
-	const listed = new Set();
-	const add = (raw) => {
-		try {
-			const u = new URL(raw, current);
-			if (u.protocol === 'http:') u.protocol = 'https:';
-			listed.add(u.href);
-		} catch {}
-	};
-	let root;
-	if (entry.platform === 'xiaohongshu') {
-		if (
-			!['xiaohongshu.com', 'www.xiaohongshu.com'].includes(current.hostname) ||
-			current.pathname.split('/').filter(Boolean).at(-1) !== entry.id ||
-			source.href !== 'https://www.xiaohongshu.com/explore/' + entry.id
-		)
-			return entry;
-		const note = window.__INITIAL_STATE__?.note?.noteDetailMap?.[entry.id]?.note;
-		if (note?.noteId !== entry.id) return entry;
-		for (const im of note.imageList || [])
-			for (const raw of [
-				im.urlDefault,
-				im.url,
-				im.livePhotoUrl,
-				im.videoUrl,
-				...(im.infoList || []).filter((v) => v.imageScene === 'WB_DFT').map((v) => v.url),
-			])
-				if (raw) add(raw);
-		for (const v of Object.values(note.video?.media?.stream || {}).flat())
-			if (v.masterUrl) add(v.masterUrl);
-	} else {
-		if (current.origin !== source.origin || current.pathname !== source.pathname) return entry;
-		if (entry.platform === 'x') {
-			if (
-				!['x.com', 'www.x.com', 'twitter.com', 'www.twitter.com'].includes(current.hostname) ||
-				!current.pathname.endsWith('/status/' + entry.id)
-			)
-				return entry;
-			root = [...document.querySelectorAll('article[data-testid="tweet"]')].find((el) => {
-				try {
-					return new URL(el.querySelector('time')?.closest('a')?.href).pathname === source.pathname;
-				} catch {
-					return false;
-				}
-			});
-		} else root = document.querySelector('.Post-RichText,article,[itemprop="articleBody"]');
-		if (!root) return entry;
-		for (const el of root.querySelectorAll('img,video,video source'))
-			for (const raw of [el.currentSrc, el.src, el.dataset.original, el.dataset.src])
-				if (raw) add(raw);
-	}
-	let budget = Math.min(
-		24 * 1024 * 1024,
-		Math.max(0, Number.isSafeInteger(byteBudget) ? byteBudget : 0),
-	);
-	const result = [];
-	for (const a of entry.attachments) {
-		const inlineBytes = typeof a.data === 'string' ? Math.ceil((a.data.length * 3) / 4) : 0;
-		budget = Math.max(0, budget - inlineBytes);
-		if (!a.url || !listed.has(a.url) || budget === 0) {
-			result.push(a);
-			continue;
-		}
-		let hydrated = a;
-		try {
-			const u = new URL(a.url);
-			const hosts = domains[entry.platform] || [current.hostname];
-			if (
-				u.protocol !== 'https:' ||
-				u.username ||
-				u.password ||
-				u.port ||
-				!hosts.some((h) => u.hostname === h || u.hostname.endsWith('.' + h))
-			) {
-				result.push(a);
-				continue;
-			}
-			const limit = Math.min(budget, 16 * 1024 * 1024);
-			const response = await fetch(u.href, {
-				mode: 'cors',
-				credentials: u.origin === current.origin ? 'same-origin' : 'omit',
-				redirect: 'error',
-				signal: AbortSignal.timeout(18000),
-			});
-			const mimeType = (response.headers.get('content-type') || '')
-				.split(';')[0]
-				.trim()
-				.toLowerCase();
-			if (
-				!response.ok ||
-				!/^(?:image\/(?:png|jpeg|gif|webp|avif)|video\/(?:mp4|webm))$/.test(mimeType) ||
-				!mimeType.startsWith(a.kind + '/') ||
-				Number(response.headers.get('content-length')) > limit ||
-				!response.body
-			) {
-				await response.body?.cancel();
-				result.push(a);
-				continue;
-			}
-			const reader = response.body.getReader(),
-				parts = [];
-			let length = 0;
-			while (true) {
-				const {done, value} = await reader.read();
-				if (done) break;
-				length += value.byteLength;
-				if (length > limit) {
-					await reader.cancel();
-					break;
-				}
-				parts.push(value);
-			}
-			if (length && length <= limit) {
-				const blob = new Blob(parts, {type: mimeType});
-				const encoded = await new Promise((resolve, reject) => {
-					const reader = new FileReader();
-					reader.onload = () => resolve(String(reader.result).split(',')[1]);
-					reader.onerror = reject;
-					reader.readAsDataURL(blob);
-				});
-				hydrated = {kind: a.kind, alt: a.alt || '', mimeType, data: encoded};
-				budget -= length;
-			}
-		} catch {
-			/* The native importer can still try a public source URL. */
-		}
-		result.push(hydrated);
-	}
-	return {...entry, attachments: result};
 }
 
 // The user requests this list from one open document. Read only visible media

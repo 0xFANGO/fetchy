@@ -2,7 +2,7 @@ let port;
 const waiting = new Map();
 export function libraryRpc(method, params = {}) {
 	if (!port) {
-		port = chrome.runtime.connect({name: 'archive'});
+		port = chrome.runtime.connect({name: 'library'});
 		port.onMessage.addListener((m) => {
 			const job = waiting.get(m.id);
 			if (!job) return;
@@ -28,8 +28,13 @@ export function libraryRpc(method, params = {}) {
 		}
 	});
 }
-export async function submitArchive(manifest, selected, onPart, rpc = libraryRpc) {
-	const payload = {manifest, selected},
+/** Fire-and-forget request to the background worker on the same port. */
+export function libraryNotify(method, params) {
+	if (!port) libraryRpc('libraryTasks').catch(() => {});
+	port.postMessage({method, params});
+}
+export async function submitArchive(manifest, selected, onPart, rpc = libraryRpc, extra = {}) {
+	const payload = {manifest, selected, ...extra},
 		encoded = new TextEncoder().encode(JSON.stringify(payload));
 	if (encoded.length < 350 * 1024) return rpc('libraryStart', payload);
 	if (encoded.length > 48 * 1024 * 1024) throw new Error('upload_limit');
