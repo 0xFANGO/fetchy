@@ -69,7 +69,11 @@ struct LocalCommands {
       watchdog.cancel()
       group.wait()
       if process.terminationStatus != 0 {
-        let lines = String(decoding: stderr.contents(), as: UTF8.self).split(separator: "\n")
+        let errorData = stderr.contents()
+        if let obj = try? JSONSerialization.jsonObject(with: errorData) as? [String: Any],
+          let error = obj["error"] as? [String: Any], let message = error["message"] as? String
+        { throw FetchyFailure(text: String(message.prefix(800))) }
+        let lines = String(decoding: errorData, as: UTF8.self).split(separator: "\n")
           .reversed()
         for line in lines {
           if let obj = try? JSONSerialization.jsonObject(with: Data(line.utf8)) as? [String: Any],
@@ -174,6 +178,19 @@ private struct MoviePreview: Identifiable {
     player = AVPlayer(url: url)
   }
 }
+private struct LocalVideoPlayer: NSViewRepresentable {
+  let player: AVPlayer
+  func makeNSView(context: Context) -> AVPlayerView {
+    let view = AVPlayerView()
+    view.controlsStyle = .inline
+    view.player = player
+    return view
+  }
+  func updateNSView(_ view: AVPlayerView, context: Context) {
+    if view.player !== player { view.player = player }
+  }
+}
+
 struct Workspace: View {
   private let commands = LocalCommands()
   @State private var section = "保存"
@@ -223,7 +240,7 @@ struct Workspace: View {
           Spacer()
           Button("关闭") { movie = nil }
         }
-        VideoPlayer(player: item.player).frame(minWidth: 600, minHeight: 340)
+        LocalVideoPlayer(player: item.player).frame(minWidth: 600, minHeight: 340)
           .onAppear { item.player.play() }
           .onDisappear { item.player.pause() }
       }.padding()

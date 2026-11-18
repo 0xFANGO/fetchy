@@ -44,4 +44,10 @@ npm run desktop:build
 FETCHY_TEST_WEBKIT=1 node --test test/desktop-session.test.mjs
 ```
 
-This opt-in macOS test opens a browser against a temporary loopback HTTP fixture with an expiring, HttpOnly session. It exits the login process, starts fresh WebKit capture processes, saves three local video paths and checks their files. It also tests expiry, renewed login and logout. The generated media, test profile registration and download directory are isolated from normal Fetchy data. Each real platform still needs an authorized account and an accessible example for authenticated acceptance.
+This opt-in macOS test starts a temporary HTTP site with an expiring HttpOnly session. Each CLI invocation runs in a fresh process. The test runs `browse`, exits the browser process, then runs `get <watch URL>` and verifies the archived 160 × 90 video and audio stream. It also saves a protected article with an inline image, detects a truncated version, checks the login prompt after expiry, signs in again and saves a blob-backed player with `get`. A final `logout` clears the site session. The test uses its own library and download directories.
+
+## Desktop acceptance on macOS
+
+- The desktop saved [USGS Volcanoes’ Mauna Loa clip](https://x.com/USGSVolcanoes/status/1600252502217211904) into the directory chosen in the native folder picker. The file contained 2,950,225 bytes of H.264 video and AAC audio at 1280 × 720, with a duration of 9.97 seconds. Clicking **打开文件** showed the saved clip playing in Fetchy's own window.
+- A real Chrome toolbar session archived a three-image fixture and a separate text-only post through the native host. The desktop **任务** view and fresh CLI `library task` calls showed the same two task IDs and counts as the extension. Each reported one addition, with zero skipped, partial or failed entries. The desktop library showed both titles and their offline open actions.
+- The signed-in flow above was verified against the controlled site. Platform-specific authenticated checks require an authorized account and an accessible example.

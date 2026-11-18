@@ -5,6 +5,7 @@ import {mkdtemp, readFile, rm, stat} from 'node:fs/promises';
 import {tmpdir} from 'node:os';
 import path from 'node:path';
 import {randomBytes} from 'node:crypto';
+import {fileURLToPath} from 'node:url';
 import {setTimeout as delay} from 'node:timers/promises';
 import {
 	browse,
@@ -125,9 +126,12 @@ test(
 		await new Promise((resolve) => server.listen(0, '127.0.0.1', resolve));
 		const site = 'http://127.0.0.1:' + server.address().port;
 		const windows = new Set();
+		const cli = fileURLToPath(new URL('../bin/fetchy.mjs', import.meta.url));
+		const command = (...args) => runProcess(process.execPath, [cli, ...args], {timeoutMs: 60000});
 		async function enter() {
 			const before = confirmed;
-			await browse(site + '/entry');
+			const launched = await command('browse', site + '/entry');
+			assert.equal(launched.code, 0, launched.stderr);
 			const deadline = Date.now() + 15000;
 			while (confirmed === before && Date.now() < deadline) await delay(100);
 			assert.ok(confirmed > before, 'interactive WKWebView visited the signed-in page');
@@ -172,6 +176,18 @@ test(
 			assert.equal(saved.validation.audio, true);
 			assert.equal(saved.bytes, (await stat(saved.filepath)).size);
 		}
+		const cliSaved = await command('get', site + '/watch');
+		assert.equal(cliSaved.code, 0, cliSaved.stderr);
+		const result = JSON.parse(cliSaved.stdout);
+		assert.equal(result.engine, 'webkit');
+		assert.equal(result.validation.width, 160);
+		assert.equal(result.bytes, (await stat(result.filepath)).size);
+		assert.ok(result.taskId);
+		const cliPost = await command('get', site + '/article', '--allow-local');
+		assert.equal(cliPost.code, 0, cliPost.stderr);
+		const post = JSON.parse(cliPost.stdout);
+		assert.equal(post.kind, 'post');
+		assert.match(await readFile(post.filepath, 'utf8'), /Last line/);
 		const article = await captureWithSession(site + '/article', opts);
 		assert.equal(article.type, 'post');
 		assert.equal(article.entry.bodyComplete, true);
@@ -180,13 +196,19 @@ test(
 		assert.equal((await captureWithSession(site + '/summary', opts)).entry.bodyComplete, false);
 		assert.ok(authorizedDownloads >= 3);
 		session = null;
+		const expired = await command('get', site + '/watch');
+		assert.equal(expired.code, 1);
+		assert.match(JSON.parse(expired.stderr).error.message, /fetchy browse/);
 		await assert.rejects(() => captureWithSession(site + '/article', opts), {
 			code: 'auth_required',
 		});
 		await assert.rejects(() => downloadWithSession(site + '/watch', opts), {code: 'auth_required'});
 		await enter();
-		assert.ok((await downloadWithSession(site + '/watch', opts)).validation.video);
-		await logout(site);
+		const renewed = await command('get', site + '/dynamic');
+		assert.equal(renewed.code, 0, renewed.stderr);
+		assert.ok(JSON.parse(renewed.stdout).validation.video);
+		const loggedOut = await command('logout', site);
+		assert.equal(loggedOut.code, 0, loggedOut.stderr);
 		assert.equal(await hasSession(site + '/watch'), false);
 		await assert.rejects(() => downloadWithSession(site + '/watch', opts), {code: 'auth_required'});
 	},
