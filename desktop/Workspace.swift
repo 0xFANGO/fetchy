@@ -40,6 +40,7 @@ struct LocalCommands {
       var env = ProcessInfo.processInfo.environment
       env["PATH"] = config["path"]
       env["FETCHY_DESKTOP_APP"] = Bundle.main.bundleURL.path
+      if let directory = dataDirectoryOverride { env["FETCHY_DATA_DIR"] = directory }
       process.environment = env
       let out = Pipe()
       let err = Pipe()

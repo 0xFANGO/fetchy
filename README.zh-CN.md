@@ -14,10 +14,10 @@ https://github.com/user-attachments/assets/e5ebb617-7dd1-4369-b044-b7e8900cb662
 
 ## 特性
 
-- **从视频页或链接开始。** 在视频页打开扩展，或粘贴一条视频链接。支持短链的平台也可以粘贴含单条链接的分享文案。
+- **从页面或链接开始。** 点工具栏图标，Fetchy 在当前页右侧打开；也可以粘贴一条链接。支持短链的平台也可以粘贴含单条链接的分享文案。
 - **下载在本机执行。** 扩展把下载交给本地组件，无需注册 Fetchy 账号。
 - **经过校验的 MP4。** 每个输出都经 ffprobe 校验。yt-dlp 下载输出 H.264 / yuv420p 视频，有音轨时使用 AAC。浏览器引擎保留源编码，包括 HEVC。文件名使用视频标题，重名自动加序号，不覆盖已有文件。
-- **关掉弹窗也继续。** 下载由独立本地进程持有，重新打开弹窗即可查看进度、取消或在 Finder 中定位文件。
+- **关掉右侧栏也继续。** 保存由独立本地进程持有，关掉右侧栏或浏览器都不会中断。批量保存的每一条单独记录结果，可以单独重试。
 - **一套核心。** 扩展、CLI 和 Node API 共用同一个 `resolveVideo` / `downloadVideo` 契约和稳定的错误码。
 
 ## 支持的平台
@@ -35,17 +35,19 @@ https://github.com/user-attachments/assets/e5ebb617-7dd1-4369-b044-b7e8900cb662
 
 ## 桌面端和本地资料库
 
-在 macOS 14 及以上运行 `npm run desktop:build` 即可构建可双击的 Fetchy.app。桌面端支持粘贴链接、选择目录、查看共享任务，并按平台、原收藏夹或主题检索。资料库需要 Node 22.13 或更高版本。[桌面端设置](docs/desktop.md) · [收藏清单与命令](docs/library.md)
+在 macOS 14 及以上运行 `npm run desktop:build` 即可构建可双击的 Fetchy.app。桌面端只有一个窗口，分三个区：封面网格形式的资料库、带右侧栏的内置浏览器、账号。在「账号」里登录一次，扩展、命令行和桌面端下载时都会用到。资料库需要 Node 22.13 或更高版本。[桌面端设置](docs/desktop.md) · [收藏清单与命令](docs/library.md)
 
 ```sh
-node bin/fetchy.mjs info '<链接>'
-node bin/fetchy.mjs get '<链接>' --output ./downloads
-node bin/fetchy.mjs batch -i links.txt
-node bin/fetchy.mjs browse '<链接>'
-node bin/fetchy.mjs library tasks
+fetchy '<链接>'                      # 保存到资料库，同 fetchy get
+fetchy get '<链接>' -o ./downloads   # 另存一份到目录；--audio 只要音频
+fetchy get -i links.txt              # 每行一个链接，逐条输出 JSON
+fetchy info '<链接>'
+fetchy login bilibili                # 在桌面端登录；另有 logout、accounts
+fetchy folders bilibili              # 列出收藏夹；fetchy sync <收藏夹链接> 保存整个收藏夹
+fetchy list                          # 另有 search <关键词>、retry [任务ID]
 ```
 
-`get` 输出包含任务 ID 和本地路径的 JSON。批量输入支持每行一个链接或 JSON 数组，逐条输出结果，遇到部分保存或失败时整体返回非零。用当前浏览器的登录状态保存图文或收藏夹，可从原帖或列表页打开扩展。离线页面保留可读正文、附件顺序及缺失项。[通用网页与验证](docs/web-media.md)
+在源码目录里用 `node bin/fetchy.mjs` 代替 `fetchy`。`fetchy help all` 列出旧命令 `resolve`、`download`、`browse`、`batch` 和 `library …`，它们仍可使用。`get` 输出包含任务 ID 和本地路径的 JSON，遇到部分保存或失败时返回非零。用当前浏览器的登录状态保存图文或收藏夹，可在原帖或列表页打开扩展。离线页面保留可读正文、附件顺序及缺失项。[通用网页与验证](docs/web-media.md)
 
 ## 环境要求
 
@@ -91,15 +93,17 @@ npm run native:install -- --browser chrome # 注册 native host；Ego Lite 用 -
 
 1. 打开 `chrome://extensions/`，开启开发者模式，点击「加载已解压的扩展程序」，选择 `dist/extension`（或 Release 解压出来的 `extension` 文件夹）。
 2. 把扩展固定到工具栏。
-3. 打开视频页点击图标，或在弹窗里粘贴链接。
+3. 在任意页面点图标，Fetchy 在 Chrome 右侧栏打开。
 
-默认保存到 `~/Downloads/Fetchy`。点击弹窗底部的目录即可更改，选中后自动保存。显示任务期间不可更改目录。
+在帖子页，右侧栏显示标题、作者、正文是否完整、图片和视频数。「保存这篇帖子」保存全部内容，「只下载视频」只保存视频文件。在收藏夹页，「再读一屏」「自动读到底」在当前页前台滚动或翻页，你自己往下翻时列表也会增加。勾选后点「保存所选」，本机组件立即接下清单并自行下载每个文件，关掉右侧栏或浏览器都不影响。
 
-小红书和抖音的媒体信息由扩展直接从视频页面读取：已经打开的视频页会被直接使用，否则扩展在后台打开一个标签页，读完就关闭。用的是你当前浏览器的登录态，不导出任何东西。申请的权限：`activeTab`、`storage`、`nativeMessaging`、`scripting`，以及 `xiaohongshu.com`、`douyin.com` 和 `iesdouyin.com` 的站点访问权限。
+只下载视频时默认保存到 `~/Downloads/Fetchy`。点击右侧栏底部的目录即可更改。
+
+Fetchy 读取页面时不打开新标签页。小红书和抖音视频直接从已打开的视频页读取播放数据；短链需要先在浏览器里打开。用的是你当前浏览器的登录态。申请的权限：`activeTab`、`storage`、`nativeMessaging`、`scripting`、`sidePanel`，以及 `xiaohongshu.com`、`douyin.com` 和 `iesdouyin.com` 的站点访问权限。
 
 各浏览器和站点的实测结果见[扩展验证记录](docs/extension-validation.md)。注册本地组件、登录及故障排查见[安装说明](docs/extension-install.md)。
 
-收藏库可在读取所选收藏夹的后续页面时请求该站点的访问权限。[扩展收藏操作](docs/extension-library.md)
+读取部分站点的收藏夹时，扩展可能请求该站点的访问权限。[扩展收藏操作](docs/extension-library.md)
 
 ## 原有视频命令
 
@@ -146,12 +150,12 @@ console.log(result.filepath, result.validation);
 ## 工作原理
 
 ```
-extension/   Manifest V3 弹窗 + service worker  ─┐
+extension/   Manifest V3 右侧栏 + worker        ─┐
 bin/         CLI                                 ├─▶ src/index.mjs ─▶ yt-dlp 引擎（yt-dlp + FFmpeg）
 native/      Native Messaging host + daemon     ─┘                  └─▶ 浏览器引擎（扩展从页面读取媒体）
 ```
 
-小红书和抖音由 service worker 把 `src/page-extract.mjs` 注入视频页，只取回目标视频的标题、封面和带签名的媒体地址；native host 从这些地址下载并校验文件。弹窗只是视图。native host 把每个任务交给独立的 daemon 进程执行，所以关闭弹窗、service worker 重建或端口断开都不会取消传输。持久化的任务记录不含原始输入、token 或签名 URL。
+小红书和抖音由 service worker 把 `src/page-extract.mjs` 注入视频页，只取回目标视频的标题、封面和带签名的媒体地址；native host 从这些地址下载并校验文件。右侧栏只是视图。native host 把每个任务交给独立的 daemon 进程执行，所以关闭右侧栏、service worker 重建或端口断开都不会取消传输。批量保存从清单开始：原帖页面统一由 `src/library/post-pages.mjs` 解析，无论它来自扩展在当前页的同站请求，还是 daemon 用桌面端登录读取，所有媒体文件都由 daemon 下载。持久化的任务记录不含原始输入、token 或签名 URL。
 
 ## 开发
 

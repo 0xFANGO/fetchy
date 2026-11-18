@@ -48,7 +48,7 @@ Dependency direction is one-way; never import upwards.
 
 ```
 bin/        CLI                       → src/index.mjs
-extension/  MV3 popup + background    → src/urls.mjs, src/sites/, src/page-extract.mjs
+extension/  MV3 side panel + background → src/urls.mjs, src/sites/, src/page-extract.mjs
 native/     messaging host + daemon   → src/index.mjs, src/process.mjs
 src/index.mjs  public API, engine routing, bounded fallbacks
   ├─ yt-dlp.mjs   → sites/, mp4.mjs, filenames.mjs, thumbnails.mjs, process.mjs
@@ -62,6 +62,13 @@ src/index.mjs  public API, engine routing, bounded fallbacks
 - `src/page-extract.mjs` is serialised and injected into the video page by
   the extension (see `scripts/page-extract-inject.mjs`). It must stay
   self-contained: no imports, no closures over module scope.
+- The extension never opens tabs to read pages (only the help page); a test
+  asserts it. It reads the open tab and sends lists, page state and media
+  addresses; the native worker downloads every file.
+- Post pages are parsed only in `src/library/post-pages.mjs`, whether the
+  extension read them or the native worker fetched them with the desktop
+  sign-in. Site cookies leave the desktop app only through `bin/accounts.mjs`,
+  for one site's request.
 - The browser engine never opens pages. It takes `options.pageMedia` from the
   extension and re-validates identity and CDN hosts before downloading.
 - Signed media URLs in `pageMedia` live only in memory in `native/`.

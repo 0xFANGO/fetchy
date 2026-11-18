@@ -211,13 +211,11 @@ test(
 			while (confirmed === before && Date.now() < deadline) await delay(100);
 			assert.ok(confirmed > before, 'interactive WKWebView visited the signed-in page');
 			await delay(600);
-			// Match only the fresh fixture's browse instance and never the ordinary desktop app.
+			// Match only the window this test launched; quit any other Fetchy window before running.
 			const pattern =
-				'/Contents/MacOS/Fetchy browse [[:xdigit:]-]+ http://127[.]0[.]0[.]1:' +
-				server.address().port +
-				'/entry$';
+				'/Contents/MacOS/Fetchy browse http://127[.]0[.]0[.]1:' + server.address().port + '/entry';
 			const match = await runProcess('/usr/bin/pgrep', ['-f', pattern]);
-			assert.match(match.stdout.trim(), /^\d+$/, 'Launch Services started one dedicated browser');
+			assert.match(match.stdout.trim(), /^\d+$/, 'Launch Services started the Fetchy window');
 			const pid = Number(match.stdout.trim());
 			windows.add(pid);
 			process.kill(pid, 'SIGTERM');
@@ -277,7 +275,7 @@ test(
 		session = null;
 		const expired = await command('get', site + '/watch');
 		assert.equal(expired.code, 1);
-		assert.match(JSON.parse(expired.stderr).error.message, /fetchy browse/);
+		assert.match(JSON.parse(expired.stderr).error.message, /fetchy login/);
 		await assert.rejects(() => captureWithSession(site + '/article', opts), {
 			code: 'auth_required',
 		});

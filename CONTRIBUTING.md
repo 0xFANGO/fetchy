@@ -64,7 +64,7 @@ that works with the existing yt-dlp engine.
    `npm run extension:build`.
 4. Run `node bin/fetchy.mjs resolve <url>` and
    `node bin/fetchy.mjs download <url> --output .local/validation`.
-   Load the built extension, start a download from the popup and open the
+   Load the built extension, start a download from the side panel and open the
    saved file. Match the saved result to the post and check the duration,
    dimensions and tracks with ffprobe. Decode the entire file with
    `ffmpeg -nostdin -v error -xerror -i <file> -f null -`.

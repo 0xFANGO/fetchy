@@ -95,9 +95,15 @@ async function openInApp(command, url) {
 	await runProcess(path.join(bundle, 'Contents/MacOS/Fetchy'), ['notify', command, url], {
 		timeoutMs: 10000,
 	}).catch(() => {});
-	const started = await runProcess('/usr/bin/open', ['-a', bundle, '--args', command, url], {
-		timeoutMs: 15000,
-	});
+	// Launch Services does not pass this environment on; the app hands it to its own Node calls.
+	const data = process.env.FETCHY_DATA_DIR ? ['--data-dir', dataDirectory()] : [];
+	const started = await runProcess(
+		'/usr/bin/open',
+		['-a', bundle, '--args', command, url, ...data],
+		{
+			timeoutMs: 15000,
+		},
+	);
 	if (started.code !== 0) throw new EngineError('browser_unavailable', '无法启动 Fetchy 桌面端。');
 }
 

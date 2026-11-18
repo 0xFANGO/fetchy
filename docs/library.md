@@ -36,7 +36,7 @@ node bin/fetchy.mjs library export --platform example
 
 Open the `filepath` returned by search or the task's item result. The page works offline. Paragraphs, Markdown headings and HTTP(S) links are retained. Author text, optional `summary`, `translation` and personal `notes` appear separately. Search supports `--platform`, `--topic` and `--folder` (folder ID or name). Export writes a versioned JSON manifest to stdout. Media paths are relative to the library root. For an independent export, place that JSON alongside a copy of the library’s `media/` directory.
 
-For a supported single video, supply `kind: "video"`, the platform's stable ID and its public `sourceUrl`. The library calls Fetchy's regular video downloader. A text or photo post can instead include an ordered array such as `"attachments": [{"kind":"image","path":"photos/01.jpg"},{"kind":"video","path":"clips/02.mp4"}]`. Relative paths must resolve inside the selected manifest directory. Browser integrations can pass bytes with `data` (base64) and `mimeType`, or mark a known missing attachment with `missing: true`. An image or video counts as saved after its bytes are present and ffprobe recognizes the expected stream. A URL, preview, unreadable file or incomplete body gives a partial result. Mark `bodyComplete: true` only after reading the complete source.
+For a supported single video, supply `kind: "video"`, the platform's stable ID and its public `sourceUrl`. The library calls Fetchy's regular video downloader. A text or photo post can instead include an ordered array such as `"attachments": [{"kind":"image","path":"photos/01.jpg"},{"kind":"video","path":"clips/02.mp4"}]`. Relative paths must resolve inside the selected manifest directory. Integrations can pass bytes with `data` (base64) and `mimeType`, or mark a known missing attachment with `missing: true`. The browser extension and desktop app send only the list and let the local component read each post page and download its files. An image or video counts as saved after its bytes are present and ffprobe recognizes the expected stream. A URL, preview, unreadable file or incomplete body gives a partial result. Mark `bodyComplete: true` only after reading the complete source.
 
 ## Collections and progress
 
@@ -91,7 +91,7 @@ node bin/fetchy.mjs library resume <task-id>
 node bin/fetchy.mjs library retry <task-id>
 ```
 
-Queueing persists a task ID and copies supplied media into the library. A worker checkpoints each item, so another process can resume pending items after interruption. `retry` attempts only failed entries. To complete a partial post, reimport it with the missing text or attachments. The CLI returns nonzero for a partial or failed import while retaining the successful results. Per-folder progress includes pages read, entries seen, the platform's reported total when available, and any reason for stopping.
+Queueing persists a task ID and copies supplied media into the library. A worker checkpoints each item, so another process can resume pending items after interruption. `retry` attempts failed and partial entries again; `--select <key>` limits it to chosen entries. To complete a partial post, reimport it with the missing text or attachments. The CLI returns nonzero for a partial or failed import while retaining the successful results. Per-folder progress includes pages read, entries seen, the platform's reported total when available, and any reason for stopping.
 
 ## Bilibili favorites
 

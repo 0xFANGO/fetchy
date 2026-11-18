@@ -10,6 +10,20 @@ Notable changes for users, following [Keep a Changelog](https://keepachangelog.c
 - Inspect links with `info`, save with `get`, and process a file or stdin with `batch`. The generic downloader accepts direct videos, declared media, finite HLS and static DASH.
 - Build a macOS desktop app, sign in with a dedicated site browser, and use the same session for subsequent saves.
 - Archive text and ordered attachments from supported posts and collections. Search the offline library, keep original folder memberships, and resume, retry or export shared tasks.
+- Open the extension in Chrome's side panel beside the current page to save a post, read a collection one screen at a time or to the end, and save the selected entries.
+- Saving selected collection entries starts at once from the list and keeps going after the panel or browser closes. The local component downloads every file, with no combined size limit, and each entry records its result and reason and can be retried on its own.
+- The macOS app is one window with a cover-grid library, a built-in browser with the same side column, and an accounts list showing whether each site is signed in, expired or signed out.
+- Sign in once in the desktop app; the CLI, the extension's saves and the app pass that site's cookies to the downloader only for that site's downloads. New commands `login`, `logout`, `accounts`, `folders`, `sync`, `list`, `search` and `retry`; `get` accepts `-o` and `--audio`, and a bare link saves like `get`.
+
+### Changed
+
+- The extension no longer opens tabs to read pages. Xiaohongshu and Douyin videos are read from the open video page; open a short link in the browser first.
+- `fetchy --help` lists the new commands; `resolve`, `download`, `browse`, `batch` and `library …` keep working and are listed under `fetchy help all`.
+- Downloads reuse yt-dlp's first extraction instead of reading the page twice, and the extension connects without waiting for the tool check.
+
+### Fixed
+
+- Media downloads work behind fake-IP proxies that resolve names into 198.18.0.0/15.
 
 ## [0.3.1] - 2026-11-02
 

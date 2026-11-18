@@ -7,6 +7,8 @@ import WebKit
 // Every other launch shows the one Fetchy window.
 let hiddenModes: Set<String> = ["logout", "capture", "post", "cookies", "notify"]
 let openRequest = Notification.Name("app.fetchy.desktop.open")
+/// `--data-dir <dir>` from `fetchy login`/`browse` under FETCHY_DATA_DIR; Launch Services drops the variable.
+var dataDirectoryOverride: String?
 
 @MainActor final class Application: NSObject, NSApplicationDelegate {
   var session: BrowserSession?
@@ -20,8 +22,13 @@ let openRequest = Notification.Name("app.fetchy.desktop.open")
       runHidden(mode, args)
       return
     }
+    var route = args
+    if let index = route.firstIndex(of: "--data-dir"), index + 1 < route.count {
+      dataDirectoryOverride = route[index + 1]
+      route.removeSubrange(index...(index + 1))
+    }
     let defaults =
-      ProcessInfo.processInfo.environment["FETCHY_DATA_DIR"].flatMap { path in
+      (dataDirectoryOverride ?? ProcessInfo.processInfo.environment["FETCHY_DATA_DIR"]).flatMap { path in
         let key = SHA256.hash(data: Data(path.utf8)).prefix(16).map { String(format: "%02x", $0) }
           .joined()
         return UserDefaults(suiteName: "app.fetchy.desktop." + key)
@@ -43,19 +50,19 @@ let openRequest = Notification.Name("app.fetchy.desktop.open")
     // `fetchy login` and `fetchy browse` reach a running window through this notification.
     DistributedNotificationCenter.default().addObserver(
       self, selector: #selector(receiveOpen(_:)), name: openRequest, object: nil)
-    if args.count == 2, ["login", "browse"].contains(args[0]) { route(args[0], args[1]) }
+    if route.count == 2, ["login", "browse"].contains(route[0]) { self.open(route[0], route[1]) }
   }
 
   @objc func receiveOpen(_ notification: Notification) {
     guard let info = notification.userInfo, let command = info["command"] as? String,
       let url = info["url"] as? String
     else { return }
-    route(command, url)
+    self.open(command, url)
     window?.makeKeyAndOrderFront(nil)
     NSApp.activate(ignoringOtherApps: true)
   }
 
-  func route(_ command: String, _ url: String) {
+  func open(_ command: String, _ url: String) {
     state.open(url, signingIn: command == "login")
   }
 

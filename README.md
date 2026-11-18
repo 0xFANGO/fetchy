@@ -16,10 +16,10 @@ https://github.com/user-attachments/assets/e5ebb617-7dd1-4369-b044-b7e8900cb662
 
 ## Features
 
-- **Start from a page or a link.** Open the extension on a video page or paste a link. On sites that support short links, you can also paste share text containing a single link.
+- **Start from a page or a link.** Click the toolbar icon and Fetchy opens beside the page you are reading, or paste a link. On sites that support short links, you can also paste share text containing a single link.
 - **Downloads run locally.** The extension sends downloads to a native host on your machine. Fetchy works without a Fetchy account.
 - **Validated MP4 files.** ffprobe checks every output. The yt-dlp engine produces H.264 / yuv420p video with AAC when audio is present. The browser engine retains the source codec, including HEVC. Files use the video title and never overwrite existing files.
-- **Keeps going.** Close the popup and the download continues; reopen it to see progress, cancel or reveal the file in Finder.
+- **Keeps going.** Close the side panel or the browser and saving continues; each entry of a batch records its own result and can be retried.
 - **Same core everywhere.** The extension, the CLI and the Node API share one `resolveVideo` / `downloadVideo` contract with stable error codes.
 
 ## Supported platforms
@@ -37,17 +37,19 @@ The registry also includes single-link adapters for Facebook, TikTok, Bluesky, R
 
 ## Desktop and local library
 
-Build a double-clickable Fetchy.app with `npm run desktop:build` on macOS 14 or later. Paste a URL, select a destination, inspect shared tasks, or search local posts by platform, folder or topic. The library requires Node 22.13 or later. [Desktop setup](docs/desktop.md) · [Archive format and commands](docs/library.md)
+Build a double-clickable Fetchy.app with `npm run desktop:build` on macOS 14 or later. It is one window with three areas: the library as a cover grid, a built-in browser with the same side column as the extension, and accounts. Sign in to a site once under accounts; the extension, the CLI and the app then use that sign-in for downloads. The library requires Node 22.13 or later. [Desktop setup](docs/desktop.md) · [Archive format and commands](docs/library.md)
 
 ```sh
-node bin/fetchy.mjs info '<URL>'
-node bin/fetchy.mjs get '<URL>' --output ./downloads
-node bin/fetchy.mjs batch -i links.txt
-node bin/fetchy.mjs browse '<URL>'
-node bin/fetchy.mjs library tasks
+fetchy '<URL>'                       # save to the library (same as fetchy get)
+fetchy get '<URL>' -o ./downloads    # also copy the file to a folder; --audio for sound only
+fetchy get -i links.txt              # one link per line, one JSON result per line
+fetchy info '<URL>'
+fetchy login bilibili                # sign in inside the desktop app; also logout, accounts
+fetchy folders bilibili              # list folders; fetchy sync <folder link> saves one
+fetchy list                          # also search <keyword> and retry [task ID]
 ```
 
-`get` prints a JSON result with its task ID and local path. A batch accepts one URL per line or a JSON array and returns one JSON result per input. Partial archives and failed downloads make its exit status nonzero. To save a post with your browser's current session, open the extension on the original post or collection. Archive pages preserve available text and ordered attachments, including a record of missing content. [Web media and validation](docs/web-media.md)
+From a source checkout, run `node bin/fetchy.mjs` in place of `fetchy`. `fetchy help all` lists the older `resolve`, `download`, `browse`, `batch` and `library …` commands, which keep working. `get` prints a JSON result with its task ID and local path. Partial archives and failed downloads make its exit status nonzero. To save posts with your browser's own session, open the extension on the original post or collection. Archive pages preserve available text and ordered attachments, including a record of missing content. [Web media and validation](docs/web-media.md)
 
 ## Requirements
 
@@ -95,11 +97,13 @@ npm run native:install -- --browser chrome # registers the native host (--browse
 
 1. Open `chrome://extensions/`, enable Developer mode, click **Load unpacked** and pick `dist/extension` (or the unzipped `extension` folder from the release).
 2. Pin the extension to the toolbar.
-3. Open a video page and click the icon, or paste a link into the popup.
+3. Click the icon on any page. Fetchy opens in Chrome's side panel next to that page.
 
-Downloads go to `~/Downloads/Fetchy` by default. Click the folder at the bottom of the popup to change it; your selection is saved automatically. Folder changes are disabled while a task is displayed.
+On a post, the panel shows its title, author, whether the text is complete and how many images and videos it has. **保存这篇帖子** saves all of it; **只下载视频** saves the video file alone. On a saved collection, **再读一屏** and **自动读到底** scroll or page your tab in front of you, and the list also grows while you scroll yourself. Tick entries and click **保存所选**. The native component takes the list at once and downloads every file itself, so closing the panel or the browser does not stop it.
 
-For Xiaohongshu and Douyin the extension reads the video's playback data from the page itself: an open tab on that video is used directly, otherwise a background tab is opened and closed again. Your logged-in session is used in place, nothing is exported. Permissions requested: `activeTab`, `storage`, `nativeMessaging`, `scripting`, plus host access to `xiaohongshu.com`, `douyin.com` and `iesdouyin.com`. Following collection links can prompt for access to that site. [Archive controls](docs/extension-library.md)
+Video-only downloads go to `~/Downloads/Fetchy` by default. Click the folder at the bottom of the panel to change it.
+
+Fetchy never opens tabs to read pages. For Xiaohongshu and Douyin videos it reads the playback data from the open video page; for a short link, open the page first. Your logged-in session is used in place. Permissions requested: `activeTab`, `storage`, `nativeMessaging`, `scripting`, `sidePanel`, plus host access to `xiaohongshu.com`, `douyin.com` and `iesdouyin.com`. Reading some collection sites can prompt for access to that site. [Archive controls](docs/extension-library.md)
 
 For results by browser and platform, see the [extension validation log](docs/extension-validation.md). For native host registration, sessions and troubleshooting, see the [installation guide](docs/extension-install.md).
 
@@ -148,12 +152,12 @@ Failures throw an `EngineError` with a stable `code` such as `invalid_url`, `uns
 ## How it works
 
 ```
-extension/   Manifest V3 popup + service worker   ─┐
+extension/   Manifest V3 side panel + worker      ─┐
 bin/         CLI                                   ├─▶ src/index.mjs ─▶ yt-dlp engine (yt-dlp + FFmpeg)
 native/      Native Messaging host + daemon       ─┘                  └─▶ browser engine (media read from the page by the extension)
 ```
 
-For Xiaohongshu and Douyin the service worker injects `src/page-extract.mjs` into the video page, which returns only the target video's title, cover and signed media URLs; the native host downloads from those URLs and validates the file. The popup is only a view. A native host hands each task to a standalone daemon that owns the download, so closing the popup, rebuilding the service worker or dropping the port never cancels a transfer. Persisted task records contain no raw inputs, tokens or signed URLs.
+For Xiaohongshu and Douyin the service worker injects `src/page-extract.mjs` into the video page, which returns only the target video's title, cover and signed media URLs; the native host downloads from those URLs and validates the file. The side panel is only a view. A native host hands each task to a standalone daemon that owns the download, so closing the panel, rebuilding the service worker or dropping the port never cancels a transfer. A saved batch starts from the list; post pages are parsed by `src/library/post-pages.mjs`, whether the extension read them from your tab or the daemon read them with the desktop sign-in, and the daemon downloads every media file. Persisted task records contain no raw inputs, tokens or signed URLs.
 
 ## Development
 
