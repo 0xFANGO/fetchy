@@ -273,7 +273,12 @@ test('download verifies actual tracks and records stages only after success', as
 		assert(args.includes('--ignore-config'));
 		assert(args.includes('--no-cookies-from-browser'));
 		assert(args.includes('--abort-on-unavailable-fragments'));
-		assert.equal(args.at(-1), target.url);
+		// Only the metadata call reads the page; the download reuses its extracted info.
+		if (args.includes('--dump-single-json')) assert.equal(args.at(-1), target.url);
+		else {
+			assert.equal(args.at(-2), '--load-info-json');
+			assert(!args.includes(target.url));
+		}
 		const selection = args[args.indexOf('--format') + 1];
 		if (args.includes('--dump-single-json')) {
 			assert.equal(
@@ -533,7 +538,10 @@ test('the public API resolves and saves X posts with separate post and media ide
 	const calls = (await readFile(trace, 'utf8')).trim().split('\n').map(JSON.parse);
 	assert.equal(calls.length, 3);
 	for (const args of calls) {
-		assert.equal(args.at(-1), xPost);
+		assert.equal(
+			args.at(args.includes('--load-info-json') ? -2 : -1),
+			args.includes('--load-info-json') ? '--load-info-json' : xPost,
+		);
 		assert.equal(args[args.indexOf('--use-extractors') + 1], 'Twitter');
 	}
 });

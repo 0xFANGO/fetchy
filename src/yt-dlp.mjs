@@ -1,5 +1,15 @@
 import {siteForPlatform} from './sites/index.mjs';
-import {copyFile, chmod, mkdir, mkdtemp, readFile, realpath, rm, stat} from 'node:fs/promises';
+import {
+	copyFile,
+	chmod,
+	mkdir,
+	mkdtemp,
+	readFile,
+	realpath,
+	rm,
+	stat,
+	writeFile,
+} from 'node:fs/promises';
 import {tmpdir} from 'node:os';
 import path from 'node:path';
 import {EngineError, fileWriteError, runProcess} from './process.mjs';
@@ -460,6 +470,10 @@ export async function downloadWithYtDlp(target, options = {}, kind = 'video') {
 		let successful = false;
 		try {
 			const receipt = path.join(directory, 'result.json');
+			// Download from the extracted info instead of extracting the page a second time.
+			// It holds playback URLs, so it lives only in this private task directory.
+			const infoFile = path.join(directory, 'info.json');
+			await writeFile(infoFile, JSON.stringify(info), {mode: 0o600});
 			const identityFields = siteForPlatform(target.platform)?.receiptFields ?? [];
 			const fields = [
 				'filepath',
@@ -487,8 +501,8 @@ export async function downloadWithYtDlp(target, options = {}, kind = 'video') {
 					'--print-to-file',
 					`after_move:%(.{${fields.join(',')}})j`,
 					receipt.replaceAll('%', '%%'),
-					'--',
-					target.url,
+					'--load-info-json',
+					infoFile,
 				],
 				{signal: settings.signal, timeoutMs: remaining()},
 			);

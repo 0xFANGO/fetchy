@@ -205,10 +205,12 @@ export class NativeController extends EventEmitter {
 				return {
 					version: '0.1.0',
 					protocolVersion: 1,
-					capabilities: {archive: true},
-					dependencies: await this.dependencies(),
+					// Probing yt-dlp and FFmpeg takes seconds; clients ask separately.
+					capabilities: {archive: true, dependencies: true},
 					state: this.snapshot(),
 				};
+			case 'dependencies':
+				return this.dependencies();
 			case 'webSave': {
 				const {getOne} = await import('../bin/get.mjs');
 				const url = checkedInput(params.url);

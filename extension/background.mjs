@@ -130,6 +130,12 @@ async function connect() {
 		controller.receiveNative(hello.state, {authoritative: true});
 		controller.setConnection({status: 'connected', dependencies: hello.dependencies});
 		reconnectAttempt = 0;
+		if (hello.capabilities?.dependencies)
+			send('dependencies', {}, 20000)
+				.then((dependencies) => {
+					if (nativePort === port) controller.setConnection({status: 'connected', dependencies});
+				})
+				.catch(() => {});
 	})();
 	try {
 		await connectionPromise;

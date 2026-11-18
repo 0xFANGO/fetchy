@@ -865,3 +865,20 @@ test('automatic refresh is opt-in, limited to browser media and never repeats a 
 		assert.equal(controller.mediaRefresh, null);
 	}
 });
+
+test('the handshake answers without probing tools; dependencies are a separate request', async (t) => {
+	const runs = [];
+	const {controller} = await fixture(t, {
+		runProcess: async (command) => {
+			runs.push(command);
+			return {code: 0, stdout: ''};
+		},
+	});
+	const hello = await controller.request('hello');
+	assert.equal(hello.dependencies, undefined);
+	assert.equal(hello.capabilities.dependencies, true);
+	assert.equal(runs.length, 0);
+	const dependencies = await controller.request('dependencies');
+	assert.equal(dependencies.ffmpeg.available, true);
+	assert.equal(runs.length, 3);
+});
