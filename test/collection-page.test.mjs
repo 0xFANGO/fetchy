@@ -234,13 +234,14 @@ test(
 				'--disable-dev-shm-usage',
 				'--disable-background-networking',
 				'--no-first-run',
+				...(process.platform === 'darwin' ? ['--use-mock-keychain', '--password-store=basic'] : []),
 				'--user-data-dir=' + path.join(root, 'profile'),
 				'--dump-dom',
 				pathToFileURL(page).href,
 			],
 			{timeoutMs: 30000},
 		);
-		assert.equal(r.code, 0);
+		assert.equal(r.code, 0, r.stderr);
 		const data = r.stdout.match(/<pre id="results">([A-Za-z0-9+/=]+)<\/pre>/)?.[1];
 		assert.ok(data, 'browser returned fixture results');
 		const results = JSON.parse(Buffer.from(data, 'base64').toString('utf8'));
