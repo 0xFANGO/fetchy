@@ -45,7 +45,7 @@ jobs:
           test -x "$FETCHY_DATA_DIR/fetchy-native-host"
       - name: Verify and archive the app
         run: |
-          lipo -verify_arch arm64 dist/Fetchy.app/Contents/MacOS/Fetchy
+          lipo dist/Fetchy.app/Contents/MacOS/Fetchy -verify_arch arm64
           codesign --verify --deep --strict dist/Fetchy.app
           version=$(node -p "require('./package.json').version")
           ditto -c -k --keepParent dist/Fetchy.app "dist/fetchy-macos-arm64-$version.zip"
