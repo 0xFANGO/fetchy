@@ -5,12 +5,17 @@ export function captureSocialPost() {
 	const unavailable = (reason) => ({type: 'unsupported', reason});
 	if (url.protocol !== 'https:' || url.port || url.username || url.password)
 		return unavailable('unsupported_page');
-	const host = url.hostname.replace(/^www\./, '');
+	const site = (u) => {
+		const host = u.hostname.replace(/^www\./, '');
+		return host === 'threads.net' ? 'threads.com' : host;
+	};
+	const host = site(url);
 	const text = (node) => (node?.innerText || node?.textContent || '').trim();
 	const meta = (name) => document.querySelector('meta[property="' + name + '"]')?.content || '';
 	const parse = (u) => {
-		if (!u || u.origin !== url.origin) return null;
-		if (['threads.com', 'threads.net'].includes(host)) {
+		if (!u || u.protocol !== 'https:' || u.port || u.username || u.password || site(u) !== host)
+			return null;
+		if (host === 'threads.com') {
 			const m = /^\/@([\w.]+)\/post\/([\w-]+)\/?$/.exec(u.pathname);
 			if (m) return {platform: 'threads', author: m[1], id: m[2]};
 		}
@@ -34,8 +39,7 @@ export function captureSocialPost() {
 		} catch {
 			return unavailable('identity_mismatch');
 		}
-		if (linked.origin === url.origin && parse(linked)?.id !== identity.id)
-			return unavailable('identity_mismatch');
+		if (parse(linked)?.id !== identity.id) return unavailable('identity_mismatch');
 	}
 	const matchLink = (el) =>
 		[...el.querySelectorAll('a[href]')].some(

@@ -16,6 +16,7 @@ import {
 } from '../src/generic-media.mjs';
 import {explicitLocalOrigin, webUrl} from '../src/public-http.mjs';
 import {siteForHost, siteForPlatform} from '../src/sites/index.mjs';
+import {browserPostTarget} from '../src/sites/page-posts.mjs';
 import {videoFilename} from '../src/filenames.mjs';
 import {importLibrary, libraryRoot, searchLibrary} from '../src/library/index.mjs';
 import {entryIdentity, publicUrl, renderWork} from '../src/library/content.mjs';
@@ -24,18 +25,8 @@ import {hasSession, downloadWithSession, captureWithSession} from './desktop.mjs
 const invalid = (message) => new EngineError('invalid_arguments', message);
 async function targetFor(input, options) {
 	const u = webUrl(input);
-	const host = u.hostname.replace(/^www\./, '');
-	const browserPosts = {
-		'threads.com': ['threads', /^\/@[\w.]+\/post\/([\w-]+)\/?$/],
-		'threads.net': ['threads', /^\/@[\w.]+\/post\/([\w-]+)\/?$/],
-		'kuaishou.com': ['kuaishou', /^\/short-video\/([\w-]+)\/?$/],
-		'instagram.com': ['instagram', /^\/(?:[\w.]+\/)?p\/([\w-]+)\/?$/],
-		'zhihu.com': ['zhihu', /^\/question\/\d+\/answer\/(\d+)\/?$/],
-		'zhuanlan.zhihu.com': ['zhihu', /^\/p\/(\d+)\/?$/],
-	};
-	const route = browserPosts[host];
-	const post = u.protocol === 'https:' && !u.port && route?.[1].exec(u.pathname);
-	if (post) return {platform: route[0], id: post[1], url: u.href, pageOnly: true};
+	const post = browserPostTarget(u);
+	if (post) return post;
 	if (siteForHost(u.hostname) && !u.port) return resolveTarget(input, options);
 	return {platform: 'web', id: webIdentity(u), url: u.href};
 }

@@ -12,10 +12,13 @@ import {
 	browserSessionScope,
 	captureWithSession,
 	downloadWithSession,
+	samePost,
 	hasSession,
 	logout,
 } from '../bin/desktop.mjs';
 import {runProcess} from '../src/process.mjs';
+import {captureSocialPost} from '../extension/social-post.mjs';
+import {runInNewContext} from 'node:vm';
 
 test('the browser rejects credentials, local files and cleartext remote origins', async () => {
 	for (const input of [
@@ -45,10 +48,59 @@ test('dedicated profiles and capture hosts respect independently operated sites'
 		['b23.tv', 'www.bilibili.com'],
 		['xhslink.com', 'www.xiaohongshu.com'],
 		['tumblr.com', 'www.tumblr.com'],
+		['threads.net', 'www.threads.com'],
+		['www.threads.net', 'threads.com'],
+		['kuaishou.com', 'www.kuaishou.com'],
 	]) {
 		assert.equal(plan(a).scope, plan(b).scope);
 		assert.ok(plan(a).hosts.includes(b));
 	}
+});
+
+test('browser post redirects and markup must identify the requested work on an exact site alias', () => {
+	const original = 'https://www.threads.net/@artist/post/First';
+	const canonical = 'https://threads.com/@artist/post/First/';
+	const entry = {platform: 'threads', id: 'First'};
+	assert.equal(samePost(original, canonical, entry), true);
+	assert.equal(samePost(original, canonical, {...entry, id: 'Other'}), false);
+	const canonicalCapture = (href) =>
+		runInNewContext('(' + captureSocialPost.toString() + ')()', {
+			URL,
+			location: new URL(original),
+			document: {
+				querySelector: (selector) => {
+					if (selector === 'link[rel=canonical]') return {href};
+					if (selector === 'meta[property="og:description"]') return {content: 'Fixture caption'};
+					return null;
+				},
+				querySelectorAll: () => [],
+			},
+		});
+	assert.equal(canonicalCapture(canonical).entry.id, entry.id);
+	for (const bad of [
+		canonical.replace('First', 'Other'),
+		canonical.replace('.com/', '.com.example/'),
+		canonical.replace('.com/', '.com:444/'),
+		canonical.replace('https:', 'http:'),
+		canonical.replace('threads.com', 'name@threads.com'),
+	]) {
+		assert.equal(samePost(original, bad, entry), false);
+		assert.equal(canonicalCapture(bad).reason, 'identity_mismatch');
+	}
+	assert.equal(
+		samePost('https://kuaishou.com/f/abc', 'https://www.kuaishou.com/short-video/abc', {
+			platform: 'kuaishou',
+			id: 'abc',
+		}),
+		true,
+	);
+	assert.equal(
+		samePost('https://kuaishou.com/f/abc', 'https://www.kuaishou.com/short-video/other', {
+			platform: 'kuaishou',
+			id: 'other',
+		}),
+		false,
+	);
 });
 
 // Explicit opt-in: this opens and closes a real macOS window in an isolated Fetchy site store.

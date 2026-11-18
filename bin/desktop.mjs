@@ -8,6 +8,7 @@ import {ensureCompatibleMp4} from '../src/mp4.mjs';
 import {publishVideoFile, videoFilename} from '../src/filenames.mjs';
 import {EngineError, runProcess} from '../src/process.mjs';
 import {siteForHost} from '../src/sites/index.mjs';
+import {browserOnlySite, browserPostTarget} from '../src/sites/page-posts.mjs';
 import {normalizeUrl} from '../src/urls.mjs';
 
 const root = fileURLToPath(new URL('../', import.meta.url));
@@ -16,7 +17,10 @@ const digest = (value) => createHash('sha256').update(value).digest('hex');
 // An extractor may support several independent instances or tenant-owned hosts.
 // Only its explicitly registered aliases can share a website data store.
 export function browserSessionScope(url) {
-	const site = url.protocol === 'https:' && !url.port ? siteForHost(url.hostname) : null;
+	const secure = url.protocol === 'https:' && !url.port && !url.username && !url.password;
+	const browserOnly = secure && browserOnlySite(url.hostname);
+	if (browserOnly) return {scope: 'https://' + browserOnly.hosts[0], hosts: browserOnly.hosts};
+	const site = secure ? siteForHost(url.hostname) : null;
 	const aliases = site ? [...site.hosts, ...(site.shortHosts ?? [])] : [];
 	if (site?.browserProfile !== 'origin' && aliases.includes(url.hostname)) {
 		return {scope: 'https:site:' + site.id, hosts: [...new Set(aliases)]};
@@ -231,7 +235,7 @@ export async function downloadWithSession(input, options = {}) {
 	}
 }
 
-function samePost(input, candidate, entry) {
+export function samePost(input, candidate, entry) {
 	let a, b;
 	try {
 		a = new URL(input);
@@ -240,6 +244,16 @@ function samePost(input, candidate, entry) {
 		return false;
 	}
 	if (b.username || b.password) return false;
+	const pagePost = browserPostTarget(a);
+	if (pagePost) {
+		const captured = browserPostTarget(b);
+		return (
+			captured?.platform === pagePost.platform &&
+			captured.id === pagePost.id &&
+			entry.platform === pagePost.platform &&
+			entry.id === pagePost.id
+		);
+	}
 	try {
 		const expected = normalizeUrl(a.href),
 			captured = normalizeUrl(b.href);
