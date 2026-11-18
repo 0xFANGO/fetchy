@@ -4,6 +4,18 @@
 
 ## 1. 安装依赖与构建
 
+### 使用 Release 安装
+
+在 Apple Silicon Mac 上，从[同一版本的 Release](https://github.com/0xFANGO/fetchy/releases/latest) 下载桌面端和扩展两个 ZIP。按[桌面端安装说明](desktop.md#install-or-update) 安装所需工具，把 `Fetchy.app` 放进「应用程序」，再运行：
+
+```bash
+node /Applications/Fetchy.app/Contents/Resources/app/native/install.mjs --browser chrome
+```
+
+使用 Ego Lite 时把 `chrome` 改为 `ego`。将扩展 ZIP 解压到长期保留的位置，按下一节导入。旧版本如果只提供扩展 ZIP，本地组件需从该版本的源码安装。
+
+### 从源码安装
+
 需要 Node.js 22+、Python 3.10+、FFmpeg（含 ffprobe）。小红书/抖音不需要额外软件：扩展直接从你浏览器里的视频页读取媒体信息。
 
 在项目根目录运行：
@@ -25,7 +37,7 @@ npm run native:install -- --browser chrome
 
 1. 在浏览器打开 `chrome://extensions/`。
 2. 打开开发者模式，点击「Load unpacked / 加载已解压的扩展程序」。
-3. 选择项目中的 **`dist/extension`** 文件夹。不要选择项目根目录或源码 `extension` 文件夹。
+3. 选择 Release 解压出的 `extension` 文件夹。自行构建时选择项目中的 `dist/extension`。
 4. 在扩展菜单中将「Fetchy 视频下载」固定到工具栏。
 5. 打开具体视频页，点击 Fetchy 图标。首次连接后显示默认保存目录；没有具体视频时可粘贴链接。
 
@@ -75,7 +87,9 @@ npm run native:install -- --browser chrome
 
 ## 6. 更新与卸载
 
-修改扩展后运行 `npm run extension:build`，在扩展管理页点击 Fetchy 的重新加载。重载可能中断解析，但正在执行的下载由独立本地进程管理。移动项目、升级 Node 或修改依赖路径后重新运行 `native:install`。
+使用 Release 更新时，先等正在保存的任务结束，退出 Fetchy，替换「应用程序」里的 `Fetchy.app`，再运行第一节中的本地组件注册命令。用同一版本解压出的 `extension` 替换 Chrome 原来加载的扩展目录，然后在 `chrome://extensions/` 点击 Fetchy 的「重新加载」。
+
+从源码修改扩展后运行 `npm run extension:build`，在扩展管理页点击 Fetchy 的重新加载。重载可能中断解析，但正在执行的下载由独立本地进程管理。移动项目、升级 Node 或修改依赖路径后重新运行 `native:install`。
 
 本地 daemon 已启动时会缓存代码和运行配置。开发更新本地核心/桥接、依赖路径或注册配置后，应先等待或取消当前下载，再重启本地 daemon，下次连接会加载新版。也可关闭浏览器连接，确认无执行中的任务后等待约五分钟，daemon 会自行退出；随后重新打开浏览器和插件。具体位置和生命周期见 [native/README](../native/README.md)。不要在下载过程中强行停止。
 

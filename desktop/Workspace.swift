@@ -31,7 +31,10 @@ struct LocalCommands {
       let config = try JSONDecoder().decode(
         [String: String].self,
         from: Data(contentsOf: resources.appendingPathComponent("tools.json")))
-      guard let node = config["node"] else { throw FetchyFailure(text: "请重新构建 Fetchy 桌面应用。") }
+      let toolDirectories = (config["path"] ?? "").split(separator: ":")
+      let candidates = [config["node"]].compactMap { $0 } + toolDirectories.map { "\($0)/node" }
+      guard let node = candidates.first(where: FileManager.default.isExecutableFile(atPath:))
+      else { throw FetchyFailure(text: "找不到 Node.js 22+。安装后重试（brew install node）。") }
       let script = resources.appendingPathComponent(
         bridge ? "app/desktop/bridge.mjs" : "app/bin/fetchy.mjs")
       let process = Process()

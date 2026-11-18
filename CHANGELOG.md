@@ -8,7 +8,7 @@ Notable changes for users, following [Keep a Changelog](https://keepachangelog.c
 
 - Save public videos and audio from additional social and media sites. The platform table records file-level checks and access requirements.
 - Inspect links with `info`, save with `get`, and process a file or stdin with `batch`. The generic downloader accepts direct videos, declared media, finite HLS and static DASH.
-- Build a macOS desktop app, sign in with a dedicated site browser, and use the same session for subsequent saves.
+- Install the Apple Silicon macOS app and matching browser extension from the two ZIPs on GitHub Releases.
 - Archive text and ordered attachments from supported posts and collections. Search the offline library, keep original folder memberships, and resume, retry or export shared tasks.
 - Open the extension in Chrome's side panel beside the current page to save a post, read a collection one screen at a time or to the end, and save the selected entries.
 - Saving selected collection entries starts at once from the list and keeps going after the panel or browser closes. The local component downloads every file, with no combined size limit, and each entry records its result and reason and can be retried on its own.

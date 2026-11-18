@@ -85,7 +85,7 @@ npm run lint:fix
 Formatting is enforced by [oxfmt](https://oxc.rs) (tabs, single quotes) and
 linting by [oxlint](https://oxc.rs). Run the relevant checks locally before
 requesting review. The Release workflow also checks formatting and lint before
-packing the extension.
+building the release archives.
 
 ## Commit messages
 
@@ -166,17 +166,18 @@ git switch main
 git pull --ff-only
 git tag -a vX.Y.Z MERGED_RELEASE_SHA -m 'Release vX.Y.Z'
 git push origin refs/tags/vX.Y.Z
-gh release create vX.Y.Z --verify-tag --title 'Fetchy vX.Y.Z' --notes-file .local/release-notes.md
 ```
 
 Replace `MERGED_RELEASE_SHA` with the release PR's squash commit on `main`,
 even if newer commits have since landed. Confirm it contains the expected
-version before tagging. Write the short release notes to
-`.local/release-notes.md` first. Publishing the GitHub Release triggers the
-workflow to check and pack the matching version,
-then attach `fetchy-extension-X.Y.Z.zip`; pushing a tag alone does not trigger
-it. Verify the workflow succeeds and the asset appears. Preserve published
-tags; ship corrections in a new version.
+version before tagging. Pushing the tag starts the Release workflow. It checks
+the package and extension versions, builds both archives on Apple Silicon, and
+publishes the GitHub Release with the dated notes from `CHANGELOG.md`. If the
+job fails, rerun it from Actions. It can finish an interrupted draft. Ship
+corrections to published builds in a new version.
+
+To try a pull request, open its Release workflow run in Actions. The artifact
+named for the PR number and commit contains the extension and macOS ZIPs.
 
 ## Pull requests
 

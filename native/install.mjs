@@ -87,7 +87,9 @@ try {
 				browser,
 				hostName: 'com.fetchy.video_downloader',
 				manifestDirectories: directories,
-				extensionDirectory: path.join(root, 'dist', 'extension'),
+				extensionDirectory: path.resolve(root, '../../..').endsWith('.app')
+					? undefined
+					: path.join(root, 'dist', 'extension'),
 				missingDependencies: ['ytDlpPath', 'ffmpegLocation', 'ffprobePath'].filter(
 					(key) => !engineOptions[key],
 				),

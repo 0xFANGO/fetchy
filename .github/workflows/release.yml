@@ -1,25 +1,99 @@
 name: Release
 on:
-  release:
-    types: [published]
+  pull_request:
+  push:
+    tags: ['v[0-9]+.[0-9]+.[0-9]+']
 permissions:
-  contents: write
+  contents: read
+concurrency:
+  group: release-${{ github.ref }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+env:
+  RELEASE_TAG: ${{ github.ref_type == 'tag' && github.ref_name || '' }}
 jobs:
-  extension:
-    runs-on: ubuntu-latest
+  build:
+    name: Build macOS app and extension
+    if: github.event_name == 'pull_request' || github.event.created
+    runs-on: macos-15
+    timeout-minutes: 20
     steps:
       - uses: actions/checkout@v4
+        with:
+          ref: ${{ github.event.pull_request.head.sha || github.sha }}
+          fetch-depth: 0
+          persist-credentials: false
+      - name: Verify the tag points to a commit on main
+        if: github.ref_type == 'tag'
+        run: git merge-base --is-ancestor HEAD origin/main
       - uses: actions/setup-node@v4
         with:
           node-version: 22
           cache: npm
       - run: npm ci
       - run: npm run check
-      - name: Build and zip the extension
-        run: npm run extension:pack
+      - run: npm run extension:pack
+      - run: npm run desktop:build -- --portable
+      - name: Check the bundled native host
         env:
-          RELEASE_TAG: ${{ github.event.release.tag_name }}
-      - name: Attach the zip to the release
-        uses: softprops/action-gh-release@v2
+          FETCHY_DATA_DIR: ${{ runner.temp }}/fetchy-native
+        run: |
+          resources=dist/Fetchy.app/Contents/Resources
+          cmp "$resources/app/extension/manifest.json" dist/extension/manifest.json
+          jq -e --arg cache "$RUNNER_TOOL_CACHE" --arg repo "$GITHUB_WORKSPACE" \
+            '.node == null and (.path | contains($cache) or contains($repo) | not)' "$resources/tools.json"
+          node "$resources/app/native/install.mjs" --browser chrome --manifest-dir "$RUNNER_TEMP/manifests"
+          test -x "$FETCHY_DATA_DIR/fetchy-native-host"
+      - name: Verify and archive the app
+        run: |
+          lipo -verify_arch arm64 dist/Fetchy.app/Contents/MacOS/Fetchy
+          codesign --verify --deep --strict dist/Fetchy.app
+          version=$(node -p "require('./package.json').version")
+          ditto -c -k --keepParent dist/Fetchy.app "dist/fetchy-macos-arm64-$version.zip"
+      - name: Read release notes from the changelog
+        if: github.ref_type == 'tag'
+        run: |
+          awk -v heading="## [${RELEASE_TAG#v}] - " '
+            index($0, heading) == 1 { found = 1; next }
+            /^## / && found { exit }
+            found && !/^\[.*\]: / { print }
+          ' CHANGELOG.md > dist/notes.md
+          grep -q '[^[:space:]]' dist/notes.md
+          docs="$GITHUB_SERVER_URL/$GITHUB_REPOSITORY/blob/$RELEASE_TAG/docs"
+          printf '\n[Install the macOS app](%s/desktop.md) · [Install or update the extension](%s/extension-install.md)\n' "$docs" "$docs" >> dist/notes.md
+      - uses: actions/upload-artifact@v4
         with:
-          files: dist/fetchy-extension-*.zip
+          name: ${{ github.event_name == 'pull_request' && format('fetchy-pr-{0}-{1}', github.event.number, github.event.pull_request.head.sha) || 'release-assets' }}
+          path: |
+            dist/fetchy-*.zip
+            dist/notes.md
+          if-no-files-found: error
+          overwrite: true
+  publish:
+    if: github.event_name == 'push' && github.ref_type == 'tag' && github.event.created
+    needs: build
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/download-artifact@v4
+        with:
+          name: release-assets
+      - name: Publish the two archives together
+        env:
+          GH_REPO: ${{ github.repository }}
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          version=${RELEASE_TAG#v}
+          assets=("fetchy-extension-$version.zip" "fetchy-macos-arm64-$version.zip")
+          for asset in "${assets[@]}"; do test -s "$asset"; done
+          if draft=$(gh release view "$RELEASE_TAG" --json isDraft --jq .isDraft); then
+            if [[ "$draft" == false ]]; then
+              files=$(gh release view "$RELEASE_TAG" --json assets --jq '.assets[].name')
+              for asset in "${assets[@]}"; do grep -Fxq "$asset" <<< "$files"; done
+              exit 0
+            fi
+          else
+            gh release create "$RELEASE_TAG" --verify-tag --draft --title "Fetchy $RELEASE_TAG" --notes-file notes.md
+          fi
+          gh release upload "$RELEASE_TAG" "${assets[@]}" --clobber
+          gh release edit "$RELEASE_TAG" --draft=false

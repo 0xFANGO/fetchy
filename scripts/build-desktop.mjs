@@ -54,10 +54,8 @@ try {
 	for (const directory of ['bin', 'src', 'native'])
 		await cp(path.join(root, directory), path.join(app, directory), {recursive: true});
 	await mkdir(path.join(app, 'extension'));
-	await cp(
-		path.join(root, 'extension/archive-rpc.mjs'),
-		path.join(app, 'extension/archive-rpc.mjs'),
-	);
+	for (const file of ['archive-rpc.mjs', 'manifest.json'])
+		await cp(path.join(root, 'extension', file), path.join(app, 'extension', file));
 	await mkdir(path.join(app, 'desktop'));
 	await cp(path.join(root, 'desktop/bridge.mjs'), path.join(app, 'desktop/bridge.mjs'));
 	await writeFile(
@@ -111,12 +109,15 @@ try {
 		return JSON.stringify(await run());`,
 	);
 	await cp(path.join(root, 'package.json'), path.join(app, 'package.json'));
-	const binaries = [
-		process.execPath,
-		findExecutable(ytDlpCommand()),
-		findExecutable('ffmpeg'),
-		findExecutable('ffprobe'),
-	].filter(Boolean);
+	const portable = process.argv.includes('--portable');
+	const binaries = portable
+		? []
+		: [
+				process.execPath,
+				findExecutable(ytDlpCommand()),
+				findExecutable('ffmpeg'),
+				findExecutable('ffprobe'),
+			].filter(Boolean);
 	const searchPath = [
 		...new Set([
 			...binaries.map((file) => path.dirname(file)),
@@ -128,7 +129,7 @@ try {
 	].join(path.delimiter);
 	await writeFile(
 		path.join(resources, 'tools.json'),
-		JSON.stringify({node: process.execPath, path: searchPath}),
+		JSON.stringify({node: portable ? undefined : process.execPath, path: searchPath}),
 	);
 	await tool('/usr/bin/sips', [
 		'-s',

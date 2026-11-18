@@ -1,5 +1,19 @@
 # Fetchy for macOS
 
+## Install or update
+
+For an Apple Silicon Mac running macOS 14 or later, download `fetchy-macos-arm64-<version>.zip` from [GitHub Releases](https://github.com/0xFANGO/fetchy/releases/latest). Install Node.js 22.13 or later, Python 3.10 or later, yt-dlp and FFmpeg (including ffprobe). With Homebrew, run:
+
+```sh
+brew install node python yt-dlp ffmpeg
+```
+
+Quit Fetchy, unzip the archive and drag `Fetchy.app` into Applications. Its library and site sessions live outside the app bundle. The download uses an ad-hoc signature and has no Apple notarization. If macOS asks you to verify the developer, see [Apple's guide to opening downloaded apps](https://support.apple.com/en-us/102445).
+
+If you use the browser extension, update it from the same release and register the native host in the installed app. [Extension installation and updates](extension-install.md)
+
+## Build from source
+
 Build the app on macOS 14 or later with the Xcode command-line tools installed. Set up Node, the pinned yt-dlp, FFmpeg and ffprobe using the [project instructions](../README.md).
 
 ```sh

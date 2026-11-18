@@ -88,7 +88,9 @@ The CLI prints a JSON result with the absolute file path, size and validation de
 
 ## Browser extension
 
-To save X videos or Instagram Reels from the extension, run both commands below from a source checkout containing those adapters and load the resulting build. The published v0.3.1 ZIP supports YouTube, Bilibili, Xiaohongshu and Douyin. For that version, unzip the release instead of building the extension and install the native host from the matching source. [Download v0.3.1](https://github.com/0xFANGO/fetchy/releases/tag/v0.3.1)
+Download the extension ZIP and register the matching local component. If the release includes a macOS ZIP, the app contains the installer. Older releases ship the installer in the source archive. [Latest release](https://github.com/0xFANGO/fetchy/releases/latest) · [Install or update](docs/extension-install.md)
+
+To build the extension from source:
 
 ```sh
 npm run extension:build                 # builds the current source into dist/extension

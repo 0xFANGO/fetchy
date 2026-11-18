@@ -84,7 +84,9 @@ CLI 以 JSON 输出结果，包含文件绝对路径、大小和校验信息；�
 
 ## 浏览器扩展
 
-要在扩展中保存 X 视频或 Instagram Reel，请在包含这些适配的源码目录执行下面两条命令，再加载构建出的扩展。已发布的 v0.3.1 ZIP 支持 YouTube、B站、小红书和抖音。使用该版本时，解压 ZIP 即可跳过构建，本地组件仍需从对应源码安装。[v0.3.1 下载](https://github.com/0xFANGO/fetchy/releases/tag/v0.3.1)
+下载扩展 ZIP 后，注册同版本的本地组件。有桌面端 ZIP 的版本可以直接用 App 里的安装脚本，旧版本的安装脚本在对应的源码包里。[最新 Release](https://github.com/0xFANGO/fetchy/releases/latest) · [安装与更新](docs/extension-install.md)
+
+从源码构建扩展时运行：
 
 ```sh
 npm run extension:build                 # 构建当前源码，输出到 dist/extension
