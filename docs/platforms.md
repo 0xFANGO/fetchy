@@ -2,40 +2,40 @@
 
 Choose the row for the platform and the column for the kind of content you want to keep. A video file, images in their original order, and a readable offline copy of the post are separate outputs. “Folder URL” means importing the items in one specified collection. “All folders” means discovering the signed-in user's collections. “History” means reading a collection through its last page.
 
-| Platform         | Examples to test                    | Video      | Audio    | Images    | Post text | Folder URL | All folders | History   |
-| ---------------- | ----------------------------------- | ---------- | -------- | --------- | --------- | ---------- | ----------- | --------- |
-| Bilibili         | Video; named favorites folder       | Saved¹     | —        | —         | —         | Saved⁷     | Untested⁷   | Public⁷   |
-| Douyin           | Video post; album                   | Saved²     | —        | —         | —         | Fixture⁹   | Partial⁹    | Fixture⁹  |
-| Facebook         | Video post                          | Saved      | —        | —         | —         | —          | —           | —         |
-| Instagram        | Reel; carousel                      | Saved⁴     | —        | Untested  | Partial⁶  | Fixture⁹   | Fixture⁹    | Fixture⁹  |
-| Kuaishou         | Video post                          | Partial⁶   | —        | Untested⁶ | Partial⁶  | —          | —           | —         |
-| Pinterest        | Pin; board                          | Resolved   | —        | —         | —         | —          | —           | —         |
-| Reddit           | Video post; gallery                 | Restricted | —        | —         | —         | —          | —           | —         |
-| Threads          | Post; carousel                      | Saved⁶     | —        | Partial⁶  | Saved⁶    | Fixture⁹   | —           | Fixture⁹  |
-| TikTok           | Video; photo post                   | Saved      | —        | —         | —         | Fixture⁹   | —           | Fixture⁹  |
-| Weibo            | Video post                          | Saved      | —        | —         | —         | —          | —           | —         |
-| X (Twitter)      | Video post; text-only post          | Saved³     | —        | Fixture⁸  | Fixture⁸  | Fixture⁸   | Untested⁸   | Fixture⁸  |
-| Xiaohongshu      | Video note; photo note with caption | Saved²     | —        | Saved⁵    | Saved⁵    | Browser⁵   | Counted⁵    | Partial⁵  |
-| YouTube          | Video; playlist                     | Saved      | —        | —         | —         | Untested⁸  | Untested⁸   | Untested⁸ |
-| Zhihu            | Article; answer                     | —          | —        | Untested⁸ | Untested⁸ | Untested⁸  | —           | Untested⁸ |
-| Bandcamp         | Track; album                        | —          | Saved    | —         | —         | —          | —           | —         |
-| Bluesky          | Media post                          | Saved      | —        | —         | —         | —          | —           | —         |
-| Dailymotion      | Video                               | Saved      | —        | —         | —         | —          | —           | —         |
-| Imgur            | Image; album                        | Untested   | —        | —         | —         | —          | —           | —         |
-| Internet Archive | Item containing a video file        | Saved      | —        | —         | —         | —          | —           | —         |
-| Kick             | Clip; recorded broadcast            | Resolved   | —        | —         | —         | —          | —           | —         |
-| Loom             | Recording                           | Saved      | —        | —         | —         | —          | —           | —         |
-| Mixcloud         | Track; set                          | —          | Resolved | —         | —         | —          | —           | —         |
-| Odysee           | Video or audio claim                | Untested   | Saved    | —         | —         | —          | —           | —         |
-| PeerTube         | Video on a public instance          | Saved      | —        | —         | —         | —          | —           | —         |
-| Rumble           | Video                               | Restricted | —        | —         | —         | —          | —           | —         |
-| SoundCloud       | Track; set                          | —          | Saved    | —         | —         | —          | —           | —         |
-| Streamable       | Video                               | Resolved   | —        | —         | —         | —          | —           | —         |
-| TED              | Talk                                | Saved      | —        | —         | —         | —          | —           | —         |
-| Tumblr           | Media post                          | Restricted | —        | —         | —         | —          | —           | —         |
-| Twitch           | Clip; recorded broadcast            | Saved      | —        | —         | —         | —          | —           | —         |
-| Vimeo            | Video; showcase                     | Restricted | —        | —         | —         | —          | —           | —         |
-| VK               | Video                               | Saved      | —        | —         | —         | —          | —           | —         |
+| Platform         | Examples to test                    | Video      | Audio | Images    | Post text | Folder URL | All folders | History   |
+| ---------------- | ----------------------------------- | ---------- | ----- | --------- | --------- | ---------- | ----------- | --------- |
+| Bilibili         | Video; named favorites folder       | Saved¹     | —     | —         | —         | Saved⁷     | Untested⁷   | Public⁷   |
+| Douyin           | Video post; album                   | Saved²     | —     | —         | —         | Fixture⁹   | Partial⁹    | Fixture⁹  |
+| Facebook         | Video post                          | Saved      | —     | —         | —         | —          | —           | —         |
+| Instagram        | Reel; carousel                      | Saved⁴     | —     | Untested  | Partial⁶  | Fixture⁹   | Fixture⁹    | Fixture⁹  |
+| Kuaishou         | Video post                          | Partial⁶   | —     | Untested⁶ | Partial⁶  | —          | —           | —         |
+| Pinterest        | Pin; board                          | Resolved   | —     | —         | —         | —          | —           | —         |
+| Reddit           | Video post; gallery                 | Restricted | —     | —         | —         | —          | —           | —         |
+| Threads          | Post; carousel                      | Saved⁶     | —     | Partial⁶  | Saved⁶    | Fixture⁹   | —           | Fixture⁹  |
+| TikTok           | Video; photo post                   | Saved      | —     | —         | —         | Fixture⁹   | —           | Fixture⁹  |
+| Weibo            | Video post                          | Saved      | —     | —         | —         | —          | —           | —         |
+| X (Twitter)      | Video post; text-only post          | Saved³     | —     | Fixture⁸  | Fixture⁸  | Fixture⁸   | Untested⁸   | Fixture⁸  |
+| Xiaohongshu      | Video note; photo note with caption | Saved²     | —     | Saved⁵    | Saved⁵    | Browser⁵   | Counted⁵    | Partial⁵  |
+| YouTube          | Video; playlist                     | Saved      | —     | —         | —         | Untested⁸  | Untested⁸   | Untested⁸ |
+| Zhihu            | Article; answer                     | —          | —     | Untested⁸ | Untested⁸ | Untested⁸  | —           | Untested⁸ |
+| Bandcamp         | Track; album                        | —          | Saved | —         | —         | —          | —           | —         |
+| Bluesky          | Media post                          | Saved      | —     | —         | —         | —          | —           | —         |
+| Dailymotion      | Video                               | Saved      | —     | —         | —         | —          | —           | —         |
+| Imgur            | Image; album                        | Untested   | —     | —         | —         | —          | —           | —         |
+| Internet Archive | Item containing a video file        | Saved      | —     | —         | —         | —          | —           | —         |
+| Kick             | Clip; recorded broadcast            | Resolved   | —     | —         | —         | —          | —           | —         |
+| Loom             | Recording                           | Saved      | —     | —         | —         | —          | —           | —         |
+| Mixcloud         | Track; set                          | —          | Saved | —         | —         | —          | —           | —         |
+| Odysee           | Video or audio claim                | Untested   | Saved | —         | —         | —          | —           | —         |
+| PeerTube         | Video on a public instance          | Saved      | —     | —         | —         | —          | —           | —         |
+| Rumble           | Video                               | Restricted | —     | —         | —         | —          | —           | —         |
+| SoundCloud       | Track; set                          | —          | Saved | —         | —         | —          | —           | —         |
+| Streamable       | Video                               | Resolved   | —     | —         | —         | —          | —           | —         |
+| TED              | Talk                                | Saved      | —     | —         | —         | —          | —           | —         |
+| Tumblr           | Media post                          | Restricted | —     | —         | —         | —          | —           | —         |
+| Twitch           | Clip; recorded broadcast            | Saved      | —     | —         | —         | —          | —           | —         |
+| Vimeo            | Video; showcase                     | Restricted | —     | —         | —         | —          | —           | —         |
+| VK               | Video                               | Saved      | —     | —         | —         | —          | —           | —         |
 
 **Saved** means a sample produced a local file and passed its media checks. **Resolved** means a real page returned media metadata and formats. **Untested** means an adapter exists but the example did not establish that the output works. **Restricted** means access to the sample prevented validation. A dash (—) marks an operation without a dedicated implementation. See the individual sources, checks and limits before relying on a particular platform. [Single-link validation](platform-validation.md)
 
