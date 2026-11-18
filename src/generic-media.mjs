@@ -204,18 +204,51 @@ export function webIdentity(input) {
 	return createHash('sha256').update(url.href).digest('hex').slice(0, 32);
 }
 export async function resolveGeneric(input, options = {}) {
-	const source = await inspect(input, {
+	const deadline = AbortSignal.timeout(options.timeoutMs ?? 30000);
+	const settings = {
 		...options,
-		signal: options.signal ?? AbortSignal.timeout(30000),
-	});
+		signal: options.signal ? AbortSignal.any([options.signal, deadline]) : deadline,
+	};
+	const source = await inspect(input, settings);
+	let formats = [{id: source.kind, hasVideo: true}];
+	if (source.kind === 'dash') {
+		const tracks = await parse('dash', source.url, source.text, settings);
+		formats = tracks.map((track, i) => ({
+			id: 'dash-' + i,
+			hasVideo: !track.audioOnly,
+			hasAudio: track.audioOnly ? true : undefined,
+			height: track.height || null,
+			bitrate: track.bitrate || null,
+		}));
+		if (!formats.some((f) => f.hasVideo))
+			throw new EngineError('no_formats', '未找到 DASH 视频轨道。');
+	} else if (source.kind === 'hls') {
+		if (!source.text.trimStart().startsWith('#EXTM3U'))
+			throw new EngineError('output_invalid', 'HLS 清单格式无效。');
+		const variants = source.text
+			.split(/\r?\n/)
+			.filter((line) => line.startsWith('#EXT-X-STREAM-INF:'))
+			.map(attributes);
+		if (variants.length)
+			formats = variants.map((v, i) => {
+				const [width, height] = (v.RESOLUTION || '').split('x').map(Number);
+				return {
+					id: 'hls-' + i,
+					hasVideo: true,
+					width: width || null,
+					height: height || null,
+					bitrate: Number(v.BANDWIDTH) || null,
+				};
+			});
+	}
 	return {
 		platform: 'web',
 		id: webIdentity(input),
 		title: source.title,
 		engine: 'web',
 		kind: source.kind,
-		availability: 'ready',
-		formats: [{id: source.kind, hasVideo: true}],
+		availability: 'declared',
+		formats,
 	};
 }
 export async function downloadGeneric(input, options = {}) {

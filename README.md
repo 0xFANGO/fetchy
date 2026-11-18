@@ -99,7 +99,7 @@ npm run native:install -- --browser chrome # registers the native host (--browse
 
 Downloads go to `~/Downloads/Fetchy` by default. Click the folder at the bottom of the popup to change it; your selection is saved automatically. Folder changes are disabled while a task is displayed.
 
-For Xiaohongshu and Douyin the extension reads the video's playback data from the page itself: an open tab on that video is used directly, otherwise a background tab is opened and closed again. Your logged-in session is used in place, nothing is exported. Permissions requested: `activeTab`, `storage`, `nativeMessaging`, `scripting`, plus host access to `xiaohongshu.com`, `douyin.com` and `iesdouyin.com`.
+For Xiaohongshu and Douyin the extension reads the video's playback data from the page itself: an open tab on that video is used directly, otherwise a background tab is opened and closed again. Your logged-in session is used in place, nothing is exported. Permissions requested: `activeTab`, `storage`, `nativeMessaging`, `scripting`, plus host access to `xiaohongshu.com`, `douyin.com` and `iesdouyin.com`. Following collection links can prompt for access to that site. [Archive controls](docs/extension-library.md)
 
 For results by browser and platform, see the [extension validation log](docs/extension-validation.md). For native host registration, sessions and troubleshooting, see the [installation guide](docs/extension-install.md).
 

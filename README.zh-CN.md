@@ -99,6 +99,8 @@ npm run native:install -- --browser chrome # 注册 native host；Ego Lite 用 -
 
 各浏览器和站点的实测结果见[扩展验证记录](docs/extension-validation.md)。注册本地组件、登录及故障排查见[安装说明](docs/extension-install.md)。
 
+收藏库可在读取所选收藏夹的后续页面时请求该站点的访问权限。[扩展收藏操作](docs/extension-library.md)
+
 ## 原有视频命令
 
 ```sh
