@@ -32,8 +32,14 @@ for (const [network, prefix] of [
 ])
 	excluded.addSubnet(network, prefix, 'ipv6');
 
-function publicAddress({address, family}) {
-	if (family === 4) return !excluded.check(address, 'ipv4');
+// Fake-IP proxies (Clash, Surge and similar) answer every name from 198.18.0.0/15
+// and forward the connection by name. Accept that range only for a DNS answer,
+// never for an address literal in the URL.
+const fakeIp = new BlockList();
+fakeIp.addSubnet('198.18.0.0', 15, 'ipv4');
+export function publicAddress({address, family}, resolvedName = false) {
+	if (family === 4)
+		return !excluded.check(address, 'ipv4') || (resolvedName && fakeIp.check(address, 'ipv4'));
 	return /^[23][a-f\d]{3}:/i.test(address) && !excluded.check(address, 'ipv6');
 }
 export function webUrl(value) {
@@ -74,7 +80,9 @@ export async function openWeb(input, {signal, localOrigin, headers = {}} = {}) {
 		}
 		if (
 			!records.length ||
-			!records.every((r) => (local ? ['127.0.0.1', '::1'].includes(r.address) : publicAddress(r)))
+			!records.every((r) =>
+				local ? ['127.0.0.1', '::1'].includes(r.address) : publicAddress(r, !isIP(host)),
+			)
 		)
 			throw new EngineError('invalid_url', '此地址不属于允许读取的网络范围。');
 		const transport = url.protocol === 'https:' ? https : http;
@@ -103,9 +111,12 @@ export async function openWeb(input, {signal, localOrigin, headers = {}} = {}) {
 		}
 		if (response.statusCode < 200 || response.statusCode >= 300) {
 			response.destroy();
-			throw new EngineError(
-				[401, 403].includes(response.statusCode) ? 'auth_required' : 'network_error',
-				'该资源未允许下载。',
+			throw Object.assign(
+				new EngineError(
+					[401, 403].includes(response.statusCode) ? 'auth_required' : 'network_error',
+					'该资源未允许下载。',
+				),
+				{httpStatus: response.statusCode},
 			);
 		}
 		return {response, url};

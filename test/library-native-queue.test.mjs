@@ -48,10 +48,13 @@ test(
 			if (req.url.startsWith('/slow?')) {
 				held = res;
 				reached.resolve();
-			} else imageResponse(res);
+			} else if (req.url === '/large')
+				res.writeHead(200, {'content-type': 'image/gif'}).end(Buffer.concat([bytes, bytes]));
+			else imageResponse(res);
 		});
 		const bridge = new LibraryBridge(dir);
 		// Grant this test fixture explicitly on the server. IPC does not accept network overrides.
+		// maxBytes caps each file; a batch has no combined limit.
 		Object.assign(bridge.options, {localOrigin: origin, maxBytes: bytes.length + 10});
 		const controller = Object.assign(new EventEmitter(), {
 			snapshot: () => ({}),
@@ -69,8 +72,8 @@ test(
 					items: [
 						post('70001', [inline, {kind: 'image', url}, {kind: 'image', url}]),
 						post('70002', [
-							{kind: 'image', url: origin + '/exceeds'},
-							{kind: 'image', url: origin + '/skip'},
+							{kind: 'image', url: origin + '/large'},
+							{kind: 'image', url: origin + '/after'},
 						]),
 					],
 				},
@@ -87,7 +90,12 @@ test(
 		await bridge.tail;
 		const finished = await requestNative('libraryTask', {id: task.id}, {directory: dir});
 		assert.deepEqual(finished.counts, {added: 1, skipped: 0, partial: 1, failed: 0, pending: 0});
-		assert.deepEqual(paths, ['/slow', '/exceeds']);
+		assert.deepEqual(paths, ['/slow', '/large', '/after']);
+		const partial = finished.items.find((i) => i.key === 'x:70002');
+		assert.equal(partial.reason, 'size_limit');
+		const [rest] = await searchLibrary({key: 'x:70002'}, bridge.options);
+		assert.equal(rest.attachments[0].error, 'size_limit');
+		assert.ok(rest.attachments[1].path);
 		const [complete] = await searchLibrary({key: 'x:70001'}, bridge.options);
 		assert.equal(complete.attachments.length, 3);
 		assert.ok(complete.attachments.every((a) => a.path === complete.attachments[0].path));
@@ -132,11 +140,13 @@ test(
 		const stopped = once(child, 'close');
 		child.kill('SIGKILL');
 		await stopped;
-		assert.ok((await readdir(dir)).some((name) => name.startsWith('.native-attachments-')));
+		const downloads = async () =>
+			(await readdir(path.join(dir, 'library'))).filter((name) => name.startsWith('.download-'));
+		assert.equal((await downloads()).length, 1);
 		const fresh = new LibraryBridge(dir);
 		await fresh.request('libraryTasks', {});
 		await fresh.tail;
-		assert.ok(!(await readdir(dir)).some((name) => name.startsWith('.native-attachments-')));
+		assert.deepEqual(await downloads(), []);
 		const result = await fresh.request('libraryTask', {id: queued.id});
 		assert.equal(result.status, 'partial');
 		assert.deepEqual(

@@ -4,6 +4,7 @@ import {tmpdir} from 'node:os';
 import path from 'node:path';
 import {downloadVideo as defaultDownload} from '../index.mjs';
 import {
+	downloadAttachment,
 	entryIdentity,
 	folderOf,
 	normalizeEntry,
@@ -11,6 +12,7 @@ import {
 	workFile,
 	renderWork,
 } from './content.mjs';
+import {browserHeaders} from './post-pages.mjs';
 import {bilibiliFolderId, readBilibiliPage} from './bilibili.mjs';
 import {libraryRoot, openLibrary, problem, transaction, withWorker} from './storage.mjs';
 export {libraryRoot};
@@ -139,6 +141,15 @@ async function inputsFor(items, folder, root, options, seed) {
 			const {key} = entryIdentity(raw, folder);
 			if (options.selected && !options.selected.has(key)) continue;
 			const item = await normalizeEntry(raw, folder, root, options);
+			// A listing row without text or files is read from its post page when
+			// the worker has a reader (see options.readDetails).
+			if (
+				!item.body &&
+				!item.attachments.length &&
+				item.kind !== 'video' &&
+				item.coverage !== 'unavailable_resource'
+			)
+				item.needsDetails = true;
 			for (const [i, a] of item.attachments.entries()) {
 				if (a.path) continue;
 				const pending = options.deferAttachment?.(raw.attachments[i]);
@@ -389,6 +400,65 @@ async function fetchPages(ctx, id, cfg, options) {
 		ctx.db.prepare('UPDATE tasks SET config=? WHERE id=?').run(JSON.stringify(cfg), id);
 	}
 }
+const errorCode = (e) =>
+	typeof e?.code === 'string' && !e.code.startsWith('ERR_') ? e.code : 'save_failed';
+// Media bytes are always fetched here, never relayed through the browser, so a
+// batch has no combined size limit. A failed file keeps its slot and reason.
+async function fillDetails(ctx, item, details, options) {
+	const read = await normalizeEntry(
+		{
+			...details,
+			platform: item.platform,
+			id: item.id,
+			sourceUrl: item.sourceUrl,
+			attachments: (details.attachments ?? []).map(({kind, alt}) => ({kind, alt})),
+		},
+		null,
+		ctx.root,
+	);
+	const headers = {'user-agent': browserHeaders(details.userAgent)['user-agent']};
+	const referer = new URL(item.sourceUrl).origin + '/';
+	for (const [i, a] of read.attachments.entries()) {
+		const url = details.attachments[i]?.url;
+		delete a.missing;
+		try {
+			if (typeof url !== 'string') throw problem('source_unavailable', 'No media address.');
+			a.path = await downloadAttachment(ctx.root, url, a.kind, {
+				signal: options.signal,
+				localOrigin: options.localOrigin,
+				maxBytes: options.maxBytes,
+				referer,
+				headers,
+			});
+		} catch (e) {
+			options.signal?.throwIfAborted();
+			a.missing = true;
+			a.needsSource = true;
+			a.error = errorCode(e);
+		}
+	}
+	Object.assign(item, {
+		kind: details.kind === 'video' ? 'video' : item.kind,
+		title: read.title || item.title,
+		author: read.author || item.author,
+		body: read.body,
+		bodyFormat: read.bodyFormat,
+		bodyComplete: read.bodyComplete,
+		attachments: read.attachments,
+		missing: unique([...item.missing, ...read.missing]),
+		coverage: read.coverage || item.coverage,
+	});
+}
+function partialReason(record) {
+	return (
+		record.attachments.find((a) => a.error)?.error ||
+		(record.missing.includes('attachments')
+			? 'attachments'
+			: record.missing.includes('full text')
+				? 'full_text'
+				: 'partial')
+	);
+}
 async function saveItem(ctx, input, old, options) {
 	const item = mergeInput(old, input);
 	let missingFile = false;
@@ -416,11 +486,16 @@ async function saveItem(ctx, input, old, options) {
 	) {
 		const tmp = await mkdtemp(path.join(tmpdir(), 'fetchy-library-'));
 		try {
-			const res = await (options.downloadVideo || defaultDownload)(item.sourceUrl, {
-				outputDir: tmp,
-				signal: options.signal,
-				cookiesFile: options.cookiesFile,
-			});
+			const download = (cookiesFile) =>
+				(options.downloadVideo || defaultDownload)(item.sourceUrl, {
+					outputDir: tmp,
+					signal: options.signal,
+					cookiesFile,
+				});
+			const res =
+				!options.cookiesFile && options.withSiteCookies
+					? await options.withSiteCookies(item.sourceUrl, download)
+					: await download(options.cookiesFile);
 			const downloadId =
 				item.platform === 'bilibili' && /_p\d+$/.test(item.id)
 					? item.id.replace(/_p\d+$/, '')
@@ -482,10 +557,14 @@ export async function runLibraryTask(id, options = {}) {
 			db.prepare('UPDATE tasks SET config=? WHERE id=?').run(JSON.stringify(cfg), id);
 			db.prepare("UPDATE tasks SET status='running' WHERE id=?").run(id);
 			if (!options.retryFailed) await fetchPages(ctx, id, cfg, options);
-			const filter = options.retryFailed ? 'failed' : 'pending';
+			// A retry reads partial entries again too: their missing files keep the slot.
 			const list = db
-				.prepare('SELECT key,input FROM items WHERE task=? AND status=? ORDER BY rowid')
-				.all(id, filter);
+				.prepare(
+					options.retryFailed
+						? "SELECT key,input FROM items WHERE task=? AND status IN ('failed','partial') ORDER BY rowid"
+						: "SELECT key,input FROM items WHERE task=? AND status='pending' ORDER BY rowid",
+				)
+				.all(id);
 			for (const row of list) {
 				if (retryKeys && !retryKeys.has(row.key)) continue;
 				options.signal?.throwIfAborted();
@@ -497,12 +576,19 @@ export async function runLibraryTask(id, options = {}) {
 					if (item.attachments.some((a) => a.pendingAttachment)) {
 						for (const a of item.attachments) {
 							if (!a.pendingAttachment) continue;
-							const file = await options.resolveAttachment?.(a.pendingAttachment, a.kind);
+							let file;
+							try {
+								file = await options.resolveAttachment?.(a.pendingAttachment, a.kind, item);
+							} catch (e) {
+								options.signal?.throwIfAborted();
+								a.error = errorCode(e);
+							}
 							delete a.pendingAttachment;
 							if (file) {
 								a.path = file;
 								delete a.missing;
 								delete a.needsSource;
+								delete a.error;
 							} else {
 								a.missing = true;
 								a.needsSource = true;
@@ -516,14 +602,18 @@ export async function runLibraryTask(id, options = {}) {
 					}
 					const oldRow = db.prepare('SELECT record FROM works WHERE key=?').get(row.key);
 					const old = oldRow && JSON.parse(oldRow.record);
+					if (item.needsDetails && options.readDetails && old?.status !== 'complete')
+						await fillDetails(ctx, item, await options.readDetails(item, {taskId: id}), options);
+					delete item.needsDetails;
 					const {record, outcome} = await saveItem(ctx, item, old, options);
 					await renderWork(ctx.root, record);
 					transaction(db, () => {
 						db.prepare(
 							'INSERT INTO works VALUES(?,?) ON CONFLICT(key) DO UPDATE SET record=excluded.record',
 						).run(row.key, JSON.stringify(record));
-						db.prepare('UPDATE items SET status=?,reason=NULL WHERE task=? AND key=?').run(
+						db.prepare('UPDATE items SET status=?,reason=? WHERE task=? AND key=?').run(
 							outcome,
+							outcome === 'partial' ? partialReason(record) : null,
 							id,
 							row.key,
 						);
@@ -531,7 +621,7 @@ export async function runLibraryTask(id, options = {}) {
 				} catch (e) {
 					if (options.signal?.aborted) throw e;
 					db.prepare("UPDATE items SET status='failed',reason=? WHERE task=? AND key=?").run(
-						typeof e.code === 'string' ? e.code : 'save_failed',
+						errorCode(e),
 						id,
 						row.key,
 					);

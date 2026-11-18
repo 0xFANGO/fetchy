@@ -1,14 +1,17 @@
-import {mkdtemp, mkdir, readdir, rm, stat} from 'node:fs/promises';
+import {readdir, rm, stat} from 'node:fs/promises';
 import path from 'node:path';
+import {setTimeout as delay} from 'node:timers/promises';
 import {
 	getLibraryTask,
+	libraryRoot,
 	listLibraryTasks,
 	listRecoverableNativeTasks,
 	prepareLibraryTask,
 	runLibraryTask,
 	searchLibrary,
 } from '../src/library/index.mjs';
-import {entryIdentity, stashFile} from '../src/library/content.mjs';
+import {downloadAttachment, entryIdentity} from '../src/library/content.mjs';
+import {PAGE_LIMIT, fetchPostPage, parsePostPage} from '../src/library/post-pages.mjs';
 import {saveWebFile} from '../src/public-http.mjs';
 import {LibraryUploads} from './library-upload.mjs';
 import {EngineError, runProcess} from '../src/process.mjs';
@@ -156,6 +159,26 @@ function captureTransfers(entries) {
 	};
 }
 
+async function clearAbandonedDownloads(root) {
+	let entries;
+	try {
+		entries = await readdir(root, {withFileTypes: true});
+	} catch (error) {
+		if (error.code === 'ENOENT') return;
+		throw error;
+	}
+	for (const entry of entries) {
+		const match = /^\.download-(\d+)-[A-Za-z0-9]{6}$/.exec(entry.name);
+		if (!match || !entry.isDirectory()) continue;
+		try {
+			process.kill(Number(match[1]), 0);
+		} catch (error) {
+			if (error.code === 'ESRCH')
+				await rm(path.join(root, entry.name), {recursive: true, force: true});
+		}
+	}
+}
+
 async function clearAbandonedAttachments(directory) {
 	let entries;
 	try {
@@ -176,55 +199,147 @@ async function clearAbandonedAttachments(directory) {
 	}
 }
 
+const FEED_IDLE_MS = 20_000;
+const FEED_WAIT_MS = 120_000;
+const sameSite = (a, b) => {
+	const tail = (u) => new URL(u).hostname.split('.').slice(-2).join('.');
+	try {
+		return new URL(a).protocol === 'https:' && tail(a) === tail(b);
+	} catch {
+		return false;
+	}
+};
+
 export class LibraryBridge {
-	constructor(directory) {
+	constructor(directory, {session} = {}) {
 		this.directory = directory;
 		this.options = {root: process.env.FETCHY_LIBRARY_DIR || path.join(directory, 'library')};
 		this.active = new Map();
 		this.preparing = 0;
 		this.uploads = new LibraryUploads();
 		this.tail = Promise.resolve();
+		// Post pages read by the extension, parsed on arrival: task\nkey -> {entry|error|skip}.
+		this.pages = new Map();
+		// Last time the extension reported that it is still reading a task's pages.
+		this.feeders = new Map();
+		// Post links that carry a viewer token stay in memory only.
+		this.visits = new Map();
+		this.sessionApi = session;
+	}
+	async session() {
+		if (!this.sessionApi) {
+			const accounts = await import('../bin/accounts.mjs');
+			this.sessionApi = {
+				cookieHeader: (url) => accounts.siteCookieHeader(url),
+				withCookies: (url, action) => accounts.withSiteCookies(url, action),
+			};
+		}
+		return this.sessionApi;
+	}
+	async readDetails(taskId, item, signal) {
+		const k = taskId + '\n' + item.key;
+		const started = Date.now();
+		for (;;) {
+			const fed = this.pages.get(k);
+			if (fed) {
+				this.pages.delete(k);
+				if (fed.error) throw new EngineError(fed.error, '无法读取原帖。');
+				if (fed.entry) return fed.entry;
+				break;
+			}
+			const last = this.feeders.get(taskId);
+			if (!last || Date.now() - last > FEED_IDLE_MS || Date.now() - started > FEED_WAIT_MS) break;
+			await delay(250, undefined, {signal});
+		}
+		const url = this.visits.get(k) ?? item.sourceUrl;
+		const cookie = await (await this.session()).cookieHeader(url);
+		return fetchPostPage(item, {url, cookie, signal, localOrigin: this.options.localOrigin});
 	}
 	async run(task, options, pending) {
-		if (!pending?.size) return runLibraryTask(task.id, options);
-		await mkdir(this.directory, {recursive: true, mode: 0o700});
-		const scratch = await mkdtemp(
-			path.join(this.directory, '.native-attachments-' + process.pid + '-'),
-		);
-		const staging = stagingBudget(options);
-		try {
-			return await runLibraryTask(task.id, {
-				...options,
-				resolveAttachment: async (id, kind) => {
-					const url = pending.get(id);
-					if (!url) return;
-					const a = {kind, url};
-					await stageAttachments([{attachments: [a]}], scratch, null, {...options, staging});
-					if (!a.path) return;
-					try {
-						return await stashFile(options.root, path.join(scratch, a.path), kind, a.mimeType);
-					} catch (e) {
-						if (!['invalid_attachment', 'empty_attachment', 'ENOENT'].includes(e.code)) throw e;
+		const root = libraryRoot(options);
+		const session = await this.session();
+		const downloads = new Map();
+		return runLibraryTask(task.id, {
+			...options,
+			readDetails: (item) => this.readDetails(task.id, item, options.signal),
+			withSiteCookies: (url, action) => session.withCookies(url, action),
+			resolveAttachment: pending?.size
+				? (id, kind, item) => {
+						const url = pending.get(id);
+						if (!url) return;
+						// One file can fill several slots; fetch it once per task.
+						const key = kind + ' ' + url;
+						if (!downloads.has(key))
+							downloads.set(
+								key,
+								downloadAttachment(root, url, kind, {
+									signal: options.signal,
+									localOrigin: options.localOrigin,
+									maxBytes: options.maxBytes,
+									referer: new URL(item.sourceUrl).origin + '/',
+								}),
+							);
+						return downloads.get(key);
 					}
-				},
-			});
-		} finally {
-			await rm(scratch, {recursive: true, force: true});
-		}
+				: undefined,
+		});
 	}
 	queue(task, retryFailed, selected, pending) {
 		if (!this.active.has(task.id)) {
 			const work = this.tail.then(() =>
 				this.run(task, {...this.options, retryFailed, selected}, pending),
 			);
-			this.tail = work.catch(() => {}).finally(() => this.active.delete(task.id));
+			this.tail = work
+				.catch(() => {})
+				.finally(() => {
+					this.active.delete(task.id);
+					for (const k of this.pages.keys()) if (k.startsWith(task.id + '\n')) this.pages.delete(k);
+				});
 			this.active.set(task.id, work);
 		}
 		return summary(task);
 	}
+	feedPage(params) {
+		const {id, key, url, html, userAgent, skip} = params;
+		if (
+			typeof id !== 'string' ||
+			typeof key !== 'string' ||
+			!/^[\w-]{1,61}:./.test(key) ||
+			(!skip && (typeof url !== 'string' || typeof html !== 'string' || html.length > PAGE_LIMIT))
+		)
+			fail();
+		if (this.pages.size >= 200) throw new EngineError('busy', '本机仍在处理之前读取的原帖。');
+		this.feeders.set(id, Date.now());
+		const k = id + '\n' + key;
+		if (skip) {
+			this.pages.set(k, {skip: true});
+			return {ok: true, skipped: true};
+		}
+		const at = key.indexOf(':');
+		try {
+			const entry = parsePostPage(
+				{platform: key.slice(0, at), id: key.slice(at + 1), sourceUrl: url},
+				html,
+				url,
+				{localOrigin: this.options.localOrigin},
+			);
+			this.pages.set(k, {entry: {...entry, userAgent}});
+			return {
+				ok: true,
+				title: entry.title,
+				bodyComplete: entry.bodyComplete,
+				attachments: entry.attachments.length,
+			};
+		} catch (error) {
+			const code = typeof error.code === 'string' ? error.code : 'source_unavailable';
+			this.pages.set(k, {error: code});
+			return {ok: false, code};
+		}
+	}
 	async request(method, params) {
 		if (!this.recovery) {
 			this.recovery = clearAbandonedAttachments(this.directory)
+				.then(() => clearAbandonedDownloads(libraryRoot(this.options)))
 				.then(() => listRecoverableNativeTasks(this.options))
 				.then((tasks) => {
 					for (const task of tasks) this.queue(task, false);
@@ -236,6 +351,13 @@ export class LibraryBridge {
 		}
 		await this.recovery;
 		switch (method) {
+			case 'libraryPage':
+				return this.feedPage(params);
+			case 'libraryFeed':
+				if (typeof params.id !== 'string') fail();
+				if (params.active === true) this.feeders.set(params.id, Date.now());
+				else this.feeders.delete(params.id);
+				return {ok: true};
 			case 'libraryUploadStart':
 				return this.uploads.start();
 			case 'libraryUploadPart':
@@ -326,12 +448,29 @@ export class LibraryBridge {
 					)
 						fail();
 					const transfers = captureTransfers(entries);
+					const visits = new Map();
+					for (const entry of entries) {
+						const visit = entry.visitUrl;
+						delete entry.visitUrl;
+						if (typeof visit !== 'string' || visit.length > 4096) continue;
+						const local =
+							this.options.localOrigin && visit.startsWith(this.options.localOrigin + '/');
+						if (!local && !sameSite(visit, entry.sourceUrl)) continue;
+						try {
+							visits.set(entryIdentity(entry).key, visit);
+						} catch {
+							/* prepareLibraryTask reports invalid entries */
+						}
+					}
 					const task = await prepareLibraryTask(manifest, {
 						...this.options,
 						selected,
 						nativeQueue: true,
 						deferAttachment: transfers.deferAttachment,
 					});
+					for (const [key, visit] of visits) this.visits.set(task.id + '\n' + key, visit);
+					// The extension reads pages after the task exists; the worker waits for them.
+					if (params.feed === true) this.feeders.set(task.id, Date.now());
 					return this.queue(task, false, undefined, transfers.pending);
 				} finally {
 					this.preparing--;

@@ -1,11 +1,13 @@
 import {createHash, randomUUID} from 'node:crypto';
 import {createReadStream, createWriteStream} from 'node:fs';
-import {link, mkdir, realpath, rename, rm, stat, writeFile} from 'node:fs/promises';
+import {link, mkdir, mkdtemp, open, realpath, rename, rm, stat, writeFile} from 'node:fs/promises';
 import path from 'node:path';
 import {Readable, Transform} from 'node:stream';
 import {pipeline} from 'node:stream/promises';
+import {setTimeout as delay} from 'node:timers/promises';
 import {problem} from './storage.mjs';
 import {runProcess} from '../process.mjs';
+import {saveWebFile} from '../public-http.mjs';
 import {normalizeUrl} from '../urls.mjs';
 
 const text = (v, max = 4096) => (typeof v === 'string' ? v.slice(0, max) : '');
@@ -195,6 +197,67 @@ export async function stashFile(root, file, kind, mimeType) {
 	);
 	if (!valid) throw problem('invalid_attachment', 'Attachment type differs from its file type.');
 	return stash(root, createReadStream(file), ext);
+}
+async function sniffMime(file, kind) {
+	const handle = await open(file, 'r');
+	try {
+		const bytes = Buffer.alloc(64);
+		const {bytesRead} = await handle.read(bytes, 0, 64, 0);
+		const head = bytes.subarray(0, bytesRead);
+		for (const [mime, ext] of Object.entries(MIME))
+			if (mime.startsWith(kind + '/') && head.length >= 8 && matchesMediaHeader(head, ext))
+				return mime;
+	} finally {
+		await handle.close();
+	}
+	return '';
+}
+
+// A refused or missing file does not come back by asking again.
+const retryable = (e) =>
+	e.code === 'timeout' ||
+	(e.code === 'network_error' && (!e.httpStatus || e.httpStatus === 429 || e.httpStatus >= 500));
+/**
+ * Download one attachment from its media URL into the library. The page that
+ * listed it is sent as Referer; no site cookies are sent to media hosts.
+ * Throws an error with a stable code; transient network failures are retried.
+ */
+export async function downloadAttachment(root, url, kind, options = {}) {
+	const attempts = options.attempts ?? 3;
+	const headers = {...options.headers};
+	if (options.referer) headers.referer = options.referer;
+	await mkdir(root, {recursive: true, mode: 0o700});
+	for (let attempt = 0; ; attempt++) {
+		const dir = await mkdtemp(path.join(root, '.download-' + process.pid + '-'));
+		const file = path.join(dir, 'media');
+		try {
+			const signal = AbortSignal.any([
+				AbortSignal.timeout(options.timeoutMs ?? 30 * 60_000),
+				...(options.signal ? [options.signal] : []),
+			]);
+			let {mimeType} = await saveWebFile(url, file, {
+				signal,
+				headers,
+				localOrigin: options.localOrigin,
+				maxBytes: options.maxBytes ?? 8 * 1024 ** 3,
+			}).catch((error) => {
+				if (signal.aborted && !options.signal?.aborted)
+					throw problem('timeout', 'Attachment download timed out.');
+				throw error;
+			});
+			if (!MIME[mimeType] || !mimeType.startsWith(kind + '/'))
+				mimeType = await sniffMime(file, kind);
+			if (!mimeType.startsWith(kind + '/'))
+				throw problem('invalid_attachment', 'Downloaded media has another type.');
+			return await stashFile(root, file, kind, mimeType);
+		} catch (error) {
+			options.signal?.throwIfAborted();
+			if (!retryable(error) || attempt + 1 >= attempts) throw error;
+			await delay((options.backoffMs ?? 1000) * 3 ** attempt, undefined, {signal: options.signal});
+		} finally {
+			await rm(dir, {recursive: true, force: true});
+		}
+	}
 }
 export async function normalizeEntry(raw, folder, root, options = {}) {
 	if (!raw || typeof raw !== 'object') throw problem('invalid_entry', 'Expected an item object.');

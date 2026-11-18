@@ -28,7 +28,7 @@ export function browserSessionScope(url) {
 	return {scope: url.origin, hosts: [url.hostname]};
 }
 
-function sessionTarget(input) {
+export function sessionTarget(input) {
 	let url;
 	try {
 		url = new URL(input);
@@ -55,7 +55,7 @@ function sessionTarget(input) {
 	return {url, hosts, profile, marker: path.join(dataDirectory(), 'browser-sites', profile)};
 }
 
-async function appBundle() {
+export async function appBundle() {
 	if (process.platform !== 'darwin')
 		throw new EngineError('browser_unavailable', 'Fetchy 专属浏览器需要 macOS 14 或更高版本。');
 	const packaged = path.resolve(root, '../../..');
