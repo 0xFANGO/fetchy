@@ -9,6 +9,7 @@ import {fileURLToPath} from 'node:url';
 import {setTimeout as delay} from 'node:timers/promises';
 import {
 	browse,
+	browserSessionScope,
 	captureWithSession,
 	downloadWithSession,
 	hasSession,
@@ -25,6 +26,28 @@ test('the browser rejects credentials, local files and cleartext remote origins'
 	]) {
 		await assert.rejects(() => browse(input), {code: 'invalid_url'});
 		assert.equal(await hasSession(input), false);
+	}
+});
+
+test('dedicated profiles and capture hosts respect independently operated sites', () => {
+	const plan = (host) => browserSessionScope(new URL('https://' + host + '/'));
+	for (const [a, b] of [
+		['framatube.org', 'video.blender.org'],
+		['artist-a.bandcamp.com', 'artist-b.bandcamp.com'],
+		['alice.tumblr.com', 'bob.tumblr.com'],
+		['alice.tumblr.com', 'www.tumblr.com'],
+	]) {
+		assert.notEqual(plan(a).scope, plan(b).scope);
+		assert.deepEqual(plan(a).hosts, [a]);
+	}
+	for (const [a, b] of [
+		['www.x.com', 'twitter.com'],
+		['b23.tv', 'www.bilibili.com'],
+		['xhslink.com', 'www.xiaohongshu.com'],
+		['tumblr.com', 'www.tumblr.com'],
+	]) {
+		assert.equal(plan(a).scope, plan(b).scope);
+		assert.ok(plan(a).hosts.includes(b));
 	}
 });
 
@@ -170,6 +193,10 @@ test(
 		await enter();
 		assert.equal(await hasSession(site + '/watch'), true);
 		assert.equal(await hasSession(site.replace('127.0.0.1', 'localhost') + '/watch'), false);
+		const otherSite = site.replace('127.0.0.1', 'localhost');
+		const otherLogout = await command('logout', otherSite);
+		assert.equal(otherLogout.code, 0, otherLogout.stderr);
+		assert.equal(await hasSession(site + '/watch'), true);
 		for (const page of ['/watch', '/dynamic', '/movie.mp4']) {
 			const saved = await downloadWithSession(site + page, opts);
 			assert.equal(saved.validation.width, 160);

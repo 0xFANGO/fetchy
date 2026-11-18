@@ -137,6 +137,7 @@ function peerTubeUuid(shortId) {
 
 export const peerTube = {
 	id: 'peertube',
+	browserProfile: 'origin',
 	label: 'PeerTube',
 	hosts: ['framatube.org', 'video.blender.org'],
 	extractor: 'PeerTube',

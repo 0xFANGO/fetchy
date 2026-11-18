@@ -13,6 +13,17 @@ import {normalizeUrl} from '../src/urls.mjs';
 const root = fileURLToPath(new URL('../', import.meta.url));
 const digest = (value) => createHash('sha256').update(value).digest('hex');
 
+// An extractor may support several independent instances or tenant-owned hosts.
+// Only its explicitly registered aliases can share a website data store.
+export function browserSessionScope(url) {
+	const site = url.protocol === 'https:' && !url.port ? siteForHost(url.hostname) : null;
+	const aliases = site ? [...site.hosts, ...(site.shortHosts ?? [])] : [];
+	if (site?.browserProfile !== 'origin' && aliases.includes(url.hostname)) {
+		return {scope: 'https:site:' + site.id, hosts: [...new Set(aliases)]};
+	}
+	return {scope: url.origin, hosts: [url.hostname]};
+}
+
 function sessionTarget(input) {
 	let url;
 	try {
@@ -28,11 +39,7 @@ function sessionTarget(input) {
 		url.password
 	)
 		throw new EngineError('invalid_url', '请提供 HTTPS 网页地址，本机测试也可使用回环 HTTP 地址。');
-	const site = url.protocol === 'https:' && !url.port ? siteForHost(url.hostname) : null;
-	const hosts = site
-		? [...new Set([url.hostname, ...site.hosts, ...(site.shortHosts ?? [])])]
-		: [url.hostname];
-	const scope = site ? 'https:site:' + site.id : url.origin;
+	const {hosts, scope} = browserSessionScope(url);
 	const key = digest(dataDirectory() + '\0' + scope).slice(0, 32);
 	const profile = [
 		key.slice(0, 8),

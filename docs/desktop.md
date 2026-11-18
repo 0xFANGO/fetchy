@@ -23,7 +23,7 @@ node bin/fetchy.mjs get '<page URL>' --output ./downloads
 node bin/fetchy.mjs logout '<page URL>'
 ```
 
-**在专属浏览器打开** opens the same WebKit browser from the desktop. Registered platform hosts share their Fetchy profile. Other origins, including different loopback ports, receive separate profiles. The site controls login, expiration and access. Open the original page with `browse` to renew a session, then repeat `get`. Explicit logout clears the site's Fetchy website data and closes its open Fetchy login window.
+**在专属浏览器打开** opens the same WebKit browser from the desktop. Registered aliases of the same service share their Fetchy profile. PeerTube instances and tenant-owned Bandcamp or Tumblr hosts each use their own profile for browsing, capture and logout. Other origins, including different loopback ports, receive separate profiles. The site controls login, expiration and access. Open the original page with `browse` to renew a session, then repeat `get`. Explicit logout clears the site's Fetchy website data and closes its open Fetchy login window.
 
 The article capture path uses the same page adapter as the extension to read a matching post and its ordered attachments. Missing media and truncated text remain marked as partial when archived.
 
