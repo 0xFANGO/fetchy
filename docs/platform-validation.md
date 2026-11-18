@@ -1,6 +1,6 @@
 # Single-link media validation
 
-These anonymous checks used the public Node API, yt-dlp 2026.10.21, FFmpeg 8.0.1 and Node 25.8.0 on November 18, 2026. For each file, the download receipt matched the source ID from a separate resolve. ffprobe reported the tracks, duration and byte count below. FFmpeg then decoded the full audio and video streams with error handling enabled. The media samples have H.264 video and AAC audio unless marked silent. Standalone audio samples have one AAC track in an M4A container. [Capability matrix](platforms.md) · [Earlier CLI checks](validation.md) · [Browser checks](extension-validation.md)
+These anonymous checks used the public Node API, yt-dlp 2026.10.21, FFmpeg 8.0.1 and Node 25.8.0 on November 18, 2026. For each file, the download receipt matched the source ID from a separate resolve. ffprobe reported the tracks, duration and byte count below. FFmpeg then decoded the full audio and video streams with error handling enabled. MP4 samples have H.264 video and AAC audio unless marked silent. Standalone audio samples have one AAC track in an M4A container. [Capability matrix](platforms.md) · [Earlier CLI checks](validation.md) · [Browser checks](extension-validation.md)
 
 ## Saved and decoded
 
@@ -43,7 +43,7 @@ For the Loom lecture, the source advertised 6,768 seconds and the playable file 
 - The two FramaTube items name the uploader and their licenses. The first uses CC BY-SA and the second uses CC BY. [What is PeerTube? credits](https://framatube.org/api/v1/videos/9c9de5e8-0a1e-484a-b099-e80766180a6d) · [Rushhour credits](https://framatube.org/api/v1/videos/7c371dce-2943-4b4a-8d06-64996db15f52)
 - NASA’s Twitch channel carried footage from Glenn Research Center and the International Space Station. NASA links to both SoundCloud recordings from its audio collection. [NASA audio and ringtones](https://www.nasa.gov/audio-and-ringtones/) · [NASA media guidance](https://www.nasa.gov/nasa-brand-center/images-and-media/)
 - The TED samples are complete, unedited talks used for a noncommercial check under TED’s usage policy. [TED Talks usage policy](https://www.ted.com/about/our-organization/our-policies-terms/ted-talks-usage-policy)
-- Kris Attfield publishes the original Odysee recording under CC BY 4.0. [CC BY 4.0](https://creativecommons.org/licenses/by/4.0/)
+- Kris Attfield publishes the two original Odysee recordings under CC BY 4.0. [CC BY 4.0](https://creativecommons.org/licenses/by/4.0/)
 - The Loom source records identify the individual works and licenses. [Introdução à teoria do cinema (CC BY 3.0)](https://commons.wikimedia.org/?curid=172151235)
 - The TikTok source records identify the individual works and licenses. [Volcán Villarrica Street field recording (original TikTok video, CC BY 4.0)](https://commons.wikimedia.org/?curid=121329693) · [Alemania Avenue field recording (original TikTok video, CC BY 4.0)](https://commons.wikimedia.org/?curid=121388364)
 - The VK source records identify the individual works and licenses. [Будем зорки (1927) (Public domain)](https://commons.wikimedia.org/?curid=153273443) · [Novogorny cultural centre recording (Public domain)](https://commons.wikimedia.org/?curid=173518109)
@@ -86,6 +86,10 @@ In an ordinary signed-out browser, the extension’s page reader located each Th
 All five videos decoded to the end at 720×1280 with H.264 video and AAC audio. Player preview images are excluded from the attachment list. Both captions matched the rendered text verbatim. Reopening the local library confirmed six attachments in order, with bytes matching the browser responses. One post retained a partial status because the source did not confirm its carousel inventory.
 
 The same current-page reader returned a partial caption and no video attachment for the NASA Instagram Reel below. The single-video Instagram adapter saved the Reel in separate checks. The Kuaishou sample rendered a caption and video player. The reader returned no caption, could not obtain a URL for the player, and found an unverified image. No Kuaishou media was counted as saved. [Instagram Reel](https://www.instagram.com/reel/Dd1gQBsCWE8/) · [Kuaishou sample](https://www.kuaishou.com/short-video/3x5pf8ia4zc76tc)
+
+## Earlier platform rerun
+
+Two YouTube files passed independent decoding. Two Bilibili links resolved and then failed during transfer. The Douyin post required a session in the anonymous CLI and produced a 576×1024 H.264/AAC MP4 via the browser engine. The Xiaohongshu note previously missing an audio track did not expose playback data on its bare public URL. The original missing-audio condition requires a currently playable copy to retest. [CLI checks](validation.md) · [Browser checks](extension-validation.md)
 
 ## Repeating a file check
 

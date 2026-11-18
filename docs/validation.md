@@ -4,7 +4,7 @@
 
 ## 2026-11-18 多平台单链复测
 
-同一版本通过 CLI 重跑了 YouTube、B 站、抖音和小红书。YouTube 的两份 MP4 均由 FFmpeg 解码到结尾。B 站两个样例在传输阶段返回 `network_error`。抖音公开链接返回 `session_required`。小红书两个不带分享参数的链接均返回 `no_formats`，其中一条是旧浏览器实测中缺少预期音轨的作品。新批次只对实际文件计入保存成功。[逐站成品、音频规格与受限样例](platform-validation.md) · [浏览器当前页验收](platform-validation.md#current-page-capture)
+同一版本通过 CLI 重跑了 YouTube、B 站、抖音和小红书。YouTube 的两份 MP4 均由 FFmpeg 解码到结尾。B 站两个样例在传输阶段返回 `network_error`。抖音公开链接返回 `session_required`。小红书两个不带分享参数的链接均返回 `no_formats`，其中一条是旧浏览器实测中缺少预期音轨的作品。同一抖音作品用真实浏览器页面另行保存后通过完整解码。小红书旧无音轨作品在浏览器未返回目标播放器。[逐站成品、音频规格与受限样例](platform-validation.md) · [浏览器当前页验收](platform-validation.md#current-page-capture)
 
 | YouTube 样例                                                                        | MP4 成品                                             |
 | ----------------------------------------------------------------------------------- | ---------------------------------------------------- |

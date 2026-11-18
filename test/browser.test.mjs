@@ -23,7 +23,7 @@ const canEncode = (...names) =>
 	probeCheck?.code === 0 &&
 	names.every((name) => encoderCheck.stdout.includes(name));
 
-async function syntheticMedia(root, {extension, vcodec, acodec}) {
+async function syntheticMedia(root, {extension, vcodec, acodec, silent}) {
 	const filepath = path.join(root, `source.${extension}`);
 	const args = [
 		'-hide_banner',
@@ -47,6 +47,7 @@ async function syntheticMedia(root, {extension, vcodec, acodec}) {
 		'-c:a',
 		acodec,
 	];
+	if (silent) args.push('-an');
 	if (vcodec === 'libvpx-vp9') args.push('-deadline', 'realtime', '-cpu-used', '8');
 	if (vcodec === 'libx265') args.push('-x265-params', 'log-level=error:pools=none:frame-threads=1');
 	args.push(filepath);
@@ -344,9 +345,10 @@ for (const fixture of [
 	{extension: 'webm', vcodec: 'libvpx-vp9', acodec: 'libopus', accepted: false},
 	{extension: 'mp4', vcodec: 'libx264', acodec: 'aac', accepted: true, expectedCodec: 'h264'},
 	{extension: 'mp4', vcodec: 'libx265', acodec: 'aac', accepted: true, expectedCodec: 'hevc'},
+	{extension: 'mp4', vcodec: 'libx264', acodec: 'aac', accepted: false, silent: true},
 ]) {
 	test(
-		`browser validates the actual container of ${fixture.vcodec}/${fixture.extension} media before publishing`,
+		`browser validates ${fixture.silent ? 'a silent' : 'a'} ${fixture.vcodec}/${fixture.extension} file before publishing`,
 		{
 			skip: canEncode(fixture.vcodec, fixture.acodec)
 				? false
@@ -392,7 +394,17 @@ for (const fixture of [
 			} else {
 				await assert.rejects(download, {
 					code: 'output_invalid',
-					message: '下载文件不是支持的 MP4 容器。',
+					...(fixture.silent
+						? {
+								details: {
+									video: true,
+									audio: false,
+									durationSeconds: 0.6,
+									expectedDurationSeconds: 0.6,
+									probeExitCode: 0,
+								},
+							}
+						: {message: '下载文件不是支持的 MP4 容器。'}),
 				});
 				assert.deepEqual(await readdir(outputDir), ['视频.mp4']);
 				assert.equal(stages.includes('complete'), false);
