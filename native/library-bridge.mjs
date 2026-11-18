@@ -360,7 +360,8 @@ export class LibraryBridge {
 				.then(() => clearAbandonedDownloads(libraryRoot(this.options)))
 				.then(() => listRecoverableNativeTasks(this.options))
 				.then((tasks) => {
-					for (const task of tasks) this.queue(task, false);
+					for (const task of tasks)
+						this.queue(task, Boolean(task.retry), task.retry?.selected ?? undefined);
 				})
 				.catch((error) => {
 					this.recovery = null;
@@ -487,7 +488,11 @@ export class LibraryBridge {
 				)
 					fail();
 				if (this.active.has(task.id)) throw new EngineError('busy', '这个任务还在保存中。');
-				await markLibraryTaskQueued(task.id, this.options);
+				await markLibraryTaskQueued(
+					task.id,
+					this.options,
+					method === 'libraryRetry' ? {selected: params.selected} : undefined,
+				);
 				return this.queue({...task, status: 'queued'}, method === 'libraryRetry', params.selected);
 			}
 			case 'libraryStart': {

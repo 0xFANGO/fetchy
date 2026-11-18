@@ -667,12 +667,19 @@ export async function runLibraryTask(id, options = {}) {
 					: partial || c.failed
 						? 'partial'
 						: 'completed';
-			db.prepare('UPDATE tasks SET status=? WHERE id=?').run(status, id);
+			// A finished run has carried out any pending retry.
+			db.prepare("UPDATE tasks SET status=?, config=json_remove(config,'$.retry') WHERE id=?").run(
+				status,
+				id,
+			);
 			return taskResult(ctx, id);
 		}).catch((err) => {
+			// Cancelled by its caller (the CLI's Ctrl+C): the native worker must not resume it on its own.
 			if (owned)
 				db.prepare(
-					"UPDATE tasks SET status='interrupted' WHERE id=? AND status='running' AND json_extract(config,'$.runId')=?",
+					options.signal?.aborted
+						? "UPDATE tasks SET status='interrupted', config=json_set(config,'$.nativeQueue',json('false')) WHERE id=? AND status='running' AND json_extract(config,'$.runId')=?"
+						: "UPDATE tasks SET status='interrupted' WHERE id=? AND status='running' AND json_extract(config,'$.runId')=?",
 				).run(id, runId);
 			throw err;
 		});
@@ -685,15 +692,15 @@ export async function importLibrary(manifest, options = {}) {
 	return runLibraryTask(task.id, options);
 }
 /** Show a task as waiting while a retry or resume sits in the native queue. */
-export async function markLibraryTaskQueued(id, options = {}) {
+export async function markLibraryTaskQueued(id, options = {}, retry) {
 	const ctx = await openLibrary(options);
 	try {
-		// Native-owned from now on, so a restart picks it up again.
+		// Native-owned from now on, so a restart picks it up again, as a retry when it was one.
 		ctx.db
 			.prepare(
-				"UPDATE tasks SET status='queued', config=json_set(config,'$.nativeQueue',json('true')) WHERE id=? AND status<>'running'",
+				"UPDATE tasks SET status='queued', config=json_set(config,'$.nativeQueue',json('true'),'$.retry',json(?)) WHERE id=? AND status<>'running'",
 			)
-			.run(id);
+			.run(JSON.stringify(retry ? {selected: retry.selected ?? null} : null), id);
 	} finally {
 		ctx.db.close();
 	}
@@ -720,10 +727,13 @@ export async function listRecoverableNativeTasks(options = {}) {
 	try {
 		return ctx.db
 			.prepare(
-				"SELECT id FROM tasks WHERE status IN ('queued','running','interrupted') AND json_extract(config,'$.nativeQueue') = 1 ORDER BY created",
+				"SELECT id, json_extract(config,'$.retry') AS retry FROM tasks WHERE status IN ('queued','running','interrupted') AND json_extract(config,'$.nativeQueue') = 1 ORDER BY created",
 			)
 			.all()
-			.map(({id}) => taskResult(ctx, id, false))
+			.map(({id, retry}) => ({
+				...taskResult(ctx, id, false),
+				retry: retry ? JSON.parse(retry) : null,
+			}))
 			.filter((task) => task.status !== 'running');
 	} finally {
 		ctx.db.close();

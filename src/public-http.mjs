@@ -61,6 +61,7 @@ const knownDomains = [
 		'kwai.net',
 		'kwaicdn.com',
 		'yximgs.com',
+		'kwimgs.com',
 		'gifshow.com',
 	]),
 ];

@@ -32,6 +32,10 @@ func otherWindowInstance() -> NSRunningApplication? {
       runHidden(mode, args)
       return
     }
+    // `fetchy login` and `fetchy browse` reach a running window through this notification.
+    // Listen before anything else: AppState can take a request before the window exists.
+    DistributedNotificationCenter.default().addObserver(
+      self, selector: #selector(receiveOpen(_:)), name: openRequest, object: nil)
     var route = args
     if let index = route.firstIndex(of: "--data-dir"), index + 1 < route.count {
       dataDirectoryOverride = route[index + 1]
@@ -68,9 +72,6 @@ func otherWindowInstance() -> NSRunningApplication? {
     panel.center()
     panel.makeKeyAndOrderFront(nil)
     NSApp.activate(ignoringOtherApps: true)
-    // `fetchy login` and `fetchy browse` reach a running window through this notification.
-    DistributedNotificationCenter.default().addObserver(
-      self, selector: #selector(receiveOpen(_:)), name: openRequest, object: nil)
     // `fetchy logout` clears the store in another process; this window drops its copy too.
     DistributedNotificationCenter.default().addObserver(
       self, selector: #selector(receiveLogout(_:)), name: siteLoggedOut, object: nil)
@@ -128,7 +129,9 @@ func otherWindowInstance() -> NSRunningApplication? {
       DispatchQueue.main.asyncAfter(deadline: .now() + 1.5) {
         // A window that is slow to answer still gets the request; only hidden helpers
         // (accessory policy) or no instance at all mean a new window must be launched.
-        BrowserSession.respond(["ok": true, "delivered": otherWindowInstance() != nil])
+        BrowserSession.respond([
+          "ok": true, "delivered": otherWindowInstance()?.isFinishedLaunching == true,
+        ])
       }
       return
     }

@@ -314,7 +314,12 @@ function scheduleSync(mine) {
 		if (mine !== generation || !collection) return;
 		if (!reading) {
 			try {
-				const added = mergePage(collection, await capture(tabId, 1));
+				const page = await capture(tabId, 1);
+				// While an item of the list is open, its page is not this collection.
+				const added =
+					page.type === 'collection' && key(page.folder) === key(collection.folder)
+						? mergePage(collection, page)
+						: 0;
 				if (added) {
 					for (const item of [...collection.items.values()].slice(-added)) selected.add(key(item));
 					renderCollection();
@@ -388,13 +393,17 @@ async function refreshTask() {
 	let task;
 	try {
 		// Only problem entries, every page of them, so a failure at entry 300 still shows.
-		task = await libraryRpc('libraryTask', {id, problems: 'failed'});
-		let items = task.items || [];
+		let mode = 'failed';
+		task = await libraryRpc('libraryTask', {id, problems: mode});
 		const c0 = task.counts || {};
-		// Never page past what the counts allow, e.g. against an older component.
-		const limit = Math.min(task.totalItems || 0, (c0.failed || 0) + (c0.partial || 0));
-		while (items.length < limit) {
-			const next = await libraryRpc('libraryTask', {id, problems: 'failed', offset: items.length});
+		// An older component ignores 'failed' and returns every entry; it does filter `true`.
+		if ((task.totalItems || 0) > (c0.failed || 0) + (c0.partial || 0)) {
+			mode = true;
+			task = await libraryRpc('libraryTask', {id, problems: mode});
+		}
+		let items = task.items || [];
+		while (items.length < (task.totalItems || 0)) {
+			const next = await libraryRpc('libraryTask', {id, problems: mode, offset: items.length});
 			if (!next.items?.length) break;
 			items = items.concat(next.items);
 		}
@@ -509,6 +518,12 @@ chrome.tabs.onUpdated.addListener(async (id, change) => {
 	if (id !== tabId || reading || autoReading) return;
 	if (change.status !== 'complete' && !change.url) return;
 	if (collection) {
+		const tab = await chrome.tabs.get(tabId).catch(() => null);
+		let sameOrigin = false;
+		try {
+			sameOrigin = new URL(tab.url).origin === origin;
+		} catch {}
+		if (!sameOrigin || !collection) return void loadPage();
 		let page;
 		try {
 			page = await capture(tabId, 3);
@@ -517,10 +532,15 @@ chrome.tabs.onUpdated.addListener(async (id, change) => {
 		}
 		if (!collection) return void loadPage();
 		if (page.type === 'collection' && key(page.folder) === key(collection.folder)) {
-			if (mergePage(collection, page)) renderCollection();
+			if (collection.reason === 'identity_mismatch') collection.reason = null;
+			const added = mergePage(collection, page);
+			for (const item of [...collection.items.values()].slice(collection.items.size - added))
+				selected.add(key(item));
+			renderCollection();
 			return;
 		}
-		if (page.type !== 'collection' && page.type !== 'folders') return;
+		// Only a post opened from the list (a modal or photo viewer) keeps the list.
+		if (page.type === 'post') return;
 	}
 	void loadPage();
 });
