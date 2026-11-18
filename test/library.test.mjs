@@ -337,3 +337,128 @@ test('different Bilibili parts have different archive identities, and absent sel
 	const rows = await searchLibrary({platform}, opts);
 	assert.notEqual(rows[0].filepath, rows[1].filepath);
 });
+
+test('a standalone download fills its slot in a post and preserves the body and adjacent images in either import order', async (t) => {
+	const mp4 = await shortVideo(await setup(t));
+	const media = {kind: 'video', mimeType: 'video/mp4', data: mp4.toString('base64')};
+	const first = {kind: 'image', mimeType: 'image/png', data: png, alt: 'First photo'};
+	const last = {...first, alt: 'Last photo'};
+	const original = post('655', {
+		title: 'Original title',
+		body: '# First\nMiddle\nLast',
+		bodyFormat: 'markdown',
+		attachments: [first, {kind: 'video', missing: true, alt: 'The clip'}, last],
+		notes: 'My own notes',
+		topics: ['research'],
+	});
+	const standalone = post('655', {
+		kind: 'video',
+		body: '',
+		author: '',
+		title: 'clip.mp4',
+		bodyComplete: true,
+		attachments: [media],
+	});
+	for (const inputs of [
+		[original, standalone],
+		[standalone, original],
+	]) {
+		const opts = await setup(t);
+		for (const item of inputs) await importLibrary(manifest([item]), opts);
+		for (const item of inputs) {
+			const repeated = await importLibrary(manifest([item]), opts);
+			assert.equal(repeated.counts.skipped, 1);
+		}
+		const [entry] = await searchLibrary({key: 'x:655'}, opts);
+		assert.equal(entry.body, original.body);
+		assert.equal(entry.bodyFormat, 'markdown');
+		assert.equal(entry.title, original.title);
+		assert.equal(entry.author, original.author);
+		assert.equal(entry.notes, original.notes);
+		assert.deepEqual(entry.topics, original.topics);
+		assert.deepEqual(
+			entry.attachments.map((a) => [a.kind, a.alt, !!a.path]),
+			[
+				['image', 'First photo', true],
+				['video', 'The clip', true],
+				['image', 'Last photo', true],
+			],
+		);
+		assert.equal(entry.status, 'complete');
+	}
+});
+
+test('a media-only refresh preserves missing original text and specific partial coverage', async (t) => {
+	const opts = await setup(t);
+	const data = (await shortVideo(opts)).toString('base64');
+	const attachment = {kind: 'video', mimeType: 'video/mp4', data};
+	await importLibrary(
+		manifest([
+			post('656', {
+				body: 'Caption preview',
+				bodyComplete: false,
+				attachments: [{kind: 'video', missing: true}],
+				missing: ['album coverage unknown'],
+			}),
+		]),
+		opts,
+	);
+	const updated = await importLibrary(
+		manifest([
+			post('656', {kind: 'video', body: '', bodyComplete: true, attachments: [attachment]}),
+		]),
+		opts,
+	);
+	assert.equal(updated.counts.partial, 1);
+	const [record] = await searchLibrary({key: 'x:656'}, opts);
+	assert.equal(record.body, 'Caption preview');
+	assert.equal(record.bodyComplete, false);
+	assert.deepEqual(record.missing, ['album coverage unknown', 'full text']);
+	const full = await importLibrary(
+		manifest([
+			post('656', {body: 'All original text', bodyComplete: true, attachments: [attachment]}),
+		]),
+		opts,
+	);
+	assert.equal(full.counts.added, 1);
+	assert.deepEqual((await searchLibrary({key: 'x:656'}, opts))[0].missing, []);
+});
+
+test('retry selection only touches requested failed items and leaves completed rows alone', async (t) => {
+	const opts = await setup(t);
+	const selected = ['701', '702'].map((id) =>
+		post(id, {kind: 'video', body: '', bodyComplete: false}),
+	);
+	const failed = await importLibrary(manifest([...selected, post('703')]), {
+		...opts,
+		downloadVideo: async () => {
+			throw Object.assign(new Error(), {code: 'unavailable'});
+		},
+	});
+	const attempted = [];
+	const fixture = await shortVideo(opts);
+	const downloadVideo = async (url, {outputDir}) => {
+		const id = new URL(url).pathname.split('/').pop();
+		attempted.push(id);
+		const filepath = path.join(outputDir, 'fixture.mp4');
+		await writeFile(filepath, fixture);
+		return {id, platform: 'x', filepath};
+	};
+	await assert.rejects(runLibraryTask(failed.id, {...opts, retryFailed: true, selected: 'x:701'}), {
+		code: 'invalid_options',
+	});
+	const one = await runLibraryTask(failed.id, {
+		...opts,
+		retryFailed: true,
+		selected: ['x:702', 'x:703'],
+		downloadVideo,
+	});
+	assert.deepEqual(attempted, ['702']);
+	assert.deepEqual(one.counts, {added: 2, skipped: 0, partial: 0, failed: 1, pending: 0});
+	assert.equal(one.items.find((x) => x.key === 'x:701').reason, 'unavailable');
+	await runLibraryTask(failed.id, {...opts, retryFailed: true, selected: [], downloadVideo});
+	assert.deepEqual(attempted, ['702']);
+	const rest = await runLibraryTask(failed.id, {...opts, retryFailed: true, downloadVideo});
+	assert.equal(rest.counts.failed, 0);
+	assert.deepEqual(attempted, ['702', '701']);
+});

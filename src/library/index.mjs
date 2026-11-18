@@ -26,22 +26,87 @@ function memberships(a = [], b = []) {
 	}
 	return [...folders.values()];
 }
+function isMediaOnly(entry) {
+	return ['video', 'audio'].includes(entry.kind) && !entry.body;
+}
+
+// The richer post supplies the sequence. A separate media download can fill a
+// unique video/audio slot, including one in the middle of a photo gallery.
+function mergeAttachments(primary, other) {
+	const ordered = primary.attachments.map((a) => ({...a}));
+	const used = new Set();
+	const aligned =
+		ordered.length === other.attachments.length &&
+		ordered.every((a, i) => a.kind === other.attachments[i].kind);
+	const positions = other.attachments.map((a) => {
+		if (!a.path) return -1;
+		const match = ordered.findIndex(
+			(v, j) => !used.has(j) && v.path === a.path && v.kind === a.kind,
+		);
+		if (match !== -1) used.add(match);
+		return match;
+	});
+	for (const [i, a] of other.attachments.entries()) {
+		let at = positions[i];
+		if (at === -1) {
+			const candidates = ordered.flatMap((v, j) => (!used.has(j) && v.kind === a.kind ? [j] : []));
+			const labelled = candidates.filter(
+				(j) => (a.alt && a.alt === ordered[j].alt) || (a.name && a.name === ordered[j].name),
+			);
+			if (labelled.length === 1) at = labelled[0];
+			else if (aligned && !used.has(i)) at = i;
+			else if (
+				candidates.length === 1 &&
+				(isMediaOnly(other) || !a.path || !ordered[candidates[0]].path)
+			)
+				at = candidates[0];
+		}
+		if (at === -1) {
+			ordered.push({...a});
+			used.add(ordered.length - 1);
+			continue;
+		}
+		used.add(at);
+		const slot = ordered[at];
+		if (!slot.path && a.path) {
+			slot.path = a.path;
+			delete slot.missing;
+		}
+		slot.alt ||= a.alt || '';
+		slot.name ||= a.name || '';
+	}
+	return ordered;
+}
+
 function mergeInput(old, item) {
 	if (!old || !old.sourceUrl || !item.sourceUrl) return item;
-	const body =
-		item.bodyComplete || (!old.bodyComplete && item.body.length >= old.body.length) ? item : old;
-	const attachments =
-		item.attachments.length >= old.attachments.length
-			? item.attachments.map((v, i) =>
-					v.path ? v : old.attachments[i]?.path ? old.attachments[i] : v,
-				)
-			: old.attachments;
+	const latestIsMetadata = !item.body && !item.attachments.length;
+	const oldPost = old.kind === 'post' && (old.body || old.attachments.length);
+	const itemPost = item.kind === 'post' && (item.body || item.attachments.length);
+	const keepPost = latestIsMetadata || (oldPost && isMediaOnly(item));
+	const details = keepPost ? old : item;
+	const other = keepPost ? item : old;
+	let primary = details;
+	if (
+		!keepPost &&
+		!(itemPost && isMediaOnly(old)) &&
+		old.attachments.length > item.attachments.length
+	)
+		primary = old;
+	const supplement = primary === old ? item : old;
+	let body = old;
+	if (!old.body && !item.body) body = primary;
+	else if (
+		item.body &&
+		(!old.body || item.bodyComplete || (!old.bodyComplete && item.body.length >= old.body.length))
+	)
+		body = item;
 	return {
 		...old,
 		...item,
-		kind: old.kind === 'video' && !item.body && !item.attachments.length ? 'video' : item.kind,
-		title: item.title || old.title,
-		author: item.author || old.author,
+		kind: details.kind,
+		title: details.title || other.title,
+		author: details.author || other.author,
 		body: body.body,
 		bodyFormat: body.bodyFormat,
 		bodyComplete: body.bodyComplete,
@@ -49,9 +114,11 @@ function mergeInput(old, item) {
 		notes: item.notes || old.notes,
 		summary: item.summary || old.summary,
 		translation: item.translation || old.translation,
+		coverage: details.coverage || other.coverage,
+		missing: primary.missing.filter((reason) => reason !== 'full text' && reason !== 'attachments'),
 		folders: memberships(old.folders, item.folders),
 		topics: unique([...old.topics, ...item.topics]),
-		attachments,
+		attachments: mergeAttachments(primary, supplement),
 	};
 }
 const stmtItem =
@@ -375,6 +442,15 @@ async function saveItem(ctx, input, old, options) {
 	};
 }
 export async function runLibraryTask(id, options = {}) {
+	let retryKeys;
+	if (options.retryFailed && options.selected !== undefined) {
+		if (
+			!Array.isArray(options.selected) ||
+			!options.selected.every((key) => typeof key === 'string')
+		)
+			throw problem('invalid_options', 'Select failed entries by platform:id keys.');
+		retryKeys = new Set(options.selected);
+	}
 	const ctx = await openLibrary(options),
 		{db} = ctx;
 	try {
@@ -394,6 +470,7 @@ export async function runLibraryTask(id, options = {}) {
 				.prepare('SELECT key,input FROM items WHERE task=? AND status=? ORDER BY rowid')
 				.all(id, filter);
 			for (const row of list) {
+				if (retryKeys && !retryKeys.has(row.key)) continue;
 				options.signal?.throwIfAborted();
 				const item = JSON.parse(row.input);
 				if (!item.sourceUrl) continue;
