@@ -40,11 +40,35 @@ const mediaFor =
 		return url ? {kind, url, alt} : {kind, missing: true, alt};
 	};
 
-// Some sites serialise their state as a JavaScript literal with bare `undefined`.
+// Some sites serialise their state as a JavaScript literal with bare `undefined`,
+// `NaN`/`Infinity`, or constructors like `new Map([])` / `new Set([])`.
 export function looseJson(source) {
 	let out = '',
 		inString = false,
 		quote = '';
+	const skipBalancedParens = (start) => {
+		let depth = 0,
+			str = false,
+			q = '';
+		for (let j = start; j < source.length; j++) {
+			const ch = source[j];
+			if (str) {
+				if (ch === '\\') j++;
+				else if (ch === q) str = false;
+				continue;
+			}
+			if (ch === '"' || ch === "'") {
+				str = true;
+				q = ch;
+			} else if (ch === '(') {
+				depth++;
+			} else if (ch === ')') {
+				depth--;
+				if (depth === 0) return j;
+			}
+		}
+		return -1;
+	};
 	for (let i = 0; i < source.length; i++) {
 		const c = source[i];
 		if (inString) {
@@ -59,14 +83,35 @@ export function looseJson(source) {
 			out += c;
 			continue;
 		}
-		if (
-			source.startsWith('undefined', i) &&
-			!/[\w$]/.test(source[i - 1] ?? '') &&
-			!/[\w$]/.test(source[i + 9] ?? '')
-		) {
-			out += 'null';
-			i += 8;
-			continue;
+		const prev = source[i - 1] ?? '';
+		if (!/[\w$]/.test(prev)) {
+			if (source.startsWith('undefined', i) && !/[\w$]/.test(source[i + 9] ?? '')) {
+				out += 'null';
+				i += 8;
+				continue;
+			}
+			if (source.startsWith('NaN', i) && !/[\w$]/.test(source[i + 3] ?? '')) {
+				out += 'null';
+				i += 2;
+				continue;
+			}
+			if (source.startsWith('Infinity', i) && !/[\w$]/.test(source[i + 8] ?? '')) {
+				if (out.endsWith('-')) out = out.slice(0, -1);
+				out += 'null';
+				i += 7;
+				continue;
+			}
+			if (source.startsWith('new ', i)) {
+				const ctor = /^new\s+(?:Map|Set|Date)\s*\(/.exec(source.slice(i));
+				if (ctor) {
+					const end = skipBalancedParens(i + ctor[0].length - 1);
+					if (end !== -1) {
+						out += 'null';
+						i = end;
+						continue;
+					}
+				}
+			}
 		}
 		out += c;
 	}
@@ -268,6 +313,26 @@ export const browserHeaders = (userAgent) => ({
 });
 
 /** Read a post page from the native side. `cookie` belongs to this site only. */
+export function normalizeXiaohongshuPostUrl(rawUrl, localOrigin) {
+	if (typeof rawUrl !== 'string' || !rawUrl) return rawUrl;
+	if (localOrigin && rawUrl.startsWith(localOrigin + '/')) return rawUrl;
+	try {
+		const u = new URL(rawUrl);
+		const m =
+			/^\/(?:user\/profile\/[a-f\d]+|board\/[\w-]+|discovery\/item)\/([a-f\d]{24})\/?$/i.exec(
+				u.pathname,
+			);
+		if (!m) return rawUrl;
+		const next = new URL('/explore/' + m[1], u.origin);
+		for (const key of ['xsec_token', 'xsec_source']) {
+			if (u.searchParams.has(key)) next.searchParams.set(key, u.searchParams.get(key));
+		}
+		return next.href;
+	} catch {
+		return rawUrl;
+	}
+}
+
 export async function fetchPostPage(
 	item,
 	{
@@ -280,7 +345,15 @@ export async function fetchPostPage(
 		timeoutMs = 60_000,
 	} = {},
 ) {
+	if (item.platform === 'xiaohongshu') {
+		url = normalizeXiaohongshuPostUrl(url, localOrigin);
+	}
 	const headers = browserHeaders(userAgent);
+	if (item.platform === 'xiaohongshu' && !(localOrigin && url?.startsWith(localOrigin + '/'))) {
+		try {
+			headers.referer = new URL('/explore', url).href;
+		} catch {}
+	}
 	// A regional redirect can lead to the same note on another site with its own sign-in.
 	let cookieForUrl;
 	if (item.platform === 'xiaohongshu' && cookieHeader) {

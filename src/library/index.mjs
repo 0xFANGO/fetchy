@@ -9,6 +9,8 @@ import {
 	entryIdentity,
 	folderOf,
 	normalizeEntry,
+	publishLibraryMedia,
+	renamePublishedMedia,
 	stashFile,
 	workFile,
 	renderWork,
@@ -129,6 +131,12 @@ function mergeInput(old, item) {
 		folders: memberships(old.folders, item.folders),
 		topics: unique([...old.topics, ...item.topics]),
 		attachments: mergeAttachments(primary, supplement),
+		...(item.savedFiles?.length
+			? {savedFiles: item.savedFiles}
+			: old.savedFiles?.length
+				? {savedFiles: old.savedFiles}
+				: {}),
+		...(item.savedDir ? {savedDir: item.savedDir} : old.savedDir ? {savedDir: old.savedDir} : {}),
 	};
 }
 const stmtItem =
@@ -434,25 +442,64 @@ async function fillDetails(ctx, item, details, options) {
 	);
 	const headers = {'user-agent': browserHeaders(details.userAgent)['user-agent']};
 	const referer = new URL(read.sourceUrl).origin + '/';
-	for (const [i, a] of read.attachments.entries()) {
-		const url = details.attachments[i]?.url;
-		delete a.missing;
-		try {
-			if (typeof url !== 'string') throw problem('source_unavailable', 'No media address.');
-			a.path = await downloadAttachment(ctx.root, url, a.kind, {
-				signal: options.signal,
-				localOrigin: options.localOrigin,
-				maxBytes: options.maxBytes,
-				referer,
-				headers,
-			});
-		} catch (e) {
-			options.signal?.throwIfAborted();
-			a.missing = true;
-			a.needsSource = true;
-			a.error = errorCode(e);
+	const totalAttachments = read.attachments.length;
+	const attachmentBytes = Array.from({length: totalAttachments}, () => 0);
+	const attachmentTotals = Array.from({length: totalAttachments}, () => 0);
+	let completedAttachments = 0;
+	const emitAttachmentProgress = () => {
+		let downloadedBytes = 0;
+		let totalBytes = 0;
+		for (let j = 0; j < totalAttachments; j++) {
+			downloadedBytes += attachmentBytes[j];
+			totalBytes += attachmentTotals[j];
 		}
-	}
+		options.onItemEvent?.({
+			stage: 'downloading',
+			title: read.title || item.title,
+			kind: details.kind === 'video' ? 'video' : item.kind,
+			attachmentIndex: Math.min(totalAttachments, completedAttachments + 1),
+			attachmentTotal: totalAttachments,
+			downloadedBytes,
+			totalBytes,
+		});
+	};
+	const attachmentConcurrency = Math.min(3, totalAttachments);
+	let nextAttachment = 0;
+	if (totalAttachments > 0) emitAttachmentProgress();
+	await Promise.all(
+		Array.from({length: attachmentConcurrency}, async () => {
+			while (nextAttachment < totalAttachments) {
+				options.signal?.throwIfAborted();
+				const i = nextAttachment++;
+				const a = read.attachments[i];
+				const url = details.attachments[i]?.url;
+				delete a.missing;
+				try {
+					if (typeof url !== 'string') throw problem('source_unavailable', 'No media address.');
+					a.path = await downloadAttachment(ctx.root, url, a.kind, {
+						signal: options.signal,
+						localOrigin: options.localOrigin,
+						maxBytes: options.maxBytes,
+						referer,
+						headers,
+						onProgress: ({downloadedBytes, totalBytes}) => {
+							attachmentBytes[i] = downloadedBytes;
+							attachmentTotals[i] = totalBytes;
+							emitAttachmentProgress();
+						},
+					});
+				} catch (e) {
+					options.signal?.throwIfAborted();
+					a.missing = true;
+					a.needsSource = true;
+					a.error = errorCode(e);
+				} finally {
+					completedAttachments++;
+					emitAttachmentProgress();
+				}
+			}
+		}),
+	);
 	delete item.readError;
 	Object.assign(item, {
 		sourceUrl: read.sourceUrl,
@@ -505,11 +552,31 @@ async function saveItem(ctx, input, old, options) {
 	) {
 		const tmp = await mkdtemp(path.join(tmpdir(), 'fetchy-library-'));
 		try {
+			options.onItemEvent?.({
+				stage: 'downloading',
+				title: item.title,
+				kind: 'video',
+				downloadedBytes: 0,
+				totalBytes: 0,
+			});
 			const download = (cookiesFile) =>
 				(options.downloadVideo || defaultDownload)(item.sourceUrl, {
 					outputDir: tmp,
 					signal: options.signal,
 					cookiesFile,
+					onProgress: ({stage, bytes, totalBytes}) =>
+						options.onItemEvent?.({
+							stage:
+								stage === 'postprocessing'
+									? 'merging'
+									: stage === 'validating'
+										? 'verifying'
+										: 'downloading',
+							title: item.title,
+							kind: 'video',
+							downloadedBytes: Number.isFinite(bytes) ? bytes : 0,
+							totalBytes: Number.isFinite(totalBytes) ? totalBytes : 0,
+						}),
 				});
 			const res =
 				!options.cookiesFile && options.withSiteCookies
@@ -543,6 +610,14 @@ async function saveItem(ctx, input, old, options) {
 	if (item.attachments.some((a) => !a.path)) missing.push('attachments');
 	item.missing = unique(missing);
 	item.status = missing.length ? 'partial' : 'complete';
+	if (options.outputDir && item.attachments.some((a) => a.path)) {
+		const published = await publishLibraryMedia(ctx.root, item, options.outputDir);
+		if (published.savedFiles.length) {
+			item.savedFiles = published.savedFiles;
+			if (published.savedDir) item.savedDir = published.savedDir;
+			else delete item.savedDir;
+		}
+	}
 	const changed =
 		!old ||
 		JSON.stringify({...item, folders: [], savedAt: null, topics: [], notes: ''}) !==
@@ -584,22 +659,86 @@ export async function runLibraryTask(id, options = {}) {
 						: "SELECT key,input FROM items WHERE task=? AND status='pending' ORDER BY rowid",
 				)
 				.all(id);
-			for (const row of list) {
-				if (retryKeys && !retryKeys.has(row.key)) continue;
+			const runnable = list.filter((row) => !retryKeys || retryKeys.has(row.key));
+			const requestedConcurrency = options.concurrency ?? 3;
+			const concurrency = Math.max(
+				1,
+				Math.min(8, Number.isSafeInteger(requestedConcurrency) ? requestedConcurrency : 3),
+			);
+			let cursor = 0;
+			let fatalError = null;
+			const processRow = async (row) => {
 				options.signal?.throwIfAborted();
 				const item = JSON.parse(row.input);
-				if (!item.sourceUrl) continue;
+				if (!item.sourceUrl) return;
+				if (options.isItemCancelled?.(row.key)) {
+					db.prepare(
+						"UPDATE items SET status='cancelled',reason='cancelled' WHERE task=? AND key=?",
+					).run(id, row.key);
+					options.onItemDone?.(row.key);
+					return;
+				}
+				const itemController = options.itemController?.(row.key);
+				const itemSignal =
+					itemController && options.signal
+						? AbortSignal.any([options.signal, itemController.signal])
+						: (itemController?.signal ?? options.signal);
+				const emitItem = (patch) =>
+					options.onItemEvent?.({
+						taskId: id,
+						key: row.key,
+						title: item.title || row.key,
+						platform: item.platform,
+						kind: item.kind,
+						folder: item.folders?.[0]?.name || '',
+						sourceUrl: item.sourceUrl,
+						...patch,
+					});
+				const itemOptions = {
+					...options,
+					signal: itemSignal,
+					onItemEvent: emitItem,
+				};
+				let fetchedOverNetwork = false;
+				let usedResolver = false;
 				try {
 					// Temporary URLs live only in the native worker. The durable input
 					// already has the text, inline files, and ordered slots for remote files.
 					if (item.attachments.some((a) => a.pendingAttachment)) {
+						const pendingList = item.attachments.filter((a) => a.pendingAttachment);
+						let idx = 0;
 						for (const a of item.attachments) {
 							if (!a.pendingAttachment) continue;
+							idx++;
+							if (options.resolveAttachment) {
+								usedResolver = true;
+								emitItem({
+									stage: 'downloading',
+									attachmentIndex: idx,
+									attachmentTotal: pendingList.length,
+									downloadedBytes: 0,
+									totalBytes: 0,
+								});
+							}
 							let file;
 							try {
-								file = await options.resolveAttachment?.(a.pendingAttachment, a.kind, item);
+								file = await options.resolveAttachment?.(
+									a.pendingAttachment,
+									a.kind,
+									item,
+									({downloadedBytes, totalBytes}) =>
+										emitItem({
+											stage: 'downloading',
+											attachmentIndex: idx,
+											attachmentTotal: pendingList.length,
+											downloadedBytes,
+											totalBytes,
+										}),
+									itemSignal,
+								);
 							} catch (e) {
 								options.signal?.throwIfAborted();
+								if (itemController?.signal.aborted) throw e;
 								a.error = errorCode(e);
 							}
 							// The id stays until a file arrives, so a retry in this session can fetch it again.
@@ -631,19 +770,33 @@ export async function runLibraryTask(id, options = {}) {
 						options.readDetails &&
 						old?.status !== 'complete'
 					) {
-						let details;
-						try {
-							details = await options.readDetails(item, {taskId: id, signal: options.signal});
-						} catch (e) {
-							options.signal?.throwIfAborted();
-							// The listing's title and link are still worth keeping; the reason says why.
-							item.readError = errorCode(e);
-						}
-						if (details) await fillDetails(ctx, item, details, options);
+						emitItem({stage: 'reading_post', downloadedBytes: 0, totalBytes: 0});
+						const details = await options.readDetails(item, {taskId: id, signal: itemSignal});
+						if (!details) throw problem('source_unavailable', 'Could not read original post.');
+						fetchedOverNetwork = true;
+						await fillDetails(ctx, item, details, itemOptions);
+						if (
+							item.coverage === 'preview' &&
+							!item.bodyComplete &&
+							item.attachments.every((a) => !a.path)
+						)
+							throw problem('source_unavailable', 'Only an incomplete preview was available.');
+					}
+					// Never save an empty media-less shell into works when every expected media download failed.
+					if (
+						(fetchedOverNetwork || usedResolver) &&
+						item.attachments.length > 0 &&
+						item.attachments.every((a) => !a.path) &&
+						!old?.attachments?.some((a) => a.path)
+					) {
+						const code = item.attachments.find((a) => a.error)?.error || 'network_error';
+						throw problem(code, 'Failed to download media attachments.');
 					}
 					delete item.needsDetails;
-					const {record, outcome} = await saveItem(ctx, item, old, options);
+					const {record, outcome} = await saveItem(ctx, item, old, itemOptions);
 					await renderWork(ctx.root, record);
+					options.signal?.throwIfAborted();
+					if (itemController?.signal.aborted) throw problem('cancelled', 'Item cancelled.');
 					transaction(db, () => {
 						db.prepare(
 							'INSERT INTO works VALUES(?,?) ON CONFLICT(key) DO UPDATE SET record=excluded.record',
@@ -655,17 +808,44 @@ export async function runLibraryTask(id, options = {}) {
 							row.key,
 						);
 					});
+					emitItem({stage: 'done'});
 				} catch (e) {
 					if (options.signal?.aborted) throw e;
-					db.prepare("UPDATE items SET status='failed',reason=? WHERE task=? AND key=?").run(
-						errorCode(e),
-						id,
-						row.key,
-					);
+					if (itemController?.signal.aborted) {
+						db.prepare(
+							"UPDATE items SET status='cancelled',reason='cancelled' WHERE task=? AND key=?",
+						).run(id, row.key);
+						emitItem({stage: 'cancelled'});
+					} else {
+						const reason = errorCode(e);
+						db.prepare("UPDATE items SET status='failed',reason=? WHERE task=? AND key=?").run(
+							reason,
+							id,
+							row.key,
+						);
+						emitItem({stage: 'failed', reason});
+					}
 				}
 				options.onItemDone?.(row.key);
 				await options.onProgress?.(taskResult(ctx, id, false));
-			}
+			};
+			await Promise.all(
+				Array.from({length: Math.min(concurrency, runnable.length)}, async () => {
+					while (!fatalError) {
+						if (options.signal?.aborted) break;
+						const idx = cursor++;
+						if (idx >= runnable.length) break;
+						try {
+							await processRow(runnable[idx]);
+						} catch (e) {
+							if (!fatalError) fatalError = e;
+							break;
+						}
+					}
+				}),
+			);
+			if (fatalError) throw fatalError;
+			options.signal?.throwIfAborted();
 			if (cfg.selected && cfg.folders.every((f) => f.complete)) {
 				transaction(db, () => {
 					const missing = db.prepare(
@@ -832,6 +1012,13 @@ export async function removeLibraryWorks(keys, options = {}) {
 		const files = new Set();
 		for (const work of removed) {
 			files.add(path.dirname(workFile(ctx.root, work)));
+			if (typeof work.savedDir === 'string' && work.savedDir) {
+				files.add(work.savedDir);
+			} else {
+				for (const f of work.savedFiles ?? []) {
+					if (typeof f === 'string' && f) files.add(f);
+				}
+			}
 			for (const a of work.attachments) {
 				const file = a.path && ownMedia(ctx.root, a.path);
 				if (file && !kept.has(file)) files.add(file);
@@ -854,9 +1041,147 @@ export async function renameLibraryWork(key, title, options = {}) {
 		const value = title.replace(/\s+/g, ' ').trim();
 		if (value && value !== work.title) work.customTitle = value;
 		else delete work.customTitle;
+		await renamePublishedMedia(work);
 		await renderWork(ctx.root, work);
 		ctx.db.prepare('UPDATE works SET record=? WHERE key=?').run(JSON.stringify(work), key);
 		return {key, title: displayTitle(work)};
+	} finally {
+		ctx.db.close();
+	}
+}
+
+/** Legacy empty partial shells created when post reads used to be swallowed. */
+export function isEmptyPartialShell(work) {
+	return (
+		work?.status === 'partial' &&
+		!work.body &&
+		!(work.attachments ?? []).some((a) => typeof a.path === 'string' && a.path)
+	);
+}
+
+/** Pending items across active/interrupted tasks, for displaying a flat per-item download queue. */
+export async function listQueuedLibraryItems(options = {}) {
+	const ctx = await openLibrary(options);
+	try {
+		const rows = ctx.db
+			.prepare(
+				`SELECT i.task, i.key, i.input, i.status, t.status AS taskStatus, t.created
+				 FROM items i JOIN tasks t ON t.id = i.task
+				 WHERE t.status IN ('queued','running','interrupted') AND i.status = 'pending'
+				 ORDER BY t.created ASC, i.rowid ASC
+				 LIMIT 300`,
+			)
+			.all();
+		return rows.map((r) => {
+			const entry = JSON.parse(r.input);
+			return {
+				id: r.task + '::' + r.key,
+				taskId: r.task,
+				key: r.key,
+				title: entry.customTitle || entry.title || r.key,
+				platform: entry.platform ?? r.key.split(':')[0],
+				kind: entry.kind || 'post',
+				folder: entry.folders?.[0]?.name || '',
+				sourceUrl: entry.sourceUrl ?? null,
+				status: r.taskStatus === 'interrupted' ? 'interrupted' : 'queued',
+				stage: r.taskStatus === 'interrupted' ? 'interrupted' : 'waiting',
+				downloadedBytes: 0,
+				totalBytes: 0,
+			};
+		});
+	} finally {
+		ctx.db.close();
+	}
+}
+
+/** Deduplicated failed (or legacy partial) items whose key is not already cleanly saved in works. */
+export async function listFailedLibraryItems(options = {}) {
+	const ctx = await openLibrary(options);
+	try {
+		const rows = ctx.db
+			.prepare(
+				`SELECT i.task, i.key, i.input, i.status, i.reason, t.created, w.record
+				 FROM items i
+				 JOIN tasks t ON t.id = i.task
+				 LEFT JOIN works w ON w.key = i.key
+				 WHERE i.status IN ('failed','partial')
+				 ORDER BY t.created DESC, i.rowid DESC
+				 LIMIT 500`,
+			)
+			.all();
+		const seen = new Set();
+		const failed = [];
+		for (const r of rows) {
+			if (seen.has(r.key)) continue;
+			seen.add(r.key);
+			const work = r.record ? JSON.parse(r.record) : null;
+			if (work && work.status === 'complete') continue;
+			const entry = work ?? JSON.parse(r.input);
+			failed.push({
+				id: r.task + '::' + r.key,
+				taskId: r.task,
+				key: r.key,
+				title: entry.customTitle || entry.title || '',
+				author: entry.author ?? '',
+				platform: entry.platform ?? r.key.split(':')[0],
+				status: r.status,
+				reason: r.reason || 'save_failed',
+				sourceUrl: entry.sourceUrl ?? null,
+				createdAt: r.created ?? null,
+			});
+		}
+		return failed;
+	} finally {
+		ctx.db.close();
+	}
+}
+
+/** Dismiss failed items so they leave the Failed view without deleting completed works. */
+export async function dismissFailedLibraryItems(keys, options = {}) {
+	const ctx = await openLibrary(options);
+	try {
+		transaction(ctx.db, () => {
+			if (Array.isArray(keys) && keys.length > 0) {
+				const stmt = ctx.db.prepare(
+					"UPDATE items SET status='dismissed' WHERE key=? AND status IN ('failed','partial')",
+				);
+				for (const key of keys) {
+					if (typeof key === 'string' && key) stmt.run(key);
+				}
+			} else {
+				ctx.db
+					.prepare("UPDATE items SET status='dismissed' WHERE status IN ('failed','partial')")
+					.run();
+			}
+		});
+		return {ok: true};
+	} finally {
+		ctx.db.close();
+	}
+}
+
+/** Mark one queued/pending item as cancelled in SQLite; if no pending items remain, close the task. */
+export async function cancelQueuedLibraryItem(taskId, key, options = {}) {
+	const ctx = await openLibrary(options);
+	try {
+		transaction(ctx.db, () => {
+			ctx.db
+				.prepare(
+					"UPDATE items SET status='cancelled', reason='cancelled' WHERE task=? AND key=? AND status='pending'",
+				)
+				.run(taskId, key);
+			const left = ctx.db
+				.prepare("SELECT count(*) AS n FROM items WHERE task=? AND status='pending'")
+				.get(taskId).n;
+			if (left === 0) {
+				ctx.db
+					.prepare(
+						"UPDATE tasks SET status='completed' WHERE id=? AND status IN ('queued','interrupted')",
+					)
+					.run(taskId);
+			}
+		});
+		return {cancelled: true};
 	} finally {
 		ctx.db.close();
 	}

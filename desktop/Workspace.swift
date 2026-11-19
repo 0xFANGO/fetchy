@@ -141,7 +141,7 @@ struct SelectionSheet: View {
       HStack {
         Spacer()
         Button("取消") { dismiss() }
-        Button("保存所选") {
+        Button("开始下载") {
           start(Array(selected))
           dismiss()
         }.buttonStyle(.borderedProminent).disabled(selected.isEmpty)
@@ -152,13 +152,94 @@ struct SelectionSheet: View {
 
 let fetchyAccent = Color(red: 0.76, green: 0.24, blue: 0.14)
 
-/// Sites' own names. Anything not listed shows its Fetchy ID.
+enum Pane: Hashable {
+  case downloads, browser, accounts
+}
+
+/// Supported platform quick-jump shortcuts to each platform's favorites/bookmarks page.
+struct PlatformShortcut: Identifiable, Hashable {
+  let site: String
+  let label: String
+  let favoritesLabel: String
+  let url: String
+  let symbol: String
+  let needsResolve: Bool
+  var id: String { site }
+}
+
+let platformShortcuts: [PlatformShortcut] = [
+  PlatformShortcut(
+    site: "xiaohongshu", label: "小红书", favoritesLabel: "收藏笔记",
+    url: "https://www.xiaohongshu.com/explore", symbol: "bookmark.fill", needsResolve: true),
+  PlatformShortcut(
+    site: "bilibili", label: "B站", favoritesLabel: "收藏夹",
+    url: "https://space.bilibili.com/", symbol: "star.fill", needsResolve: true),
+  PlatformShortcut(
+    site: "douyin", label: "抖音", favoritesLabel: "收藏",
+    url: "https://www.douyin.com/user/self?showTab=favorite_collection",
+    symbol: "music.note", needsResolve: false),
+  PlatformShortcut(
+    site: "x", label: "X", favoritesLabel: "书签",
+    url: "https://x.com/i/bookmarks", symbol: "bookmark", needsResolve: false),
+  PlatformShortcut(
+    site: "youtube", label: "YouTube", favoritesLabel: "播放列表",
+    url: "https://www.youtube.com/feed/playlists", symbol: "play.square.stack", needsResolve: false),
+  PlatformShortcut(
+    site: "zhihu", label: "知乎", favoritesLabel: "收藏夹",
+    url: "https://www.zhihu.com/collections/mine", symbol: "text.book.closed", needsResolve: false),
+  PlatformShortcut(
+    site: "instagram", label: "Instagram", favoritesLabel: "收藏",
+    url: "https://www.instagram.com/", symbol: "camera", needsResolve: true),
+  PlatformShortcut(
+    site: "threads", label: "Threads", favoritesLabel: "已保存",
+    url: "https://www.threads.com/saved", symbol: "at", needsResolve: false),
+  PlatformShortcut(
+    site: "tiktok", label: "TikTok", favoritesLabel: "收藏",
+    url: "https://www.tiktok.com/", symbol: "film", needsResolve: true),
+]
+
+func shortcutFor(site: String) -> PlatformShortcut? {
+  platformShortcuts.first { $0.site == site }
+}
+
 let platformNames: [String: String] = [
-  "xiaohongshu": "小红书", "bilibili": "哔哩哔哩", "douyin": "抖音", "zhihu": "知乎", "weibo": "微博",
+  "xiaohongshu": "小红书", "bilibili": "B站", "douyin": "抖音", "zhihu": "知乎", "weibo": "微博",
   "kuaishou": "快手", "x": "X", "youtube": "YouTube", "instagram": "Instagram", "threads": "Threads",
   "tiktok": "TikTok", "web": "网页",
 ]
 func platformName(_ id: String) -> String { platformNames[id] ?? id }
+
+let failureReasons: [String: String] = [
+  "login_required": "需要登录", "login_expired": "登录已过期", "auth_required": "媒体拒绝访问",
+  "verification_required": "网站要求验证", "source_unavailable": "原帖读取失败",
+  "unavailable": "原帖不可用或已删除", "network_error": "网络中断", "timeout": "读取超时",
+  "size_limit": "文件超过上限", "invalid_attachment": "文件格式无法识别",
+  "invalid_url": "媒体地址无法访问", "full_text": "正文不完整", "attachments": "部分媒体缺失",
+  "selection_missing": "收藏夹里已找不到这条", "wrong_video": "视频与原帖不符",
+  "no_formats": "未找到可下载的视频", "save_failed": "下载失败", "partial": "部分媒体缺失",
+]
+let nextSteps: [String: String] = [
+  "login_required": "登录该网站后重试。",
+  "login_expired": "登录已过期，重新登录后重试。",
+  "auth_required": "网站仅允许登录用户访问，登录后重试。",
+  "verification_required": "在浏览器打开原帖完成人机验证，回来重试。",
+  "source_unavailable": "原帖未读出，可能是需要登录、限流或超时。可先重试，或打开原帖确认。",
+  "unavailable": "原帖可能已删除或设为私密。",
+  "network_error": "网络波动，点击重试即可。",
+  "timeout": "网站响应超时，点击重试。",
+  "size_limit": "文件超过大小上限。",
+  "invalid_attachment": "返回的不是有效图片或视频。",
+  "invalid_url": "媒体链接已过期，重试会重新获取。",
+  "full_text": "登录后重试可获取完整内容。",
+  "attachments": "重试可补下缺失的图片或视频。",
+  "selection_missing": "可能已取消收藏。",
+  "wrong_video": "下载到的视频与原帖不一致，已丢弃，可重试。",
+  "no_formats": "该页面没有可直接下载的视频，可在浏览器播放后嗅探。",
+  "save_failed": "检查网络或磁盘空间后重试。",
+]
+let loginReasons: Set<String> = [
+  "login_required", "login_expired", "auth_required",
+]
 
 struct LibraryEntry: Identifiable, Equatable {
   let id: String
@@ -169,11 +250,14 @@ struct LibraryEntry: Identifiable, Equatable {
   let kind: String
   let folders: [String]
   let file: URL?
+  let primaryFile: URL?
+  let savedDir: URL?
   let cover: URL?
   let coverKind: String?
   let sourceUrl: String?
-  /// Saved images and videos; the offline page links to them.
   let files: [URL]
+  let mediaCount: Int
+
   init?(_ row: [String: Any]) {
     guard let key = row["key"] as? String else { return nil }
     id = key
@@ -184,11 +268,31 @@ struct LibraryEntry: Identifiable, Equatable {
     kind = row["kind"] as? String ?? "post"
     folders = (row["folders"] as? [[String: Any]] ?? []).compactMap { $0["name"] as? String }
     file = (row["filepath"] as? String).map { URL(fileURLWithPath: $0) }
+    primaryFile = (row["primaryFile"] as? String).map { URL(fileURLWithPath: $0) }
+    savedDir = (row["savedDir"] as? String).map { URL(fileURLWithPath: $0, isDirectory: true) }
     cover = (row["cover"] as? String).map { URL(fileURLWithPath: $0) }
     coverKind = row["coverKind"] as? String
     sourceUrl = row["sourceUrl"] as? String
     files = (row["files"] as? [String] ?? []).map { URL(fileURLWithPath: $0) }
+    mediaCount = row["mediaCount"] as? Int ?? files.count
   }
+
+  /// Prefer opening the real downloaded file/folder in ~/Downloads/Fetchy.
+  var openTarget: URL? {
+    if let primaryFile, FileManager.default.fileExists(atPath: primaryFile.path) { return primaryFile }
+    if let first = files.first(where: { FileManager.default.fileExists(atPath: $0.path) }) {
+      return first
+    }
+    return file
+  }
+
+  var revealTargets: [URL] {
+    if let savedDir, FileManager.default.fileExists(atPath: savedDir.path) { return [savedDir] }
+    let existing = files.filter { FileManager.default.fileExists(atPath: $0.path) }
+    if !existing.isEmpty { return existing }
+    return [openTarget].compactMap { $0 }
+  }
+
   var kindName: String {
     switch kind {
     case "video": return "视频"
@@ -197,208 +301,324 @@ struct LibraryEntry: Identifiable, Equatable {
     default: return "图文"
     }
   }
+
   var meta: String {
     [platformName(platform), author].filter { !$0.isEmpty }.joined(separator: " · ")
   }
 }
 
-struct TaskSummary: Identifiable, Equatable {
+struct ActiveDownloadItem: Identifiable, Equatable {
   let id: String
+  let taskId: String
+  let key: String
+  let title: String
+  let platform: String
+  let kind: String
+  let folder: String
+  let sourceUrl: String?
   let status: String
-  let counts: [String: Int]
-  let created: Date?
-  let folders: [String]
-  let platforms: [String]
+  let stage: String
+  let downloadedBytes: Int64
+  let totalBytes: Int64
+  let speedBytesPerSec: Int64
+  let attachmentIndex: Int
+  let attachmentTotal: Int
+
   init?(_ row: [String: Any]) {
-    guard let value = row["id"] as? String else { return nil }
-    id = value
-    status = row["status"] as? String ?? ""
-    counts = row["counts"] as? [String: Int] ?? [:]
-    let parser = ISO8601DateFormatter()
-    parser.formatOptions = [.withInternetDateTime, .withFractionalSeconds]
-    created = (row["createdAt"] as? String).flatMap(parser.date(from:))
-    let rows = row["folders"] as? [[String: Any]] ?? []
-    folders = rows.compactMap { ($0["name"] as? String).flatMap { $0.isEmpty ? nil : $0 } }
-    platforms = Array(Set(rows.compactMap { $0["platform"] as? String })).sorted()
+    guard let id = row["id"] as? String, let taskId = row["taskId"] as? String,
+      let key = row["key"] as? String
+    else { return nil }
+    self.id = id
+    self.taskId = taskId
+    self.key = key
+    title = (row["title"] as? String).flatMap { $0.isEmpty ? nil : $0 } ?? key
+    platform = row["platform"] as? String ?? ""
+    kind = row["kind"] as? String ?? "post"
+    folder = row["folder"] as? String ?? ""
+    sourceUrl = row["sourceUrl"] as? String
+    status = row["status"] as? String ?? "queued"
+    stage = row["stage"] as? String ?? "waiting"
+    downloadedBytes = (row["downloadedBytes"] as? NSNumber)?.int64Value ?? 0
+    totalBytes = (row["totalBytes"] as? NSNumber)?.int64Value ?? 0
+    speedBytesPerSec = (row["speedBytesPerSec"] as? NSNumber)?.int64Value ?? 0
+    attachmentIndex = row["attachmentIndex"] as? Int ?? 0
+    attachmentTotal = row["attachmentTotal"] as? Int ?? 0
   }
-  func count(_ name: String) -> Int { counts[name] ?? 0 }
-  var total: Int { counts.values.reduce(0, +) }
-  var done: Int { total - count("pending") }
-  var problems: Int { count("failed") + count("partial") }
-  var isActive: Bool { ["queued", "running", "interrupted"].contains(status) }
-  var title: String {
-    if folders.isEmpty { return total == 1 ? "单条保存" : "\(total) 条保存" }
-    let names = folders.prefix(2).map { "「\($0)」" }.joined(separator: "、")
-    return "收藏夹" + names + (folders.count > 2 ? " 等 \(folders.count) 个" : "")
+
+  var isRunning: Bool { status == "running" }
+  var isInterrupted: Bool { status == "interrupted" }
+
+  var fraction: Double? {
+    guard totalBytes > 0 else { return nil }
+    return min(1.0, max(0.0, Double(downloadedBytes) / Double(totalBytes)))
   }
-  var subtitle: String {
-    var parts = platforms.map(platformName)
-    if let created { parts.append(created.formatted(date: .abbreviated, time: .shortened)) }
-    return parts.joined(separator: " · ")
-  }
-}
 
-/// The same reasons as the extension's side panel, each with the step that fixes it.
-let failureReasons: [String: String] = [
-  "login_required": "需要登录", "login_expired": "登录已过期", "auth_required": "媒体拒绝访问",
-  "verification_required": "网站要求验证", "source_unavailable": "原帖读取失败", "unavailable": "原帖不可用或已删除",
-  "network_error": "网络中断", "timeout": "读取超时", "size_limit": "文件超过单个文件上限",
-  "invalid_attachment": "下载到的文件无法识别", "invalid_url": "媒体地址无法访问",
-  "full_text": "正文可能不完整", "attachments": "部分图片或视频缺失",
-  "selection_missing": "收藏夹里已找不到这条", "wrong_video": "下载到的视频与原帖不一致",
-  "no_formats": "没有可下载的视频格式", "save_failed": "保存失败", "partial": "部分内容缺失",
-]
-let nextSteps: [String: String] = [
-  "login_required": "在「账号」登录这个网站，回来重试。",
-  "login_expired": "在「账号」重新登录这个网站，回来重试。",
-  "auth_required": "网站只给登录用户看。登录后重试。",
-  "verification_required": "在浏览器打开原帖，完成网站的验证，回来重试。",
-  "source_unavailable": "原帖没读出来，可能是加载超时或需要登录。先重试；仍失败就打开原帖确认能否看到。",
-  "unavailable": "原帖可能已删除或仅作者可见。打开原帖确认。",
-  "network_error": "网络不稳定，直接重试。",
-  "timeout": "网站响应太慢，直接重试。",
-  "size_limit": "文件超过上限，没有保存。",
-  "invalid_attachment": "网站返回的不是图片或视频。打开原帖确认后重试。",
-  "invalid_url": "媒体地址已失效。重试会重新读取原帖。",
-  "full_text": "只存下了摘要。登录后重试可以读到全文。",
-  "attachments": "正文已保存。重试会补下缺失的图片或视频。",
-  "selection_missing": "可能已取消收藏，不需要处理。",
-  "wrong_video": "下载到的视频与原帖不一致，已丢弃。重试一次。",
-  "no_formats": "网站没有提供可下载的视频。",
-  "save_failed": "写入资料库失败，检查磁盘空间后重试。",
-]
-let loginReasons: Set<String> = ["login_required", "login_expired", "auth_required", "full_text"]
-
-enum SidebarItem: Hashable {
-  case all, video, post, article
-  case active, attention
-  case platform(String), folder(String)
-  case browser, accounts
-
-  var title: String {
-    switch self {
-    case .all: return "全部作品"
-    case .video: return "视频"
-    case .post: return "图文"
-    case .article: return "文章"
-    case .active: return "进行中"
-    case .attention: return "需要处理"
-    case .platform(let id): return platformName(id)
-    case .folder(let name): return name
-    case .browser: return "浏览器"
-    case .accounts: return "账号"
+  var stageText: String {
+    switch stage {
+    case "resolving": return "正在解析链接…"
+    case "reading_post": return "正在读取原帖…"
+    case "downloading":
+      if attachmentTotal > 1 && attachmentIndex > 0 {
+        return "正在下载 (\(attachmentIndex)/\(attachmentTotal))"
+      }
+      return "正在下载"
+    case "merging": return "正在合并音视频…"
+    case "verifying": return "正在校验文件…"
+    case "interrupted": return "已中断"
+    default: return "等待中"
     }
   }
 }
 
-/// What the sidebar counts and the panes share: library totals and the save tasks.
-@MainActor final class LibraryModel: ObservableObject {
+struct FailedDownloadItem: Identifiable, Equatable {
+  let id: String
+  let taskId: String
+  let key: String
+  let title: String
+  let author: String
+  let platform: String
+  let status: String
+  let reason: String
+  let sourceUrl: String?
+
+  init?(_ row: [String: Any]) {
+    guard let id = row["id"] as? String, let taskId = row["taskId"] as? String,
+      let key = row["key"] as? String
+    else { return nil }
+    self.id = id
+    self.taskId = taskId
+    self.key = key
+    title = (row["title"] as? String).flatMap { $0.isEmpty ? nil : $0 } ?? key
+    author = row["author"] as? String ?? ""
+    platform = row["platform"] as? String ?? ""
+    status = row["status"] as? String ?? "failed"
+    reason = row["reason"] as? String ?? "save_failed"
+    sourceUrl = row["sourceUrl"] as? String
+  }
+
+  var reasonLabel: String { failureReasons[reason] ?? "下载失败" }
+  var stepHint: String { nextSteps[reason] ?? "点击重试，或打开原帖确认。" }
+  var needsLogin: Bool { loginReasons.contains(reason) }
+  var needsVerification: Bool { reason == "verification_required" }
+}
+
+@MainActor final class DownloadsModel: ObservableObject {
   struct Stats: Equatable {
     var total = 0
+    var activeCount = 0
+    var failedCount = 0
     var kinds: [String: Int] = [:]
     var platforms: [String: Int] = [:]
-    var folders: [String: Int] = [:]
   }
+
   @Published var stats = Stats()
-  /// The library folder on disk, for showing it in Finder.
-  @Published var root: URL?
-  @Published var tasks: [TaskSummary] = []
-  /// Bumped whenever saved works may have changed, so open lists reload.
+  @Published var downloadsDir: URL?
+  @Published var active: [ActiveDownloadItem] = []
+  @Published var failed: [FailedDownloadItem] = []
   @Published var revision = 0
+  @Published var notice = ""
   let commands = LocalCommands()
 
-  var activeCount: Int { tasks.filter(\.isActive).count }
-  var problemCount: Int { tasks.reduce(0) { $0 + $1.problems } }
+  var hasInterrupted: Bool { active.contains(where: \.isInterrupted) }
 
   func refresh() async {
-    guard
-      let tasksRows = try? await commands.run(["tasks", "0"], bridge: true) as? [[String: Any]],
-      let stats = try? await commands.run(["stats"], bridge: true) as? [String: Any]
-    else { return }
-    let next = tasksRows.compactMap(TaskSummary.init)
-    let counted = Stats(
-      total: stats["total"] as? Int ?? 0, kinds: stats["kinds"] as? [String: Int] ?? [:],
-      platforms: stats["platforms"] as? [String: Int] ?? [:],
-      folders: stats["folders"] as? [String: Int] ?? [:])
-    if next != tasks || counted != self.stats { revision += 1 }
-    tasks = next
-    self.stats = counted
-    root = (stats["root"] as? String).map { URL(fileURLWithPath: $0, isDirectory: true) }
+    guard let res = try? await commands.run(["downloads"], bridge: true) as? [String: Any] else {
+      return
+    }
+    let nextActive = (res["active"] as? [[String: Any]] ?? []).compactMap(ActiveDownloadItem.init)
+    let nextFailed = (res["failed"] as? [[String: Any]] ?? []).compactMap(FailedDownloadItem.init)
+    let rawStats = res["stats"] as? [String: Any] ?? [:]
+    let nextStats = Stats(
+      total: rawStats["total"] as? Int ?? 0,
+      activeCount: rawStats["activeCount"] as? Int ?? nextActive.count,
+      failedCount: rawStats["failedCount"] as? Int ?? nextFailed.count,
+      kinds: rawStats["kinds"] as? [String: Int] ?? [:],
+      platforms: rawStats["platforms"] as? [String: Int] ?? [:])
+    let worksChanged =
+      nextStats.total != stats.total || nextStats.kinds != stats.kinds
+      || (active.count > nextActive.count)
+    if worksChanged { revision += 1 }
+    active = nextActive
+    failed = nextFailed
+    stats = nextStats
+    if let dir = res["downloadsDir"] as? String, !dir.isEmpty {
+      downloadsDir = URL(fileURLWithPath: dir, isDirectory: true)
+    }
   }
 
-  /// Poll quickly while something is saving, slowly otherwise.
   func watch() async {
     while !Task.isCancelled {
       await refresh()
-      try? await Task.sleep(nanoseconds: activeCount > 0 ? 2_000_000_000 : 8_000_000_000)
+      try? await Task.sleep(nanoseconds: active.isEmpty ? 6_000_000_000 : 1_000_000_000)
     }
+  }
+
+  func startUrlDownload(
+    _ url: String, title: String? = nil, referer: String? = nil, pageUrl: String? = nil
+  ) async -> Bool {
+    var body: [String: Any] = ["url": url]
+    if let title, !title.isEmpty { body["title"] = title }
+    if let referer, !referer.isEmpty { body["referer"] = referer }
+    if let pageUrl, !pageUrl.isEmpty { body["pageUrl"] = pageUrl }
+    guard let data = try? JSONSerialization.data(withJSONObject: body) else { return false }
+    do {
+      _ = try await commands.run(["download-url"], bridge: true, payload: data)
+      notice = ""
+      await refresh()
+      return true
+    } catch {
+      notice = error.localizedDescription
+      return false
+    }
+  }
+
+  func cancelItem(_ item: ActiveDownloadItem) async {
+    do {
+      _ = try await commands.run(["cancel-item", item.id, item.taskId, item.key], bridge: true)
+      await refresh()
+    } catch {
+      notice = error.localizedDescription
+    }
+  }
+
+  func cancelAllActive() async {
+    for item in active {
+      _ = try? await commands.run(["cancel-item", item.id, item.taskId, item.key], bridge: true)
+    }
+    await refresh()
+  }
+
+  func resumeInterrupted() async {
+    let taskIds = Set(active.filter(\.isInterrupted).map(\.taskId))
+    for taskId in taskIds {
+      _ = try? await commands.run(["resume", taskId], bridge: true)
+    }
+    await refresh()
+  }
+
+  func retryItem(_ item: FailedDownloadItem) async {
+    do {
+      _ = try await commands.run(["retry", item.taskId, item.key], bridge: true)
+      notice = ""
+      await refresh()
+    } catch {
+      notice = error.localizedDescription
+    }
+  }
+
+  func retryAllFailed() async {
+    let grouped = Dictionary(grouping: failed, by: \.taskId)
+    for (taskId, items) in grouped {
+      if taskId == "url" {
+        for item in items {
+          _ = try? await commands.run(["retry", "url", item.key], bridge: true)
+        }
+      } else {
+        _ = try? await commands.run(["retry", taskId] + items.map(\.key), bridge: true)
+      }
+    }
+    await refresh()
+  }
+
+  func dismissFailed(_ keys: [String] = []) async {
+    let data = try? JSONSerialization.data(withJSONObject: keys)
+    _ = try? await commands.run(["dismiss-failed"], bridge: true, payload: data)
+    await refresh()
+  }
+
+  func openDownloadsFolder() {
+    let target =
+      downloadsDir
+      ?? FileManager.default.homeDirectoryForCurrentUser
+        .appendingPathComponent("Downloads/Fetchy", isDirectory: true)
+    try? FileManager.default.createDirectory(at: target, withIntermediateDirectories: true)
+    NSWorkspace.shared.open(target)
+  }
+}
+
+@MainActor final class AppState: ObservableObject {
+  @Published var pane: Pane = .downloads
+  @Published var focusedSite: String?
+  let browser = BrowserModel()
+  let downloads = DownloadsModel()
+
+  init() {
+    browser.downloads = downloads
+    browser.onOpenDownloads = { [weak self] in self?.pane = .downloads }
+  }
+
+  func open(_ url: String, signingIn: Bool = false) {
+    pane = .browser
+    browser.go(url)
+    if signingIn {
+      Task {
+        if let info = try? await browser.siteInfo(url) { focusedSite = info.site }
+      }
+    }
+  }
+
+  func openFavorites(_ shortcut: PlatformShortcut) {
+    pane = .browser
+    browser.openFavorites(shortcut)
   }
 }
 
 struct MainView: View {
   @EnvironmentObject var app: AppState
+
   var body: some View {
-    NavigationSplitView {
-      Sidebar(library: app.library)
-        .navigationSplitViewColumnWidth(min: 190, ideal: 220, max: 300)
-    } detail: {
-      switch app.sidebar {
-      case .browser: BrowserPane(browser: app.browser)
-      case .accounts: AccountsPane()
-      case .active, .attention: TasksPane(library: app.library)
-      default: LibraryPane(library: app.library)
+    Group {
+      switch app.pane {
+      case .downloads:
+        DownloadsHomePane(downloads: app.downloads)
+      case .browser:
+        BrowserPane(browser: app.browser)
+      case .accounts:
+        AccountsPane()
       }
     }
-    .frame(minWidth: 980, minHeight: 600)
+    .frame(minWidth: 960, minHeight: 620)
     .tint(fetchyAccent)
-    .task { await app.library.watch() }
-  }
-}
-
-struct Sidebar: View {
-  @EnvironmentObject var app: AppState
-  @ObservedObject var library: LibraryModel
-  @AppStorage("sidebar.platforms") private var showPlatforms = true
-  @AppStorage("sidebar.folders") private var showFolders = true
-
-  var body: some View {
-    List(selection: Binding(get: { Optional(app.sidebar) }, set: { if let v = $0 { app.sidebar = v } })) {
-      Section("资料库") {
-        row(.all, "square.grid.2x2", library.stats.total)
-        row(.video, "play.rectangle", kind("video") + kind("audio"))
-        row(.post, "photo.on.rectangle", kind("post"))
-        row(.article, "doc.plaintext", kind("article"))
-      }
-      Section("保存任务") {
-        row(.active, "arrow.down.circle", library.activeCount)
-        row(.attention, "exclamationmark.triangle", library.problemCount)
-      }
-      Section("网站") {
-        row(.browser, "safari", 0)
-        row(.accounts, "person.crop.circle", 0)
-      }
-      if !library.stats.platforms.isEmpty {
-        Section("来源", isExpanded: $showPlatforms) {
-          ForEach(library.stats.platforms.sorted { $0.value > $1.value }, id: \.key) { item in
-            row(.platform(item.key), "globe", item.value)
-          }
+    .toolbar {
+      ToolbarItemGroup(placement: .primaryAction) {
+        navButton(
+          title: app.downloads.active.isEmpty ? "下载" : "下载 (\(app.downloads.active.count))",
+          symbol: "arrow.down.circle",
+          active: app.pane == .downloads,
+          shortcut: "1"
+        ) { app.pane = .downloads }
+        navButton(
+          title: "浏览器",
+          symbol: "safari",
+          active: app.pane == .browser,
+          shortcut: "2"
+        ) { app.pane = .browser }
+        navButton(
+          title: "账号",
+          symbol: "person.crop.circle",
+          active: app.pane == .accounts,
+          shortcut: "3"
+        ) { app.pane = .accounts }
+        Button {
+          app.downloads.openDownloadsFolder()
+        } label: {
+          Label("下载文件夹", systemImage: "folder")
         }
-      }
-      if !library.stats.folders.isEmpty {
-        Section("收藏夹", isExpanded: $showFolders) {
-          ForEach(library.stats.folders.sorted { $0.key.localizedStandardCompare($1.key) == .orderedAscending }, id: \.key) {
-            item in
-            row(.folder(item.key), "folder", item.value)
-          }
-        }
+        .help("在访达中打开下载文件夹")
       }
     }
-    .listStyle(.sidebar)
+    .task { await app.downloads.watch() }
   }
 
-  private func kind(_ name: String) -> Int { library.stats.kinds[name] ?? 0 }
-
-  private func row(_ item: SidebarItem, _ symbol: String, _ count: Int) -> some View {
-    Label(item.title, systemImage: symbol).lineLimit(1).badge(count).tag(item)
+  @ViewBuilder private func navButton(
+    title: String, symbol: String, active: Bool, shortcut: KeyEquivalent,
+    action: @escaping () -> Void
+  ) -> some View {
+    Button(action: action) {
+      Label(title, systemImage: symbol)
+        .foregroundStyle(active ? fetchyAccent : .primary)
+    }
+    .keyboardShortcut(shortcut, modifiers: .command)
+    .help("\(title) (⌘\(String(shortcut.character)))")
   }
 }

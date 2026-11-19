@@ -202,7 +202,13 @@ export class NativeController extends EventEmitter {
 			throw bridgeError('invalid_request');
 		if (typeof method === 'string' && method.startsWith('library')) {
 			const {LibraryBridge} = await import('./library-bridge.mjs');
-			this.library ??= new LibraryBridge(this.directory);
+			this.library ??= new LibraryBridge(this.directory, {
+				getOutputDir: () =>
+					validateDirectory(this.settings.outputDir, {
+						createDefault: true,
+						defaultDirectory: this.defaultDirectory,
+					}),
+			});
 			return this.library.request(method, params);
 		}
 		switch (method) {

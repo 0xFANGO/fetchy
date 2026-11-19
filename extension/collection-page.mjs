@@ -150,16 +150,20 @@ export function captureSocialCollection() {
 			}
 			if (!id) continue;
 			const sourceUrl = u.origin + canonical;
+			const img =
+				a.querySelector('img') || a.closest('article,li,[role=article]')?.querySelector('img');
+			const rawCover = img?.currentSrc || img?.getAttribute('src') || '';
+			const cover = /^https?:\/\//i.test(rawCover)
+				? rawCover.replace(/^http:\/\//i, 'https://')
+				: '';
 			items.push({
 				platform,
 				id,
 				sourceUrl,
 				visitUrl: sourceUrl,
 				kind,
-				title: (a.getAttribute('aria-label') || text(a) || a.querySelector('img')?.alt || '').slice(
-					0,
-					256,
-				),
+				...(cover ? {cover} : {}),
+				title: (a.getAttribute('aria-label') || text(a) || img?.alt || '').slice(0, 256),
 				bodyComplete: false,
 			});
 		}

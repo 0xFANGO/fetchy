@@ -1,6 +1,17 @@
 import {createHash, randomUUID} from 'node:crypto';
-import {createReadStream, createWriteStream} from 'node:fs';
-import {link, mkdir, mkdtemp, open, realpath, rename, rm, stat, writeFile} from 'node:fs/promises';
+import {constants, createReadStream, createWriteStream} from 'node:fs';
+import {
+	copyFile,
+	link,
+	mkdir,
+	mkdtemp,
+	open,
+	realpath,
+	rename,
+	rm,
+	stat,
+	writeFile,
+} from 'node:fs/promises';
 import path from 'node:path';
 import {Readable, Transform} from 'node:stream';
 import {pipeline} from 'node:stream/promises';
@@ -8,6 +19,7 @@ import {setTimeout as delay} from 'node:timers/promises';
 import {problem} from './storage.mjs';
 import {runProcess} from '../process.mjs';
 import {saveWebFile} from '../public-http.mjs';
+import {videoFilename} from '../filenames.mjs';
 import {normalizeUrl} from '../urls.mjs';
 
 const text = (v, max = 4096) => (typeof v === 'string' ? v.slice(0, max) : '');
@@ -240,6 +252,7 @@ export async function downloadAttachment(root, url, kind, options = {}) {
 				headers,
 				localOrigin: options.localOrigin,
 				maxBytes: options.maxBytes ?? 8 * 1024 ** 3,
+				onProgress: options.onProgress,
 			}).catch((error) => {
 				if (signal.aborted && !options.signal?.aborted)
 					throw problem('timeout', 'Attachment download timed out.');
@@ -416,4 +429,174 @@ export async function renderWork(root, item, file = workFile(root, item)) {
 		await rm(tmp, {force: true});
 	}
 	return file;
+}
+
+const NO_HARDLINK = new Set(['ENOSYS', 'ENOTSUP', 'EOPNOTSUPP', 'EPERM', 'EXDEV']);
+
+function mediaStem(item) {
+	return videoFilename(displayTitle(item), {platform: item.platform, id: item.id}).slice(0, -4);
+}
+
+async function placeFile(source, destination) {
+	try {
+		await link(source, destination);
+	} catch (error) {
+		if (!NO_HARDLINK.has(error.code)) throw error;
+		await copyFile(source, destination, constants.COPYFILE_FICLONE | constants.COPYFILE_EXCL);
+	}
+}
+
+async function uniqueFile(directory, stem, ext) {
+	for (let index = 1; index <= 1000; index++) {
+		const name = index === 1 ? stem + ext : `${stem} (${index})${ext}`;
+		const target = path.join(directory, name);
+		try {
+			await stat(target);
+		} catch (error) {
+			if (error.code === 'ENOENT') return target;
+			throw error;
+		}
+	}
+	return path.join(directory, `${stem}-${randomUUID().slice(0, 8)}${ext}`);
+}
+
+async function uniqueDir(directory, stem) {
+	for (let index = 1; index <= 1000; index++) {
+		const name = index === 1 ? stem : `${stem} (${index})`;
+		const target = path.join(directory, name);
+		try {
+			await mkdir(target);
+			return target;
+		} catch (error) {
+			if (error.code === 'EEXIST') continue;
+			throw error;
+		}
+	}
+	const fallback = path.join(directory, `${stem}-${randomUUID().slice(0, 8)}`);
+	await mkdir(fallback, {recursive: true});
+	return fallback;
+}
+
+/**
+ * Materialize verified media attachments directly into the user's downloads folder
+ * with readable filenames. Single-media items land as `<title>.<ext>` directly inside
+ * `outputDir`; multi-media posts land in `<outputDir>/<title>/01.<ext>, 02.<ext>, ...`.
+ */
+export async function publishLibraryMedia(root, item, outputDir) {
+	if (!outputDir) return {savedFiles: [], savedDir: null};
+	const ready = (item.attachments ?? []).filter((a) => typeof a.path === 'string' && a.path);
+	if (!ready.length) return {savedFiles: [], savedDir: null};
+	await mkdir(outputDir, {recursive: true});
+	const baseDir = await realpath(outputDir);
+	// Reuse already-published files if every attachment still exists on disk.
+	const existing = [];
+	let allPresent = ready.length > 0;
+	for (const a of ready) {
+		if (typeof a.savedPath === 'string' && a.savedPath.startsWith(baseDir + path.sep)) {
+			try {
+				if ((await stat(a.savedPath)).isFile()) {
+					existing.push(a.savedPath);
+					continue;
+				}
+			} catch {}
+		}
+		allPresent = false;
+		break;
+	}
+	if (allPresent) {
+		const savedDir =
+			ready.length > 1 &&
+			typeof item.savedDir === 'string' &&
+			item.savedDir.startsWith(baseDir + path.sep)
+				? item.savedDir
+				: null;
+		return {savedFiles: existing, savedDir};
+	}
+	const stem = mediaStem(item);
+	if (ready.length === 1) {
+		const a = ready[0];
+		const src = path.join(root, a.path);
+		const ext =
+			path.extname(a.path) || (a.kind === 'audio' ? '.m4a' : a.kind === 'video' ? '.mp4' : '.jpg');
+		let target;
+		for (let attempt = 0; attempt < 5; attempt++) {
+			target = await uniqueFile(baseDir, stem, ext);
+			try {
+				await placeFile(src, target);
+				break;
+			} catch (error) {
+				if (error.code === 'EEXIST' && attempt < 4) continue;
+				throw error;
+			}
+		}
+		a.savedPath = target;
+		return {savedFiles: [target], savedDir: null};
+	}
+	const folder = await uniqueDir(baseDir, stem);
+	const savedFiles = [];
+	const pad = String(ready.length).length < 2 ? 2 : String(ready.length).length;
+	for (const [i, a] of ready.entries()) {
+		const src = path.join(root, a.path);
+		const ext =
+			path.extname(a.path) || (a.kind === 'audio' ? '.m4a' : a.kind === 'video' ? '.mp4' : '.jpg');
+		const target = path.join(folder, String(i + 1).padStart(pad, '0') + ext);
+		await placeFile(src, target);
+		a.savedPath = target;
+		savedFiles.push(target);
+	}
+	return {savedFiles, savedDir: folder};
+}
+
+/** Rename materialized files/folder in the downloads directory when the user renames a work. */
+export async function renamePublishedMedia(item) {
+	const stem = mediaStem(item);
+	if (item.savedDir) {
+		try {
+			if ((await stat(item.savedDir)).isDirectory()) {
+				const parent = path.dirname(item.savedDir);
+				const desired = path.join(parent, stem);
+				if (desired !== item.savedDir) {
+					let target = desired;
+					for (let i = 2; i <= 1000; i++) {
+						try {
+							await stat(target);
+							target = path.join(parent, `${stem} (${i})`);
+						} catch (e) {
+							if (e.code === 'ENOENT') break;
+							throw e;
+						}
+					}
+					await rename(item.savedDir, target);
+					const prevPrefix = item.savedDir + path.sep;
+					item.savedDir = target;
+					item.savedFiles = (item.savedFiles ?? []).map((f) =>
+						f.startsWith(prevPrefix) ? path.join(target, f.slice(prevPrefix.length)) : f,
+					);
+					for (const a of item.attachments ?? []) {
+						if (a.savedPath?.startsWith(prevPrefix))
+							a.savedPath = path.join(target, a.savedPath.slice(prevPrefix.length));
+					}
+				}
+			}
+		} catch {}
+		return;
+	}
+	if (Array.isArray(item.savedFiles) && item.savedFiles.length === 1) {
+		const current = item.savedFiles[0];
+		try {
+			if ((await stat(current)).isFile()) {
+				const parent = path.dirname(current);
+				const ext = path.extname(current);
+				const desired = path.join(parent, stem + ext);
+				if (desired !== current) {
+					const target = await uniqueFile(parent, stem, ext);
+					await rename(current, target);
+					item.savedFiles = [target];
+					for (const a of item.attachments ?? []) {
+						if (a.savedPath === current) a.savedPath = target;
+					}
+				}
+			}
+		} catch {}
+	}
 }

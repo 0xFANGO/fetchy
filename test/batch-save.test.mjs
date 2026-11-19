@@ -363,8 +363,9 @@ test('a retry in the same session fetches listing media again; feeds after the t
 	let done = await bridge.request('libraryTask', {id: task.id, problems: true});
 	assert.deepEqual(
 		done.items.map((i) => [i.status, i.reason]),
-		[['partial', 'network_error']],
+		[['failed', 'network_error']],
 	);
+	assert.equal((await searchLibrary({key: 'x:123'}, bridge.options)).length, 0);
 	assert.deepEqual(await bridge.request('libraryPage', {id: task.id, key: 'x:123', skip: true}), {
 		ok: true,
 		skipped: true,
@@ -443,14 +444,15 @@ test(
 			[
 				['added', null],
 				['partial', 'network_error'],
-				// Unreadable post: its listing title and link are kept, with the reason.
-				['partial', 'login_required'],
+				// Unreadable post fails cleanly instead of creating an empty offline shell.
+				['failed', 'login_required'],
 			],
 		);
 		const [first] = await searchLibrary({key: 'xiaohongshu:' + ids[0]}, bridge.options);
 		assert.equal(first.body, 'Full text ' + ids[0]);
 		assert.equal(first.sourceUrl, 'https://www.rednote.com/explore/' + ids[0]);
 		assert.equal(first.attachments.filter((a) => a.path).length, 2);
+		assert.equal((await searchLibrary({key: 'xiaohongshu:' + ids[2]}, bridge.options)).length, 0);
 		const [second] = await searchLibrary({key: 'xiaohongshu:' + ids[1]}, bridge.options);
 		assert.deepEqual(
 			second.attachments.map((a) => a.error ?? 'saved'),
@@ -466,7 +468,7 @@ test(
 	},
 );
 
-test('a retry reads a partial entry again and fills its missing file', async (t) => {
+test('a retry reads a failed entry again and fills its missing file', async (t) => {
 	let broken = true;
 	const {dir, origin} = await fixture(t, (req, res) => {
 		if (req.url.startsWith('/explore/'))
@@ -491,7 +493,8 @@ test('a retry reads a partial entry again and fills its missing file', async (t)
 	const task = await bridge.request('libraryStart', {manifest: {version: 1, items: [item]}});
 	await bridge.tail;
 	let done = await bridge.request('libraryTask', {id: task.id});
-	assert.deepEqual([done.items[0].status, done.items[0].reason], ['partial', 'auth_required']);
+	assert.deepEqual([done.items[0].status, done.items[0].reason], ['failed', 'auth_required']);
+	assert.equal((await searchLibrary({key: 'xiaohongshu:' + ids[0]}, bridge.options)).length, 0);
 	broken = false;
 	await bridge.request('libraryRetry', {id: task.id, selected: ['xiaohongshu:' + ids[0]]});
 	await bridge.tail;

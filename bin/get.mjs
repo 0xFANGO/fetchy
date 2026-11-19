@@ -265,13 +265,20 @@ export async function getOne(action, input, options = {}) {
 			});
 			const task = await importLibrary(
 				{version: 1, items: [entry]},
-				{root, sourceDir: tmp, signal: options.signal},
+				{
+					root,
+					sourceDir: tmp,
+					signal: options.signal,
+					outputDir: options.directFiles ? options.outputDir : undefined,
+				},
 			);
 			if (!task.items[0]?.filepath) throw new EngineError('output_invalid', '无法写入离线正文。');
 			const [record] = await searchLibrary({key: task.items[0].key}, {root});
-			const filepath = options.outputDir
-				? await exportPost(record, root, options.outputDir)
-				: record.filepath;
+			const filepath = options.directFiles
+				? record.savedFiles?.[0] || record.savedDir || record.filepath
+				: options.outputDir
+					? await exportPost(record, root, options.outputDir)
+					: record.filepath;
 			return {
 				platform: entry.platform,
 				id: entry.id,
@@ -295,7 +302,10 @@ export async function getOne(action, input, options = {}) {
 			platform: target.platform,
 			id: target.id,
 			sourceUrl: target.url,
-			title: result.title || path.basename(result.filepath, path.extname(result.filepath)),
+			title:
+				options.title ||
+				result.title ||
+				path.basename(result.filepath, path.extname(result.filepath)),
 			kind,
 			body: '',
 			bodyComplete: true,
@@ -310,16 +320,23 @@ export async function getOne(action, input, options = {}) {
 		};
 		const task = await importLibrary(
 			{version: 1, items: [entry]},
-			{root, sourceDir: tmp, signal: options.signal},
+			{
+				root,
+				sourceDir: tmp,
+				signal: options.signal,
+				outputDir: options.directFiles ? options.outputDir : undefined,
+			},
 		);
 		const {key} = entryIdentity(entry);
 		const [record] = await searchLibrary({key}, {root});
 		const saved = record?.attachments.find((a) => a.kind === kind && a.path);
 		if (!saved) throw new EngineError('output_invalid', '媒体未能写入资料库。');
 		const archivePath = path.join(root, saved.path);
-		const filepath = options.outputDir
-			? await copyResult(archivePath, options.outputDir, record, isAudio ? '.m4a' : '.mp4')
-			: archivePath;
+		const filepath = options.directFiles
+			? record.savedFiles?.[0] || archivePath
+			: options.outputDir
+				? await copyResult(archivePath, options.outputDir, record, isAudio ? '.m4a' : '.mp4')
+				: archivePath;
 		return {
 			...result,
 			platform: entry.platform,

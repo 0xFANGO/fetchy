@@ -19,7 +19,7 @@ struct CoverImage: View {
       if let image {
         Image(nsImage: image).resizable().scaledToFill()
       } else {
-        Image(systemName: kind == "video" ? "play.rectangle" : "doc.richtext")
+        Image(systemName: kind == "video" ? "play.rectangle" : "photo.on.rectangle")
           .font(symbol).foregroundStyle(.tertiary)
       }
     }
@@ -37,7 +37,6 @@ struct CoverImage: View {
       generator.maximumSize = CGSize(width: 480, height: 480)
       frame = try? await generator.image(at: .zero).image
     } else {
-      // A downsampled thumbnail: full-size photos would hold hundreds of megabytes in a long grid.
       frame = await Task.detached(priority: .utility) { () -> CGImage? in
         let options =
           [
@@ -59,19 +58,24 @@ struct CoverImage: View {
 struct EntryCard: View {
   let entry: LibraryEntry
   let selected: Bool
+  let onReveal: () -> Void
   @State private var hovering = false
 
   var body: some View {
     VStack(alignment: .leading, spacing: 8) {
       Color.clear
-        .aspectRatio(4 / 3, contentMode: .fit)
+        .aspectRatio(16 / 10, contentMode: .fit)
         .overlay {
-          CoverImage(url: entry.cover, kind: entry.coverKind ?? (entry.kind == "video" ? "video" : nil))
+          CoverImage(
+            url: entry.cover,
+            kind: entry.coverKind ?? (entry.kind == "video" ? "video" : nil))
         }
         .clipShape(RoundedRectangle(cornerRadius: 8, style: .continuous))
         .overlay {
           RoundedRectangle(cornerRadius: 8, style: .continuous)
-            .strokeBorder(selected ? fetchyAccent : Color.primary.opacity(0.08), lineWidth: selected ? 2.5 : 1)
+            .strokeBorder(
+              selected ? fetchyAccent : Color.primary.opacity(0.08),
+              lineWidth: selected ? 2.5 : 1)
         }
         .overlay(alignment: .topLeading) { kindBadge }
         .overlay(alignment: .topTrailing) {
@@ -80,15 +84,17 @@ struct EntryCard: View {
               .symbolRenderingMode(.palette)
               .foregroundStyle(.white, fetchyAccent)
               .font(.title2).padding(6)
-          }
-        }
-        .overlay(alignment: .bottomLeading) {
-          if entry.status == "partial" {
-            Label("部分保存", systemImage: "exclamationmark.circle.fill")
-              .font(.caption2.weight(.semibold)).foregroundStyle(.white)
-              .padding(.horizontal, 6).padding(.vertical, 3)
-              .background(Capsule().fill(Color.orange))
-              .padding(6)
+          } else if hovering {
+            Button(action: onReveal) {
+              Image(systemName: "folder.fill")
+                .font(.caption.weight(.semibold))
+                .foregroundStyle(.white)
+                .padding(6)
+                .background(Circle().fill(Color.black.opacity(0.6)))
+            }
+            .buttonStyle(.plain)
+            .padding(6)
+            .help("在访达中显示文件")
           }
         }
       VStack(alignment: .leading, spacing: 3) {
@@ -114,231 +120,477 @@ struct EntryCard: View {
       Image(systemName: entry.kind == "video" ? "play.fill" : "waveform")
         .font(.caption2.weight(.bold)).foregroundStyle(.white)
         .padding(5)
-        .background(Circle().fill(Color.black.opacity(0.55)))
+        .background(Circle().fill(Color.black.opacity(0.58)))
+        .padding(6)
+    } else if entry.mediaCount > 1 {
+      Text("\(entry.mediaCount) 张图")
+        .font(.caption2.weight(.semibold)).monospacedDigit()
+        .foregroundStyle(.white)
+        .padding(.horizontal, 6).padding(.vertical, 3)
+        .background(Capsule().fill(Color.black.opacity(0.58)))
         .padding(6)
     }
   }
 }
 
-struct LibraryPane: View {
+enum LibraryFilter: String, CaseIterable, Identifiable {
+  case all, video, post, failed
+  var id: String { rawValue }
+  var title: String {
+    switch self {
+    case .all: return "全部"
+    case .video: return "视频"
+    case .post: return "图文"
+    case .failed: return "失败"
+    }
+  }
+}
+
+/// Flat single-page Downloads & Library workspace modeled after Downbit.
+struct DownloadsHomePane: View {
   @EnvironmentObject var app: AppState
-  @ObservedObject var library: LibraryModel
+  @ObservedObject var downloads: DownloadsModel
   @AppStorage("library.view") private var viewMode = "grid"
+  @State private var filter: LibraryFilter = .all
+  @State private var platformFilter = ""
   @State private var text = ""
   @State private var entries: [LibraryEntry] = []
   @State private var loaded = false
   @State private var more = false
   @State private var scopeKey = ""
-  @State private var selection = Set<String>()
+  @State private var selection: Set<String> = []
   @State private var anchor: String?
-  @State private var notice = ""
-  @State private var saving = false
-  @State private var preview: ManifestPreview?
   @State private var renaming: LibraryEntry?
   @State private var newTitle = ""
   @State private var deleting: [LibraryEntry] = []
+  @State private var notice = ""
+  @State private var submittingUrl = false
+  @State private var preview: ManifestPreview?
   @FocusState private var gridFocused: Bool
-  private var commands: LocalCommands { library.commands }
+  private let commands = LocalCommands()
 
-  private var trimmed: String { text.trimmingCharacters(in: .whitespacesAndNewlines) }
-  private var link: String? {
-    let value = trimmed
-    let looksLikeLink =
-      value.contains("://") || value.range(of: #"^[\w-]+(\.[\w-]+)+/"#, options: .regularExpression) != nil
-    return looksLikeLink && !value.contains(" ") ? value : nil
-  }
-  private var query: String { link == nil ? trimmed : "" }
-  /// platform, folder and kind for the native search, from the sidebar.
-  private var scope: [String] {
-    switch app.sidebar {
-    case .video: return ["", "", "video"]
-    case .post: return ["", "", "post"]
-    case .article: return ["", "", "article"]
-    case .platform(let id): return [id, "", ""]
-    case .folder(let name): return ["", name, ""]
-    default: return ["", "", ""]
+  /// Detect a pasted link even when wrapped in Xiaohongshu / Douyin share copy.
+  private var detectedLink: String? {
+    let trimmed = text.trimmingCharacters(in: .whitespacesAndNewlines)
+    guard !trimmed.isEmpty else { return nil }
+    if let range = trimmed.range(of: #"https?://[^\s<>'"\u3000\uFF0C\u3002\uFF01\uFF1F]+"#, options: .regularExpression) {
+      let candidate = String(trimmed[range])
+      if let u = URL(string: candidate), u.host != nil { return candidate }
     }
+    return nil
   }
+
+  private var query: String { detectedLink == nil ? text.trimmingCharacters(in: .whitespaces) : "" }
   private var selected: [LibraryEntry] { entries.filter { selection.contains($0.id) } }
-  private var scopeTotal: Int? {
-    let stats = library.stats
-    switch app.sidebar {
-    case .all: return stats.total
-    case .video: return (stats.kinds["video"] ?? 0) + (stats.kinds["audio"] ?? 0)
-    case .post: return stats.kinds["post"] ?? 0
-    case .article: return stats.kinds["article"] ?? 0
-    case .platform(let id): return stats.platforms[id] ?? 0
-    case .folder(let name): return stats.folders[name] ?? 0
-    default: return nil
+
+  private var kindParam: String {
+    switch filter {
+    case .video: return "video"
+    case .post: return "post"
+    default: return ""
     }
   }
-  private var subtitle: String {
-    if !query.isEmpty { return "找到 \(entries.count)\(more ? "+" : "") 项" }
-    return scopeTotal.map { "\($0) 项" } ?? ""
+
+  private var scope: [String] { [platformFilter, "", kindParam] }
+
+  private var sortedPlatforms: [(key: String, value: Int)] {
+    downloads.stats.platforms.sorted { $0.value > $1.value }
   }
 
   var body: some View {
-    content
-      .navigationTitle(app.sidebar.title)
-      .navigationSubtitle(subtitle)
-      .searchable(text: $text, placement: .toolbar, prompt: "搜索，或粘贴链接保存")
-      .onSubmit(of: .search) { if link != nil { save() } }
-      .toolbar { toolbar }
-      .safeAreaInset(edge: .top, spacing: 0) { banners }
-      .safeAreaInset(edge: .bottom, spacing: 0) { bottomBar }
-      .task(id: [query, scope.joined(separator: "\u{1f}"), String(library.revision)].joined(separator: "\u{1e}")) {
-        try? await Task.sleep(nanoseconds: 200_000_000)
-        guard !Task.isCancelled else { return }
-        await reload()
-      }
-      .onChange(of: app.sidebar) { _, _ in selection.removeAll() }
-      .sheet(item: $preview) { manifest in
-        SelectionSheet(manifest) { keys in
-          let data = try? JSONSerialization.data(withJSONObject: keys)
-          Task {
-            do {
-              _ = try await commands.run(["import", manifest.source.path], bridge: true, payload: data)
-              await library.refresh()
-              app.sidebar = .active
-            } catch { notice = error.localizedDescription }
-          }
-        }
-      }
-      .alert(
-        "重命名", isPresented: Binding(get: { renaming != nil }, set: { if !$0 { renaming = nil } }),
-        presenting: renaming
-      ) { entry in
-        TextField("标题", text: $newTitle)
-        Button("取消", role: .cancel) {}
-        Button("重命名") { rename(entry) }
-      } message: { _ in
-        Text("只改资料库里显示的标题。留空则恢复网站上的标题。")
-      }
-      .confirmationDialog(
-        deleting.count == 1 ? "删除「\(deleting[0].title)」？" : "删除 \(deleting.count) 项？",
-        isPresented: Binding(get: { !deleting.isEmpty }, set: { if !$0 { deleting = [] } }),
-        titleVisibility: .visible
-      ) {
-        Button("移到废纸篓", role: .destructive) { remove(deleting) }
-        Button("取消", role: .cancel) {}
-      } message: {
-        Text("离线页和只属于这些作品的图片、视频会移到废纸篓。保存任务的记录会保留，以后可以重新保存。")
-      }
-  }
-
-  @ViewBuilder var content: some View {
-    if loaded && entries.isEmpty {
-      emptyState
-    } else if viewMode == "list" {
-      table
-    } else {
-      grid
-    }
-  }
-
-  @ViewBuilder var emptyState: some View {
-    if !query.isEmpty {
-      ContentUnavailableView.search(text: query)
-    } else if library.stats.total == 0 {
-      ContentUnavailableView {
-        Label("资料库还是空的", systemImage: "tray")
-      } description: {
-        Text("在右上角的搜索框粘贴一个链接保存，或在「浏览器」里打开收藏夹，勾选后批量保存。")
-      } actions: {
-        Button("打开浏览器") { app.sidebar = .browser }
-      }
-    } else {
-      ContentUnavailableView(
-        "这里还没有作品", systemImage: "square.grid.2x2", description: Text("换一个分类或来源看看。"))
-    }
-  }
-
-  @ToolbarContentBuilder var toolbar: some ToolbarContent {
-    ToolbarItem {
-      Picker("显示方式", selection: $viewMode) {
-        Label("封面", systemImage: "square.grid.2x2").tag("grid")
-        Label("列表", systemImage: "list.bullet").tag("list")
-      }
-      .pickerStyle(.segmented).help("用封面或列表显示")
-    }
-    ToolbarItem {
-      Menu {
-        Button("全选") { selectAll() }.disabled(entries.isEmpty)
-        Divider()
-        Button("在访达中打开资料库文件夹") {
-          if let root = library.root { NSWorkspace.shared.open(root) }
-        }
-        .disabled(library.root == nil)
-        Button("导入收藏清单…", action: selectManifest)
-      } label: {
-        Label("更多", systemImage: "ellipsis.circle")
-      }
-      .help("更多操作")
-    }
-  }
-
-  @ViewBuilder var banners: some View {
     VStack(spacing: 0) {
-      if let link {
-        HStack(spacing: 10) {
-          Image(systemName: "link").foregroundStyle(.secondary)
-          Text(link).lineLimit(1).truncationMode(.middle)
-          Spacer(minLength: 12)
-          if saving { ProgressView().controlSize(.small) }
-          Button(saving ? "正在保存…" : "保存到资料库", action: save)
-            .buttonStyle(.borderedProminent).disabled(saving)
-        }
-        .padding(.horizontal, 20).padding(.vertical, 10)
-        .background(.bar)
-        Divider()
-      }
-      if !notice.isEmpty {
-        HStack(alignment: .firstTextBaseline, spacing: 10) {
-          Text(notice).textSelection(.enabled).fixedSize(horizontal: false, vertical: true)
-          Spacer(minLength: 12)
+      omniboxBar
+      Divider()
+
+      if !notice.isEmpty || !downloads.notice.isEmpty {
+        HStack(spacing: 8) {
+          Text(!notice.isEmpty ? notice : downloads.notice)
+            .font(.callout).foregroundStyle(.secondary)
+          Spacer()
           Button {
             notice = ""
+            downloads.notice = ""
           } label: {
-            Image(systemName: "xmark")
+            Image(systemName: "xmark").font(.caption)
           }
-          .buttonStyle(.borderless).help("关闭")
+          .buttonStyle(.borderless)
         }
-        .font(.callout)
         .padding(.horizontal, 20).padding(.vertical, 8)
         .background(.bar)
         Divider()
       }
+
+      ScrollView {
+        VStack(alignment: .leading, spacing: 18) {
+          if !downloads.active.isEmpty {
+            ActiveDownloadsSection(downloads: downloads)
+          }
+
+          filterBar
+
+          if filter == .failed {
+            FailedDownloadsSection(downloads: downloads)
+          } else if !loaded {
+            ProgressView()
+              .frame(maxWidth: .infinity, minHeight: 240)
+          } else if entries.isEmpty {
+            emptyState
+          } else if viewMode == "list" {
+            listView
+          } else {
+            gridView
+          }
+        }
+        .padding(20)
+        .frame(maxWidth: .infinity, alignment: .top)
+      }
+
+      bottomBar
     }
+    .navigationTitle("Fetchy")
+    .task(id: ([query] + scope).joined(separator: "\u{1f}")) {
+      if !query.isEmpty { try? await Task.sleep(nanoseconds: 180_000_000) }
+      guard !Task.isCancelled else { return }
+      await reload()
+    }
+    .onChange(of: downloads.revision) { _, _ in Task { await reload() } }
+    .onChange(of: filter) { _, _ in selection.removeAll() }
+    .sheet(item: $preview) { item in
+      SelectionSheet(item) { selectedKeys in
+        Task {
+          do {
+            let data = try JSONSerialization.data(withJSONObject: selectedKeys)
+            _ = try await commands.run(["import", item.source.path], bridge: true, payload: data)
+            notice = "已加入下载队列。"
+            await downloads.refresh()
+          } catch { notice = error.localizedDescription }
+        }
+      }
+    }
+    .sheet(item: $renaming) { entry in
+      VStack(alignment: .leading, spacing: 12) {
+        Text("重命名").font(.headline)
+        TextField("标题", text: $newTitle)
+          .textFieldStyle(.roundedBorder)
+          .onSubmit {
+            rename(entry)
+            renaming = nil
+          }
+        Text("将同步更新已下载文件的文件名。留空则恢复原标题。")
+          .font(.caption).foregroundStyle(.secondary)
+        HStack {
+          Spacer()
+          Button("取消") { renaming = nil }
+          Button("保存") {
+            rename(entry)
+            renaming = nil
+          }
+          .buttonStyle(.borderedProminent)
+        }
+      }
+      .padding(20).frame(width: 420)
+    }
+    .confirmationDialog(
+      deleting.count == 1 ? "将「\(deleting[0].title)」移到废纸篓？" : "将选中的 \(deleting.count) 项移到废纸篓？",
+      isPresented: Binding(get: { !deleting.isEmpty }, set: { if !$0 { deleting = [] } }),
+      titleVisibility: .visible
+    ) {
+      Button("移到废纸篓", role: .destructive) {
+        let items = deleting
+        deleting = []
+        remove(items)
+      }
+      Button("取消", role: .cancel) { deleting = [] }
+    } message: {
+      Text("已下载的视频和图片原文件也会一并移到废纸篓，可从废纸篓恢复。")
+    }
+  }
+
+  // MARK: - Top Omnibox
+
+  var omniboxBar: some View {
+    HStack(spacing: 10) {
+      HStack(spacing: 8) {
+        Image(systemName: detectedLink != nil ? "link" : "magnifyingglass")
+          .foregroundStyle(detectedLink != nil ? fetchyAccent : .secondary)
+        TextField("粘贴视频或帖子链接以下载，或搜索已下载内容", text: $text)
+          .textFieldStyle(.plain)
+          .onSubmit {
+            if detectedLink != nil { startLinkDownload() }
+          }
+        if !text.isEmpty {
+          Button {
+            text = ""
+          } label: {
+            Image(systemName: "xmark.circle.fill").foregroundStyle(.secondary)
+          }
+          .buttonStyle(.plain)
+        }
+      }
+      .padding(.horizontal, 12).padding(.vertical, 8)
+      .background {
+        RoundedRectangle(cornerRadius: 9, style: .continuous)
+          .fill(Color(nsColor: .controlBackgroundColor))
+          .overlay {
+            RoundedRectangle(cornerRadius: 9, style: .continuous)
+              .strokeBorder(
+                detectedLink != nil ? fetchyAccent.opacity(0.6) : Color.primary.opacity(0.1),
+                lineWidth: 1)
+          }
+      }
+
+      if detectedLink != nil {
+        Button {
+          startLinkDownload()
+        } label: {
+          Label(submittingUrl ? "正在加入…" : "下载", systemImage: "arrow.down.circle.fill")
+        }
+        .buttonStyle(.borderedProminent)
+        .disabled(submittingUrl)
+      }
+
+      Button {
+        selectManifest()
+      } label: {
+        Image(systemName: "square.and.arrow.down")
+      }
+      .buttonStyle(.bordered)
+      .help("导入收藏清单 (JSON)…")
+    }
+    .padding(.horizontal, 20).padding(.vertical, 12)
+  }
+
+  // MARK: - Single Horizontal Filter Pill Bar
+
+  var filterBar: some View {
+    HStack(spacing: 8) {
+      Text("已下载").font(.headline).padding(.trailing, 4)
+
+      ForEach(LibraryFilter.allCases) { item in
+        filterPill(item)
+      }
+
+      if sortedPlatforms.count > 1 && filter != .failed {
+        Menu {
+          Button("全部平台") { platformFilter = "" }
+          Divider()
+          ForEach(sortedPlatforms, id: \.key) { item in
+            Button("\(platformName(item.key)) (\(item.value))") {
+              platformFilter = item.key
+            }
+          }
+        } label: {
+          HStack(spacing: 4) {
+            Text(platformFilter.isEmpty ? "全部平台" : platformName(platformFilter))
+            Image(systemName: "chevron.down").font(.caption2)
+          }
+          .font(.callout)
+          .padding(.horizontal, 10).padding(.vertical, 5)
+          .background(Capsule().fill(Color.primary.opacity(0.06)))
+        }
+        .buttonStyle(.plain)
+      }
+
+      Spacer()
+
+      if let dir = downloads.downloadsDir {
+        Button {
+          downloads.openDownloadsFolder()
+        } label: {
+          Label(abbreviateHome(dir.path), systemImage: "folder")
+            .font(.caption).foregroundStyle(.secondary)
+            .lineLimit(1)
+        }
+        .buttonStyle(.plain)
+        .help("在访达中打开下载文件夹")
+      }
+
+      if filter != .failed {
+        Picker("视图", selection: $viewMode) {
+          Image(systemName: "square.grid.2x2").tag("grid")
+          Image(systemName: "list.bullet").tag("list")
+        }
+        .pickerStyle(.segmented).labelsHidden().frame(width: 68)
+      }
+    }
+  }
+
+  @ViewBuilder private func filterPill(_ item: LibraryFilter) -> some View {
+    let active = filter == item
+    let count = countFor(item)
+    Button {
+      filter = item
+    } label: {
+      HStack(spacing: 5) {
+        Text(item.title)
+        if count > 0 {
+          Text("\(count)")
+            .font(.caption2.weight(.semibold)).monospacedDigit()
+            .foregroundStyle(
+              active ? .white : (item == .failed ? .white : .secondary)
+            )
+            .padding(.horizontal, 5).padding(.vertical, 1)
+            .background(
+              Capsule().fill(
+                active
+                  ? Color.white.opacity(0.25)
+                  : (item == .failed ? Color.red.opacity(0.85) : Color.primary.opacity(0.08))
+              )
+            )
+        }
+      }
+      .font(.callout.weight(active ? .medium : .regular))
+      .foregroundStyle(active ? .white : .primary)
+      .padding(.horizontal, 11).padding(.vertical, 5)
+      .background(
+        Capsule().fill(active ? fetchyAccent : Color.primary.opacity(0.06))
+      )
+    }
+    .buttonStyle(.plain)
+  }
+
+  private func countFor(_ item: LibraryFilter) -> Int {
+    switch item {
+    case .all: return downloads.stats.total
+    case .video: return (downloads.stats.kinds["video"] ?? 0) + (downloads.stats.kinds["audio"] ?? 0)
+    case .post: return (downloads.stats.kinds["post"] ?? 0) + (downloads.stats.kinds["article"] ?? 0)
+    case .failed: return downloads.failed.count
+    }
+  }
+
+  private func abbreviateHome(_ path: String) -> String {
+    let home = FileManager.default.homeDirectoryForCurrentUser.path
+    return path.hasPrefix(home) ? "~" + path.dropFirst(home.count) : path
+  }
+
+  // MARK: - Downloaded Content (Grid / List / Empty)
+
+  @ViewBuilder var emptyState: some View {
+    ContentUnavailableView {
+      Label(
+        query.isEmpty ? "还没有已下载的内容" : "没有找到匹配项",
+        systemImage: query.isEmpty ? "arrow.down.doc" : "magnifyingglass")
+    } description: {
+      Text(
+        query.isEmpty
+          ? "在上方粘贴视频或帖子链接直接下载，或打开内置浏览器直达各平台收藏夹一键批量下载。"
+          : "试试其他关键词或切换筛选条件。")
+    } actions: {
+      if query.isEmpty {
+        Button("打开浏览器") { app.pane = .browser }
+          .buttonStyle(.borderedProminent)
+        if !platformFilter.isEmpty || filter != .all {
+          Button("查看全部") {
+            platformFilter = ""
+            filter = .all
+          }
+        }
+      } else {
+        Button("清空搜索") { text = "" }
+      }
+    }
+    .frame(maxWidth: .infinity, minHeight: 280)
+  }
+
+  var gridView: some View {
+    LazyVGrid(columns: [GridItem(.adaptive(minimum: 196, maximum: 260), spacing: 14)], spacing: 16) {
+      ForEach(entries) { entry in
+        EntryCard(
+          entry: entry,
+          selected: selection.contains(entry.id),
+          onReveal: { reveal([entry]) }
+        )
+        .onTapGesture {
+          if NSApp.currentEvent?.clickCount == 2 { open([entry]) } else { click(entry.id) }
+        }
+        .contextMenu { menu(for: targets(entry)) }
+      }
+    }
+    .frame(maxWidth: .infinity, alignment: .top)
+    .contentShape(Rectangle())
+    .onTapGesture { selection.removeAll() }
+    .focusable()
+    .focusEffectDisabled()
+    .focused($gridFocused)
+    .onCommand(#selector(NSText.selectAll(_:))) { selectAll() }
+    .onDeleteCommand { if !selection.isEmpty { deleting = selected } }
+  }
+
+  var listView: some View {
+    LazyVStack(spacing: 6) {
+      ForEach(entries) { entry in
+        let isSelected = selection.contains(entry.id)
+        HStack(spacing: 12) {
+          Color.clear.frame(width: 48, height: 32)
+            .overlay {
+              CoverImage(
+                url: entry.cover,
+                kind: entry.coverKind ?? (entry.kind == "video" ? "video" : nil),
+                symbol: .caption)
+            }
+            .clipShape(RoundedRectangle(cornerRadius: 5, style: .continuous))
+          VStack(alignment: .leading, spacing: 2) {
+            Text(entry.title).font(.callout.weight(.medium)).lineLimit(1)
+            Text(
+              [platformName(entry.platform), entry.kindName, entry.author]
+                .filter { !$0.isEmpty }.joined(separator: " · ")
+            )
+            .font(.caption).foregroundStyle(.secondary).lineLimit(1)
+          }
+          Spacer()
+          Button("打开") { open([entry]) }.controlSize(.small)
+          Button {
+            reveal([entry])
+          } label: {
+            Image(systemName: "folder")
+          }
+          .buttonStyle(.borderless).help("在访达中显示")
+        }
+        .padding(.horizontal, 12).padding(.vertical, 8)
+        .background {
+          RoundedRectangle(cornerRadius: 8, style: .continuous)
+            .fill(isSelected ? fetchyAccent.opacity(0.12) : Color(nsColor: .controlBackgroundColor))
+            .overlay {
+              RoundedRectangle(cornerRadius: 8, style: .continuous)
+                .strokeBorder(isSelected ? fetchyAccent : Color.primary.opacity(0.06), lineWidth: 1)
+            }
+        }
+        .contentShape(Rectangle())
+        .onTapGesture {
+          if NSApp.currentEvent?.clickCount == 2 { open([entry]) } else { click(entry.id) }
+        }
+        .contextMenu { menu(for: targets(entry)) }
+      }
+    }
+    .focusable()
+    .focusEffectDisabled()
+    .focused($gridFocused)
+    .onCommand(#selector(NSText.selectAll(_:))) { selectAll() }
+    .onDeleteCommand { if !selection.isEmpty { deleting = selected } }
   }
 
   @ViewBuilder var bottomBar: some View {
     if !selection.isEmpty {
       VStack(spacing: 0) {
         Divider()
-        HStack(spacing: 8) {
+        HStack(spacing: 10) {
           Text("已选 \(selection.count) 项").font(.callout.weight(.medium)).monospacedDigit()
-          Button("全选", action: selectAll).buttonStyle(.link)
-            .disabled(selection.count == entries.count)
-          Button("取消选择") { selection.removeAll() }.buttonStyle(.link)
-          Spacer(minLength: 12)
-          Button { open(selected) } label: { Label("打开", systemImage: "doc.text") }
-          Button { reveal(selected) } label: { Label("在访达中显示", systemImage: "folder") }
-          Button {
-            if let entry = selected.first { startRename(entry) }
-          } label: {
-            Label("重命名", systemImage: "pencil")
+          if selection.count < entries.count {
+            Button("全选") { selectAll() }
           }
-          .disabled(selection.count != 1)
-          Button(role: .destructive) {
-            deleting = selected
-          } label: {
-            Label("删除", systemImage: "trash")
+          Spacer()
+          Button("打开") { open(selected) }
+          Button("在访达中显示") { reveal(selected) }
+          if selection.count == 1, let only = selected.first {
+            Button("重命名…") { startRename(only) }
           }
+          Button("移到废纸篓…", role: .destructive) { deleting = selected }
+          Button("取消选择") { selection.removeAll() }
         }
         .padding(.horizontal, 20).padding(.vertical, 10)
       }
       .background(.bar)
-    } else if more {
+    } else if more && filter != .failed {
       VStack(spacing: 0) {
         Divider()
         HStack {
@@ -352,70 +604,9 @@ struct LibraryPane: View {
     }
   }
 
-  var grid: some View {
-    ScrollView {
-      LazyVGrid(columns: [GridItem(.adaptive(minimum: 176, maximum: 260), spacing: 12)], spacing: 14) {
-        ForEach(entries) { entry in
-          EntryCard(entry: entry, selected: selection.contains(entry.id))
-            .onTapGesture {
-              // One gesture for both, so a click selects at once and the second click of a
-              // double-click opens, without waiting for the double-click interval.
-              if NSApp.currentEvent?.clickCount == 2 { open([entry]) } else { click(entry.id) }
-            }
-            .contextMenu { menu(for: targets(entry)) }
-        }
-      }
-      .padding(20)
-      .frame(maxWidth: .infinity, alignment: .top)
-      .contentShape(Rectangle())
-      .onTapGesture { selection.removeAll() }
-    }
-    .focusable()
-    .focusEffectDisabled()
-    .focused($gridFocused)
-    .onCommand(#selector(NSText.selectAll(_:))) { selectAll() }
-    .onDeleteCommand { if !selection.isEmpty { deleting = selected } }
-  }
-
-  var table: some View {
-    Table(entries, selection: $selection) {
-      TableColumn("标题") { entry in
-        HStack(spacing: 10) {
-          Color.clear.frame(width: 32, height: 24)
-            .overlay {
-              CoverImage(
-                url: entry.cover, kind: entry.coverKind ?? (entry.kind == "video" ? "video" : nil),
-                symbol: .caption)
-            }
-            .clipShape(RoundedRectangle(cornerRadius: 4, style: .continuous))
-          Text(entry.title).lineLimit(1)
-          if entry.status == "partial" {
-            Image(systemName: "exclamationmark.circle.fill").foregroundStyle(.orange).help("部分保存")
-          }
-        }
-      }
-      TableColumn("类型") { entry in Text(entry.kindName).foregroundStyle(.secondary) }
-        .width(min: 40, ideal: 52, max: 80)
-      TableColumn("来源") { entry in Text(platformName(entry.platform)) }
-        .width(min: 60, ideal: 84, max: 140)
-      TableColumn("作者") { entry in Text(entry.author).lineLimit(1) }
-        .width(min: 60, ideal: 120)
-      TableColumn("收藏夹") { entry in
-        Text(entry.folders.joined(separator: "、")).lineLimit(1).foregroundStyle(.secondary)
-      }
-      .width(min: 60, ideal: 140)
-    }
-    .contextMenu(forSelectionType: String.self) { ids in
-      menu(for: entries.filter { ids.contains($0.id) })
-    } primaryAction: { ids in
-      open(entries.filter { ids.contains($0.id) })
-    }
-    .onDeleteCommand { if !selection.isEmpty { deleting = selected } }
-  }
-
   @ViewBuilder func menu(for items: [LibraryEntry]) -> some View {
     if !items.isEmpty {
-      Button(items.count == 1 ? "打开离线页" : "打开 \(items.count) 个离线页") { open(items) }
+      Button(items.count == 1 ? "打开文件" : "打开 \(items.count) 个文件") { open(items) }
       Button("在访达中显示") { reveal(items) }
       if items.count == 1, let entry = items.first {
         if let source = entry.sourceUrl {
@@ -428,13 +619,14 @@ struct LibraryPane: View {
         Button("重命名…") { startRename(entry) }
       }
       Divider()
-      Button(items.count == 1 ? "删除…" : "删除 \(items.count) 项…", role: .destructive) {
+      Button(items.count == 1 ? "移到废纸篓…" : "将 \(items.count) 项移到废纸篓…", role: .destructive) {
         deleting = items
       }
     }
   }
 
-  /// A right-click acts on the selection when it lands inside it, like Finder.
+  // MARK: - Actions
+
   private func targets(_ entry: LibraryEntry) -> [LibraryEntry] {
     selection.contains(entry.id) ? selected : [entry]
   }
@@ -459,14 +651,14 @@ struct LibraryPane: View {
   private func selectAll() { selection = Set(entries.map(\.id)) }
 
   private func open(_ items: [LibraryEntry]) {
-    // Opening hundreds of pages at once is never what a click meant.
-    for entry in items.prefix(20) { if let file = entry.file { NSWorkspace.shared.open(file) } }
+    for entry in items.prefix(20) {
+      if let target = entry.openTarget { NSWorkspace.shared.open(target) }
+    }
   }
 
-  /// Saved images and videos when there are any, otherwise the offline page.
   private func reveal(_ items: [LibraryEntry]) {
-    let files = items.flatMap { entry in entry.files.isEmpty ? [entry.file].compactMap { $0 } : entry.files }
-    if !files.isEmpty { NSWorkspace.shared.activateFileViewerSelecting(files) }
+    let urls = items.flatMap(\.revealTargets)
+    if !urls.isEmpty { NSWorkspace.shared.activateFileViewerSelecting(urls) }
   }
 
   private func startRename(_ entry: LibraryEntry) {
@@ -491,35 +683,33 @@ struct LibraryPane: View {
         let data = try JSONSerialization.data(withJSONObject: keys)
         let result = try await commands.run(["remove"], bridge: true, payload: data) as? [String: Any]
         let files = (result?["files"] as? [String] ?? []).map { URL(fileURLWithPath: $0) }
+          .filter { FileManager.default.fileExists(atPath: $0.path) }
         let count = (result?["removed"] as? [String])?.count ?? keys.count
         selection.subtract(keys)
-        notice = "已删除 \(count) 项，文件已移到废纸篓。"
+        notice = "已将 \(count) 项移到废纸篓。"
         if !files.isEmpty {
           NSWorkspace.shared.recycle(files) { _, error in
             guard error != nil else { return }
             DispatchQueue.main.async {
-              notice = "已从资料库删除 \(count) 项，但有些文件没能移到废纸篓。可以在资料库文件夹里手动删除。"
+              notice = "已从列表删除 \(count) 项，部分文件未能自动移到废纸篓。"
             }
           }
         }
-        await library.refresh()
+        await downloads.refresh()
         await reload()
       } catch { notice = error.localizedDescription }
     }
   }
 
-  private func save() {
-    guard let value = link, !saving else { return }
-    saving = true
+  private func startLinkDownload() {
+    guard let url = detectedLink, !submittingUrl else { return }
+    submittingUrl = true
     notice = ""
     Task {
-      defer { saving = false }
-      do {
-        let result = try await commands.run(["get", value]) as? [String: Any]
-        notice = result?["status"] as? String == "partial" ? "部分保存，缺少的内容见离线页。" : "已保存到资料库。"
+      defer { submittingUrl = false }
+      if await downloads.startUrlDownload(url) {
         text = ""
-        await library.refresh()
-      } catch { notice = error.localizedDescription }
+      }
     }
   }
 
@@ -532,7 +722,6 @@ struct LibraryPane: View {
     return rows.compactMap(LibraryEntry.init)
   }
 
-  /// Reload the current view. A refresh of the same view keeps the pages already loaded.
   private func reload() async {
     let key = ([query] + scope).joined(separator: "\u{1f}")
     let keep = key == scopeKey ? max(entries.count, 1) : 1
@@ -568,7 +757,7 @@ struct LibraryPane: View {
           else { return nil }
           return ManifestItem(id: key, title: title, platform: platform)
         }
-        guard !options.isEmpty else { throw FetchyFailure(text: "清单没有可保存的条目。") }
+        guard !options.isEmpty else { throw FetchyFailure(text: "清单没有可下载的条目。") }
         preview = ManifestPreview(source: url, items: options)
       } catch { notice = error.localizedDescription }
     }

@@ -43,8 +43,17 @@ struct AccountsPane: View {
 
   var body: some View {
     VStack(alignment: .leading, spacing: 14) {
-      Text("在这里登录一次，浏览器扩展、命令行和桌面端的下载都会用到。登录只在 Fetchy 的内置浏览器里进行。")
-        .foregroundStyle(.secondary).fixedSize(horizontal: false, vertical: true)
+      HStack {
+        Text("在这里登录一次，桌面端、浏览器扩展和命令行都会复用同一份登录态。")
+          .foregroundStyle(.secondary)
+        Spacer()
+        Button {
+          Task { await refresh() }
+        } label: {
+          Label("刷新状态", systemImage: "arrow.clockwise")
+        }
+        .controlSize(.small).disabled(busy)
+      }
       ScrollViewReader { proxy in
         List(rows) { row in
           HStack(spacing: 12) {
@@ -53,14 +62,24 @@ struct AccountsPane: View {
               Text(row.url).font(.caption).foregroundStyle(.secondary)
             }
             Spacer()
-            Text(row.statusText).foregroundStyle(row.statusColor)
-            Button(row.status == "logged_in" ? "打开" : "登录") { app.open(row.url, signingIn: true) }
+            Text(row.statusText).font(.callout).foregroundStyle(row.statusColor)
+            if let shortcut = shortcutFor(site: row.site) {
+              Button("打开\(shortcut.favoritesLabel)") {
+                app.openFavorites(shortcut)
+              }
+              .controlSize(.small)
+            }
+            Button(row.status == "logged_in" ? "打开网站" : "登录") {
+              app.open(row.url, signingIn: true)
+            }
+            .controlSize(.small)
             if row.status != "logged_out" {
-              Button("退出登录") { Task { await logout(row) } }.disabled(busy)
+              Button("退出登录") { Task { await logout(row) } }
+                .controlSize(.small).disabled(busy)
             }
           }
           .padding(.vertical, 4)
-          .listRowBackground(app.focusedSite == row.site ? Color.accentColor.opacity(0.12) : nil)
+          .listRowBackground(app.focusedSite == row.site ? fetchyAccent.opacity(0.12) : nil)
           .id(row.site)
         }
         .onChange(of: app.focusedSite) { _, site in
@@ -78,16 +97,6 @@ struct AccountsPane: View {
     }
     .padding(22)
     .navigationTitle("账号")
-    .toolbar {
-      ToolbarItem {
-        Button {
-          Task { await refresh() }
-        } label: {
-          Label("刷新", systemImage: "arrow.clockwise")
-        }
-        .disabled(busy).help("重新检查各网站的登录状态")
-      }
-    }
     .task { await refresh() }
     .onChange(of: app.pane) { _, pane in if pane == .accounts { Task { await refresh() } } }
   }
@@ -104,7 +113,6 @@ struct AccountsPane: View {
     busy = true
     defer { busy = false }
     do {
-      // Clear the store in this process too: the open browser keeps its cookies in memory.
       let info = try await app.browser.siteInfo(row.url)
       await withCheckedContinuation { (done: CheckedContinuation<Void, Never>) in
         WKWebsiteDataStore(forIdentifier: info.profile).removeData(

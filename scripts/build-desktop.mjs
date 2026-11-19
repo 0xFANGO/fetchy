@@ -11,6 +11,7 @@ import {
 import {captureSocialCollection} from '../extension/collection-page.mjs';
 import {captureSocialPost} from '../extension/social-post.mjs';
 import {isCollectionRoute, readPostPage} from '../extension/archive-source.mjs';
+import {installMediaSniffer} from '../src/browser-sniffer.mjs';
 import {runProcess} from '../src/process.mjs';
 
 if (process.platform !== 'darwin')
@@ -79,6 +80,54 @@ try {
 	);
 	// The built-in browser's side column runs the extension's page readers in the open page.
 	// The body receives `action` and `input` and returns JSON text.
+	function findFavoritesUrl() {
+		const host = location.hostname.replace(/^www\./, '');
+		if (host === 'xiaohongshu.com' || host === 'rednote.com') {
+			let uid =
+				window.__INITIAL_STATE__?.user?.userInfo?.userId ||
+				window.__INITIAL_STATE__?.user?.userPageData?.basicInfo?.userId ||
+				'';
+			if (!uid) {
+				for (const a of document.querySelectorAll('a[href*="/user/profile/"]')) {
+					const m = /\/user\/profile\/([a-f0-9]{16,32})/i.exec(a.getAttribute('href') || '');
+					if (m) {
+						uid = m[1];
+						break;
+					}
+				}
+			}
+			if (uid) return {url: location.origin + '/user/profile/' + uid + '?tab=fav&subTab=note'};
+			return {url: null};
+		}
+		if (location.hostname === 'space.bilibili.com') {
+			const m = /^\/(\d+)(?:\/.*)?$/.exec(location.pathname);
+			if (m && !/^\/\d+\/favlist\/?$/.test(location.pathname)) {
+				return {url: 'https://space.bilibili.com/' + m[1] + '/favlist'};
+			}
+			return {url: null};
+		}
+		if (host === 'instagram.com') {
+			const saved = document.querySelector('a[href$="/saved/"]');
+			if (saved?.href) return {url: saved.href};
+			for (const a of document.querySelectorAll('nav a[href^="/"], a[role="link"][href^="/"]')) {
+				const href = a.getAttribute('href') || '';
+				if (
+					/^\/[a-zA-Z0-9._]{2,40}\/$/.test(href) &&
+					!/^\/(explore|reels|direct|accounts|stories)\/$/.test(href) &&
+					a.querySelector('img')
+				) {
+					return {url: location.origin + href + 'saved/'};
+				}
+			}
+			return {url: null};
+		}
+		if (host === 'tiktok.com') {
+			const prof = document.querySelector('a[data-e2e="nav-profile"][href*="/@"], a[href^="/@"]');
+			if (prof?.href) return {url: prof.href};
+			return {url: null};
+		}
+		return {url: null};
+	}
 	const tools = {
 		captureArchivePage,
 		captureSocialCollection,
@@ -88,6 +137,7 @@ try {
 		discoverArchiveMedia,
 		readPostPage,
 		isCollectionRoute,
+		findFavoritesUrl,
 	};
 	await writeFile(
 		path.join(resources, 'page-tools.js'),
@@ -109,11 +159,21 @@ try {
 			}
 			if (action === 'advance') return tools.advanceArchivePage(input.fromTop === true);
 			if (action === 'bilibili') return tools.readBilibiliCollectionPage(input.folderId, input.page);
-			if (action === 'media') return tools.discoverArchiveMedia();
+			if (action === 'media') {
+				if (window.__fetchySniffer && typeof window.__fetchySniffer.list === 'function') {
+					return {items: window.__fetchySniffer.list()};
+				}
+				return tools.discoverArchiveMedia();
+			}
+			if (action === 'findFavorites') return tools.findFavoritesUrl();
 			if (action === 'readPost') return tools.readPostPage(input.url, input.maxBytes);
 			return {error: 'unknown_action'};
 		};
 		return JSON.stringify(await run());`,
+	);
+	await writeFile(
+		path.join(resources, 'media-sniffer.js'),
+		`(${installMediaSniffer.toString()})();\n`,
 	);
 	await cp(path.join(root, 'package.json'), path.join(app, 'package.json'));
 	const portable = process.argv.includes('--portable');

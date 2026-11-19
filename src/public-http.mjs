@@ -189,12 +189,30 @@ export async function readBounded(stream, maxBytes) {
 export async function saveWebFile(input, filepath, options) {
 	const {response} = await openWeb(input, options);
 	let bytes = 0;
+	const totalBytes = Number(response.headers['content-length']) || 0;
+	let lastReport = 0;
+	const report = (force = false) => {
+		if (typeof options?.onProgress !== 'function') return;
+		const now = Date.now();
+		if (!force && now - lastReport < 150) return;
+		lastReport = now;
+		try {
+			options.onProgress({downloadedBytes: bytes, totalBytes});
+		} catch {}
+	};
 	const limit = options.maxBytes ?? 1024 ** 3;
 	const bounded = new Transform({
 		transform(chunk, _, done) {
 			bytes += chunk.length;
 			if (bytes > limit) done(new EngineError('size_limit', '媒体超过大小上限。'));
-			else done(null, chunk);
+			else {
+				report(false);
+				done(null, chunk);
+			}
+		},
+		flush(done) {
+			report(true);
+			done();
 		},
 	});
 	let file;

@@ -1,10 +1,16 @@
+import {createHash, randomUUID} from 'node:crypto';
 import {readdir, rm, stat} from 'node:fs/promises';
 import path from 'node:path';
 import {setTimeout as delay} from 'node:timers/promises';
 import {
+	cancelQueuedLibraryItem,
+	dismissFailedLibraryItems,
 	getLibraryTask,
+	isEmptyPartialShell,
 	libraryRoot,
+	listFailedLibraryItems,
 	listLibraryTasks,
+	listQueuedLibraryItems,
 	listRecoverableNativeTasks,
 	markLibraryTaskInterrupted,
 	markLibraryTaskQueued,
@@ -15,9 +21,16 @@ import {
 	searchLibrary,
 } from '../src/library/index.mjs';
 import {downloadAttachment, entryIdentity} from '../src/library/content.mjs';
-import {PAGE_LIMIT, fetchPostPage, parsePostPage} from '../src/library/post-pages.mjs';
+import {
+	PAGE_LIMIT,
+	browserHeaders,
+	fetchPostPage,
+	parsePostPage,
+} from '../src/library/post-pages.mjs';
 import {saveWebFile} from '../src/public-http.mjs';
+import {siteForHost} from '../src/sites/index.mjs';
 import {matchingTarget} from '../src/urls.mjs';
+import {defaultOutputDirectory} from './settings.mjs';
 import {LibraryUploads} from './library-upload.mjs';
 import {EngineError, runProcess} from '../src/process.mjs';
 
@@ -224,10 +237,44 @@ const sameSite = (a, b) => {
 	}
 };
 
+function extractHttpUrl(raw) {
+	if (typeof raw !== 'string') return null;
+	const trimmed = raw.trim();
+	if (!trimmed || trimmed.length > 4096) return null;
+	const match = /https?:\/\/[^\s<>'"\u3000\uFF0C\u3002\uFF01\uFF1F]+/i.exec(trimmed);
+	const candidate = match ? match[0] : trimmed;
+	try {
+		const u = new URL(candidate);
+		if (!['http:', 'https:'].includes(u.protocol) || u.username || u.password) return null;
+		return u;
+	} catch {
+		return null;
+	}
+}
+
+function batchFingerprint(entries, selected) {
+	const keys = selected ? [...selected].sort() : entries.map((e) => e.platform + ':' + e.id).sort();
+	return createHash('sha256').update(JSON.stringify(keys)).digest('hex');
+}
+
+function workFiles(root, work) {
+	if (Array.isArray(work.savedFiles) && work.savedFiles.length) return work.savedFiles;
+	return (work.attachments ?? []).filter((a) => a.path).map((a) => path.join(root, a.path));
+}
+
+function primaryFileFor(root, work) {
+	if (typeof work.savedDir === 'string' && work.savedDir) return work.savedDir;
+	if (Array.isArray(work.savedFiles) && work.savedFiles.length) return work.savedFiles[0];
+	const media = (work.attachments ?? []).find((a) => a.path);
+	if (media) return path.join(root, media.path);
+	return work.filepath;
+}
+
 export class LibraryBridge {
-	constructor(directory, {session} = {}) {
+	constructor(directory, {session, getOutputDir} = {}) {
 		this.directory = directory;
 		this.options = {root: process.env.FETCHY_LIBRARY_DIR || path.join(directory, 'library')};
+		this.getOutputDir = getOutputDir ?? null;
 		this.active = new Map();
 		this.preparing = 0;
 		this.uploads = new LibraryUploads();
@@ -240,7 +287,26 @@ export class LibraryBridge {
 		this.visits = new Map();
 		// Listing media URLs per task, kept in memory so a retry in this session can fetch them again.
 		this.transfers = new Map();
+		// Live per-item progress state for running library task items: taskId::key -> state.
+		this.liveItems = new Map();
+		this.itemControllers = new Map();
+		this.cancelledItems = new Set();
+		// Tracked single-URL / browser-sniffed media downloads.
+		this.urlDownloads = new Map();
+		this.urlFailures = new Map();
+		// Deduplicate rapid repeated submissions of the exact same batch.
+		this.recentStarts = new Map();
+		this.nextXhsFetchAt = 0;
 		this.sessionApi = session;
+	}
+	async resolveOutputDir() {
+		if (this.options.outputDir) return this.options.outputDir;
+		if (!this.getOutputDir) return undefined;
+		try {
+			return await this.getOutputDir();
+		} catch {
+			return undefined;
+		}
 	}
 	async session() {
 		if (!this.sessionApi) {
@@ -251,6 +317,49 @@ export class LibraryBridge {
 			};
 		}
 		return this.sessionApi;
+	}
+	updateLiveItem(event) {
+		const id = event.taskId + '::' + event.key;
+		if (['done', 'failed', 'cancelled'].includes(event.stage)) {
+			this.liveItems.delete(id);
+			this.itemControllers.delete(id);
+			return;
+		}
+		const now = Date.now();
+		const prev = this.liveItems.get(id);
+		const downloadedBytes = Number.isFinite(event.downloadedBytes) ? event.downloadedBytes : 0;
+		const totalBytes = Number.isFinite(event.totalBytes) ? event.totalBytes : 0;
+		let speedBytesPerSec = prev?.speedBytesPerSec ?? 0;
+		if (prev && downloadedBytes > prev._lastBytes && now - prev._lastAt >= 200) {
+			speedBytesPerSec = Math.round(
+				((downloadedBytes - prev._lastBytes) * 1000) / (now - prev._lastAt),
+			);
+		} else if (!prev || downloadedBytes < (prev._lastBytes ?? 0)) {
+			speedBytesPerSec = 0;
+		}
+		this.liveItems.set(id, {
+			id,
+			taskId: event.taskId,
+			key: event.key,
+			title: event.title || prev?.title || event.key,
+			platform: event.platform || prev?.platform || event.key.split(':')[0],
+			kind: event.kind || prev?.kind || 'post',
+			folder: event.folder ?? prev?.folder ?? '',
+			sourceUrl: event.sourceUrl ?? prev?.sourceUrl ?? null,
+			status: 'running',
+			stage: event.stage || 'downloading',
+			downloadedBytes,
+			totalBytes,
+			speedBytesPerSec,
+			attachmentIndex: event.attachmentIndex ?? prev?.attachmentIndex ?? 0,
+			attachmentTotal: event.attachmentTotal ?? prev?.attachmentTotal ?? 0,
+			_lastBytes: downloadedBytes,
+			_lastAt: prev && now - prev._lastAt < 200 ? prev._lastAt : now,
+		});
+	}
+	publicLiveItem(item) {
+		const {_lastBytes, _lastAt, controller, ...rest} = item;
+		return rest;
 	}
 	async readDetails(taskId, item, signal) {
 		const k = taskId + '\n' + item.key;
@@ -267,6 +376,13 @@ export class LibraryBridge {
 			if (!last || Date.now() - last > FEED_IDLE_MS || Date.now() - started > FEED_WAIT_MS) break;
 			await delay(250, undefined, {signal});
 		}
+		if (item.platform === 'xiaohongshu' && !this.options.localOrigin) {
+			const now = Date.now();
+			const slot = Math.max(now, this.nextXhsFetchAt);
+			this.nextXhsFetchAt = slot + 400;
+			const waitMs = slot - now;
+			if (waitMs > 0) await delay(waitMs, undefined, {signal});
+		}
 		const url = this.visits.get(k) ?? item.sourceUrl;
 		const session = await this.session();
 		return fetchPostPage(item, {
@@ -278,16 +394,32 @@ export class LibraryBridge {
 	}
 	async run(task, options, pending) {
 		const root = libraryRoot(options);
+		const outputDir = await this.resolveOutputDir();
 		const session = await this.session();
 		const downloads = new Map();
 		return runLibraryTask(task.id, {
 			...options,
-			readDetails: (item) => this.readDetails(task.id, item, options.signal),
+			outputDir,
+			readDetails: (item, ctx) => this.readDetails(task.id, item, ctx?.signal ?? options.signal),
+			isItemCancelled: (key) => this.cancelledItems.has(task.id + '::' + key),
+			itemController: (key) => {
+				const id = task.id + '::' + key;
+				const controller = new AbortController();
+				this.itemControllers.set(id, controller);
+				return controller;
+			},
+			onItemEvent: (event) => this.updateLiveItem(event),
 			// Whatever the worker did with an entry, a page fed for it is no longer needed.
-			onItemDone: (key) => this.pages.delete(task.id + '\n' + key),
+			onItemDone: (key) => {
+				this.pages.delete(task.id + '\n' + key);
+				const id = task.id + '::' + key;
+				this.liveItems.delete(id);
+				this.itemControllers.delete(id);
+				this.cancelledItems.delete(id);
+			},
 			withSiteCookies: (url, action) => session.withCookies(url, action),
 			resolveAttachment: pending?.size
-				? (id, kind, item) => {
+				? (id, kind, item, onProgress, itemSignal) => {
 						const url = pending.get(id);
 						if (!url) return;
 						// One file can fill several slots; fetch it once per task.
@@ -296,10 +428,11 @@ export class LibraryBridge {
 							downloads.set(
 								key,
 								downloadAttachment(root, url, kind, {
-									signal: options.signal,
+									signal: itemSignal ?? options.signal,
 									localOrigin: options.localOrigin,
 									maxBytes: options.maxBytes,
 									referer: new URL(item.sourceUrl).origin + '/',
+									onProgress,
 								}),
 							);
 						return downloads.get(key);
@@ -326,10 +459,127 @@ export class LibraryBridge {
 				.finally(() => {
 					this.active.delete(task.id);
 					for (const k of this.pages.keys()) if (k.startsWith(task.id + '\n')) this.pages.delete(k);
+					for (const k of this.liveItems.keys())
+						if (k.startsWith(task.id + '::')) this.liveItems.delete(k);
+					for (const k of this.itemControllers.keys())
+						if (k.startsWith(task.id + '::')) this.itemControllers.delete(k);
 				});
 			this.active.set(task.id, work);
 		}
 		return summary(task);
+	}
+	async startUrlDownload(params) {
+		const url = extractHttpUrl(params?.url);
+		if (!url) throw new EngineError('invalid_url', '请输入有效的 HTTP 或 HTTPS 链接。');
+		const href = url.href;
+		// Deduplicate rapid clicks for the exact same active URL.
+		for (const existing of this.urlDownloads.values()) {
+			if (existing.sourceUrl === href) return this.publicLiveItem(existing);
+		}
+		const id = 'url::' + randomUUID();
+		const key = 'url:' + createHash('sha256').update(href).digest('hex').slice(0, 16);
+		const platform = siteForHost(url.hostname)?.platform ?? 'web';
+		const cleanTitle =
+			typeof params.title === 'string' && params.title.trim()
+				? params.title.trim().slice(0, 200)
+				: decodeURIComponent(path.basename(url.pathname) || url.hostname);
+		const referer =
+			typeof params.referer === 'string' && /^https?:\/\//i.test(params.referer)
+				? params.referer
+				: typeof params.pageUrl === 'string' && /^https?:\/\//i.test(params.pageUrl)
+					? params.pageUrl
+					: undefined;
+		const controller = new AbortController();
+		const state = {
+			id,
+			taskId: 'url',
+			key,
+			title: cleanTitle,
+			platform,
+			kind: params.kind === 'audio' ? 'audio' : 'video',
+			folder: '',
+			sourceUrl: href,
+			referer: referer ?? null,
+			status: 'running',
+			stage: 'resolving',
+			downloadedBytes: 0,
+			totalBytes: 0,
+			speedBytesPerSec: 0,
+			attachmentIndex: 0,
+			attachmentTotal: 0,
+			_lastBytes: 0,
+			_lastAt: Date.now(),
+			controller,
+		};
+		this.urlDownloads.set(id, state);
+		this.urlFailures.delete(key);
+		const outputDir = (await this.resolveOutputDir()) || defaultOutputDirectory();
+		const run = async () => {
+			try {
+				const {getOne} = await import('../bin/get.mjs');
+				const headers = {
+					'user-agent': browserHeaders()['user-agent'],
+					...(referer ? {referer} : {}),
+				};
+				await getOne('get', href, {
+					outputDir,
+					root: libraryRoot(this.options),
+					directFiles: true,
+					title:
+						typeof params.title === 'string' && params.title.trim()
+							? params.title.trim()
+							: undefined,
+					headers,
+					signal: controller.signal,
+					onProgress: ({stage, bytes, downloadedBytes, totalBytes}) => {
+						const cur = Number.isFinite(downloadedBytes)
+							? downloadedBytes
+							: Number.isFinite(bytes)
+								? bytes
+								: state.downloadedBytes;
+						const now = Date.now();
+						if (cur > state._lastBytes && now - state._lastAt >= 200) {
+							state.speedBytesPerSec = Math.round(
+								((cur - state._lastBytes) * 1000) / (now - state._lastAt),
+							);
+							state._lastBytes = cur;
+							state._lastAt = now;
+						}
+						state.downloadedBytes = cur;
+						if (Number.isFinite(totalBytes) && totalBytes > 0) state.totalBytes = totalBytes;
+						if (stage === 'postprocessing') state.stage = 'merging';
+						else if (stage === 'validating') state.stage = 'verifying';
+						else if (stage === 'resolving') state.stage = 'resolving';
+						else state.stage = 'downloading';
+					},
+				});
+				this.urlFailures.delete(key);
+			} catch (error) {
+				if (!controller.signal.aborted && error?.code !== 'cancelled') {
+					const reason =
+						typeof error?.code === 'string' && !error.code.startsWith('ERR_')
+							? error.code
+							: 'save_failed';
+					this.urlFailures.set(key, {
+						id: 'url::' + key,
+						taskId: 'url',
+						key,
+						title: state.title,
+						author: '',
+						platform,
+						status: 'failed',
+						reason,
+						sourceUrl: href,
+						referer: referer ?? null,
+						createdAt: new Date().toISOString(),
+					});
+				}
+			} finally {
+				this.urlDownloads.delete(id);
+			}
+		};
+		void run();
+		return this.publicLiveItem(state);
 	}
 	feedPage(params) {
 		const {id, key, url, html, userAgent, skip} = params;
@@ -408,9 +658,85 @@ export class LibraryBridge {
 				if (typeof params.key !== 'string' || !params.key) fail();
 				const [record] = await searchLibrary({key: params.key}, this.options);
 				if (!record) fail();
-				const result = await runProcess('/usr/bin/open', [record.filepath], {timeoutMs: 10000});
-				if (result.code !== 0) throw new EngineError('file_missing', '未能打开归档。');
+				const target = primaryFileFor(libraryRoot(this.options), record);
+				const result = await runProcess('/usr/bin/open', [target], {timeoutMs: 10000});
+				if (result.code !== 0) throw new EngineError('file_missing', '未能打开文件。');
 				return {opened: true};
+			}
+			case 'libraryDownloadUrl':
+				return this.startUrlDownload(params);
+			case 'libraryCancelItem': {
+				const taskId = typeof params.taskId === 'string' ? params.taskId : '';
+				const key = typeof params.key === 'string' ? params.key : '';
+				const itemId = typeof params.id === 'string' ? params.id : taskId + '::' + key;
+				if (this.urlDownloads.has(itemId)) {
+					this.urlDownloads.get(itemId).controller.abort();
+					this.urlDownloads.delete(itemId);
+					return {cancelled: true};
+				}
+				if (!taskId || !key) fail();
+				const fullId = taskId + '::' + key;
+				this.cancelledItems.add(fullId);
+				const running = this.itemControllers.get(fullId);
+				if (running) {
+					running.abort();
+					return {cancelled: true};
+				}
+				return cancelQueuedLibraryItem(taskId, key, this.options);
+			}
+			case 'libraryDismissFailed': {
+				const keys = Array.isArray(params.keys) ? params.keys : null;
+				if (keys && keys.length) {
+					for (const k of keys) this.urlFailures.delete(k);
+				} else {
+					this.urlFailures.clear();
+				}
+				return dismissFailedLibraryItems(keys, this.options);
+			}
+			case 'libraryDownloads': {
+				const downloadsDir = (await this.resolveOutputDir()) || defaultOutputDirectory();
+				const liveById = new Map();
+				for (const item of this.urlDownloads.values()) {
+					liveById.set(item.id, this.publicLiveItem(item));
+				}
+				for (const item of this.liveItems.values()) {
+					liveById.set(item.id, this.publicLiveItem(item));
+				}
+				const queued = await listQueuedLibraryItems(this.options);
+				const active = [...liveById.values()];
+				const activeKeys = new Set(active.map((a) => a.key));
+				for (const row of queued) {
+					if (liveById.has(row.id) || this.cancelledItems.has(row.id)) continue;
+					active.push(row);
+					activeKeys.add(row.key);
+				}
+				const dbFailed = await listFailedLibraryItems(this.options);
+				const failed = [
+					...this.urlFailures.values(),
+					...dbFailed.filter((f) => !activeKeys.has(f.key)),
+				];
+				const works = (await searchLibrary({}, this.options)).filter(
+					(w) => !isEmptyPartialShell(w),
+				);
+				const kinds = {};
+				const platforms = {};
+				for (const w of works) {
+					const k = desktopKind(w);
+					kinds[k] = (kinds[k] ?? 0) + 1;
+					platforms[w.platform] = (platforms[w.platform] ?? 0) + 1;
+				}
+				return {
+					downloadsDir,
+					active: boundedRows(active, 200 * 1024),
+					failed: boundedRows(failed, 200 * 1024),
+					stats: {
+						total: works.length,
+						activeCount: active.length,
+						failedCount: failed.length,
+						kinds,
+						platforms,
+					},
+				};
 			}
 			case 'libraryTasks':
 				return boundedRows(
@@ -438,10 +764,12 @@ export class LibraryBridge {
 				};
 			}
 			case 'librarySearch': {
-				const results = await searchLibrary(
-					{...params.filters, limit: Math.min(100, Number(params.filters?.limit) || 50)},
-					this.options,
-				);
+				const results = (
+					await searchLibrary(
+						{...params.filters, limit: Math.min(100, Number(params.filters?.limit) || 50)},
+						this.options,
+					)
+				).filter((w) => !isEmptyPartialShell(w));
 				const root = libraryRoot(this.options);
 				const kind = params.filters?.kind;
 				return boundedRows(
@@ -452,8 +780,8 @@ export class LibraryBridge {
 						})
 						.slice(params.offset || 0)
 						.slice(0, Math.min(100, Number(params.filters?.limit) || 100))
-						.map(
-							({
+						.map((work) => {
+							const {
 								platform,
 								id,
 								key,
@@ -469,30 +797,32 @@ export class LibraryBridge {
 								bodyFormat,
 								attachments,
 								missing,
-							}) => {
-								const cover =
-									attachments.find((a) => a.path && a.kind === 'image') ??
-									attachments.find((a) => a.path && a.kind === 'video');
-								return {
-									platform,
-									id,
-									key,
-									title: customTitle || title,
-									author,
-									filepath,
-									status,
-									sourceUrl,
-									kind: desktopKind({kind, platform, bodyFormat, attachments}),
-									cover: cover ? path.join(root, cover.path) : null,
-									// Saved media, for showing a work's files in Finder.
-									files: attachments.filter((a) => a.path).map((a) => path.join(root, a.path)),
-									coverKind: cover?.kind ?? null,
-									missing: missing ?? [],
-									folders: boundedRows(folders, 32768),
-									topics: boundedRows(topics, 8192),
-								};
-							},
-						),
+							} = work;
+							const cover =
+								attachments.find((a) => a.path && a.kind === 'image') ??
+								attachments.find((a) => a.path && a.kind === 'video');
+							const files = workFiles(root, work);
+							return {
+								platform,
+								id,
+								key,
+								title: customTitle || title,
+								author,
+								filepath,
+								primaryFile: primaryFileFor(root, work),
+								savedDir: work.savedDir ?? null,
+								status,
+								sourceUrl,
+								kind: desktopKind({kind, platform, bodyFormat, attachments}),
+								cover: cover ? path.join(root, cover.path) : null,
+								files,
+								mediaCount: files.length,
+								coverKind: cover?.kind ?? null,
+								missing: missing ?? [],
+								folders: boundedRows(folders, 32768),
+								topics: boundedRows(topics, 8192),
+							};
+						}),
 					460 * 1024,
 				);
 			}
@@ -506,6 +836,7 @@ export class LibraryBridge {
 				};
 				const add = (map, name) => (map[name] = (map[name] ?? 0) + 1);
 				for (const work of await searchLibrary({}, this.options)) {
+					if (isEmptyPartialShell(work)) continue;
 					stats.total++;
 					add(stats.kinds, desktopKind(work));
 					add(stats.platforms, work.platform);
@@ -520,6 +851,16 @@ export class LibraryBridge {
 				return renameLibraryWork(params.key, params.title, this.options);
 			case 'libraryRetry':
 			case 'libraryResume': {
+				if (params.id === 'url' && method === 'libraryRetry') {
+					const key = Array.isArray(params.selected) ? params.selected[0] : null;
+					const failed = key ? this.urlFailures.get(key) : [...this.urlFailures.values()][0];
+					if (!failed) throw new EngineError('not_found', '找不到要重试的下载项。');
+					return this.startUrlDownload({
+						url: failed.sourceUrl,
+						title: failed.title,
+						referer: failed.referer,
+					});
+				}
 				const task = await getLibraryTask(params.id, this.options);
 				if (
 					params.selected !== undefined &&
@@ -545,6 +886,18 @@ export class LibraryBridge {
 						(!Array.isArray(selected) || !selected.every((key) => typeof key === 'string'))
 					)
 						fail();
+					// Deduplicate rapid repeated clicks on the exact same selection while active.
+					const fp = batchFingerprint(entries, selected);
+					const recent = this.recentStarts.get(fp);
+					if (
+						recent &&
+						(this.active.has(recent.taskId) || Date.now() - recent.createdAt < 10_000)
+					) {
+						try {
+							const existing = await getLibraryTask(recent.taskId, this.options);
+							if (['queued', 'running'].includes(existing.status)) return summary(existing);
+						} catch {}
+					}
 					const transfers = captureTransfers(entries);
 					const visits = new Map();
 					for (const entry of entries) {
@@ -570,6 +923,9 @@ export class LibraryBridge {
 						nativeQueue: true,
 						deferAttachment: transfers.deferAttachment,
 					});
+					this.recentStarts.set(fp, {taskId: task.id, createdAt: Date.now()});
+					while (this.recentStarts.size > 32)
+						this.recentStarts.delete(this.recentStarts.keys().next().value);
 					for (const [key, visit] of visits) this.visits.set(task.id + '\n' + key, visit);
 					// The extension reads pages after the task exists; the worker waits for them.
 					if (params.feed === true) this.feeders.set(task.id, Date.now());

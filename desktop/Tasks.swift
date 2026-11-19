@@ -1,330 +1,261 @@
 import AppKit
 import SwiftUI
 
-struct TaskItem: Identifiable {
-  let task: String
-  let key: String
-  let status: String
-  let reason: String
-  let title: String
-  let author: String
-  let platform: String
-  let sourceUrl: String?
-  let file: URL?
-  var id: String { task + "\n" + key }
-
-  init?(task: String, _ row: [String: Any]) {
-    guard let key = row["key"] as? String, let status = row["status"] as? String,
-      ["failed", "partial"].contains(status)
-    else { return nil }
-    self.task = task
-    self.key = key
-    self.status = status
-    reason = row["reason"] as? String ?? (status == "partial" ? "partial" : "save_failed")
-    title = row["title"] as? String ?? ""
-    author = row["author"] as? String ?? ""
-    platform = row["platform"] as? String ?? String(key.split(separator: ":").first ?? "")
-    sourceUrl = row["sourceUrl"] as? String
-    file = (row["filepath"] as? String).map { URL(fileURLWithPath: $0) }
-  }
+func formatBytes(_ bytes: Int64) -> String {
+  ByteCountFormatter.string(fromByteCount: bytes, countStyle: .file)
 }
 
-/// Entries of one task that failed for the same reason, so one next step covers them all.
-struct ReasonGroup: Identifiable {
-  let task: TaskSummary
-  let reason: String
-  let items: [TaskItem]
-  var id: String { task.id + "\n" + reason }
-  var label: String { failureReasons[reason] ?? reason }
-  var step: String? { nextSteps[reason] }
-  var partial: Bool { items.allSatisfy { $0.status == "partial" } }
+func formatSpeed(_ bytesPerSec: Int64) -> String {
+  guard bytesPerSec > 0 else { return "" }
+  return ByteCountFormatter.string(fromByteCount: bytesPerSec, countStyle: .file) + "/s"
 }
 
-/// Counts of one task in one line: what is saved, what is missing, what is left.
-struct TaskCounts: View {
-  let task: TaskSummary
-  var body: some View {
-    HStack(spacing: 14) {
-      ForEach(
-        [
-          ("已保存", "added", Color.secondary), ("已有", "skipped", Color.secondary),
-          ("部分", "partial", Color.orange), ("失败", "failed", Color.red), ("等待", "pending", Color.secondary),
-        ], id: \.1
-      ) { entry in
-        if task.count(entry.1) > 0 {
-          Text("\(entry.0) \(task.count(entry.1))").foregroundStyle(entry.2)
-        }
-      }
-    }
-    .font(.caption).monospacedDigit()
-  }
-}
-
-struct TaskHeader: View {
-  let task: TaskSummary
-  var body: some View {
-    VStack(alignment: .leading, spacing: 3) {
-      HStack(alignment: .firstTextBaseline, spacing: 8) {
-        Text(task.title).font(.headline).lineLimit(1)
-        Text(statusNames[task.status] ?? task.status)
-          .font(.caption.weight(.medium))
-          .foregroundStyle(task.status == "running" ? fetchyAccent : Color.secondary)
-      }
-      HStack(spacing: 14) {
-        if !task.subtitle.isEmpty {
-          Text(task.subtitle).font(.caption).foregroundStyle(.secondary)
-        }
-        TaskCounts(task: task)
-      }
-    }
-  }
-}
-
-let statusNames: [String: String] = [
-  "queued": "等待开始", "running": "保存中", "completed": "已完成", "partial": "部分完成", "failed": "失败",
-  "interrupted": "已中断",
-]
-
-struct TasksPane: View {
-  @EnvironmentObject var app: AppState
-  @ObservedObject var library: LibraryModel
-  @State private var problems: [String: [TaskItem]] = [:]
-  @State private var loaded = false
-  @State private var expanded: Set<String> = []
-  @State private var seen: Set<String> = []
-  @State private var notice = ""
-  private var commands: LocalCommands { library.commands }
-  private var attention: Bool { app.sidebar == .attention }
-  private var active: [TaskSummary] { library.tasks.filter(\.isActive) }
-  private var troubled: [TaskSummary] { library.tasks.filter { $0.problems > 0 } }
-  private var recent: [TaskSummary] { Array(library.tasks.filter { !$0.isActive }.prefix(8)) }
+/// Active download cards shown at the top of the main Downloads view — one card per item.
+struct ActiveDownloadsSection: View {
+  @ObservedObject var downloads: DownloadsModel
 
   var body: some View {
-    Group {
-      if attention { attentionView } else { activeView }
-    }
-    .navigationTitle(app.sidebar.title)
-    .navigationSubtitle(
-      attention ? "\(library.problemCount) 条" : active.isEmpty ? "" : "\(active.count) 个任务"
-    )
-    .safeAreaInset(edge: .top, spacing: 0) {
-      if !notice.isEmpty {
-        VStack(spacing: 0) {
-          HStack {
-            Text(notice).font(.callout)
-            Spacer()
-            Button {
-              notice = ""
-            } label: {
-              Image(systemName: "xmark")
-            }
-            .buttonStyle(.borderless).help("关闭")
-          }
-          .padding(.horizontal, 20).padding(.vertical, 8)
-          Divider()
+    VStack(alignment: .leading, spacing: 10) {
+      HStack(spacing: 8) {
+        Text("正在下载").font(.headline)
+        Text("\(downloads.active.count)")
+          .font(.caption.weight(.semibold)).monospacedDigit()
+          .foregroundStyle(.white)
+          .padding(.horizontal, 7).padding(.vertical, 2)
+          .background(Capsule().fill(fetchyAccent))
+        Spacer()
+        if downloads.hasInterrupted {
+          Button("继续中断项") { Task { await downloads.resumeInterrupted() } }
+            .controlSize(.small)
         }
-        .background(.bar)
-      }
-    }
-    .task(id: attention ? library.revision : -1) {
-      if attention { await loadProblems() }
-    }
-  }
-
-  // MARK: In progress
-
-  @ViewBuilder var activeView: some View {
-    if active.isEmpty && recent.isEmpty {
-      ContentUnavailableView {
-        Label("没有正在保存的任务", systemImage: "arrow.down.circle")
-      } description: {
-        Text("在「浏览器」里打开收藏夹勾选保存，或在资料库的搜索框粘贴链接。保存在后台进行，可以关掉窗口。")
-      }
-    } else {
-      List {
-        Section("正在保存") {
-          if active.isEmpty {
-            Text("没有正在保存的任务。").foregroundStyle(.secondary)
-          }
-          ForEach(active) { task in
-            VStack(alignment: .leading, spacing: 8) {
-              HStack(alignment: .top) {
-                TaskHeader(task: task)
-                Spacer()
-                if task.status == "interrupted" {
-                  Button("继续") { run(["resume", task.id]) }
-                }
-              }
-              HStack(spacing: 10) {
-                ProgressView(value: Double(task.done), total: Double(max(task.total, 1)))
-                Text("\(task.done) / \(task.total)").font(.caption).monospacedDigit()
-                  .foregroundStyle(.secondary)
-              }
-            }
-            .padding(.vertical, 6)
-          }
+        if downloads.active.count > 1 {
+          Button("全部取消") { Task { await downloads.cancelAllActive() } }
+            .controlSize(.small).foregroundStyle(.secondary)
         }
-        if !recent.isEmpty {
-          Section("最近完成") {
-            ForEach(recent) { task in
-              HStack(alignment: .top) {
-                TaskHeader(task: task)
-                Spacer()
-                if task.problems > 0 {
-                  Button("查看 \(task.problems) 条问题") { app.sidebar = .attention }
-                    .buttonStyle(.link)
-                }
-              }
-              .padding(.vertical, 4)
-            }
+      }
+      VStack(spacing: 8) {
+        ForEach(downloads.active) { item in
+          ActiveDownloadRow(item: item) {
+            Task { await downloads.cancelItem(item) }
           }
         }
       }
-      .listStyle(.inset)
     }
-  }
-
-  // MARK: Needs attention
-
-  @ViewBuilder var attentionView: some View {
-    if troubled.isEmpty {
-      ContentUnavailableView {
-        Label("没有需要处理的条目", systemImage: "checkmark.circle")
-      } description: {
-        Text("保存失败或只存下一部分的条目会出现在这里，并说明原因和下一步。")
-      }
-    } else if !loaded {
-      ProgressView().frame(maxWidth: .infinity, maxHeight: .infinity)
-    } else {
-      List {
-        ForEach(troubled.prefix(20)) { task in
-          Section {
-            ForEach(groups(task)) { group in
-              DisclosureGroup(isExpanded: binding(group.id)) {
-                ForEach(group.items) { item in itemRow(item, task: task) }
-              } label: {
-                groupLabel(group)
-              }
-            }
-          } header: {
-            HStack(alignment: .top) {
-              TaskHeader(task: task)
-              Spacer()
-              Button("重试全部 \(task.problems) 条") { run(["retry", task.id]) }
-                .disabled(task.isActive)
-            }
-            .padding(.vertical, 6)
-          }
+    .padding(14)
+    .background {
+      RoundedRectangle(cornerRadius: 12, style: .continuous)
+        .fill(Color.primary.opacity(0.035))
+        .overlay {
+          RoundedRectangle(cornerRadius: 12, style: .continuous)
+            .strokeBorder(Color.primary.opacity(0.07), lineWidth: 1)
         }
-      }
-      .listStyle(.inset)
     }
   }
+}
 
-  private func groups(_ task: TaskSummary) -> [ReasonGroup] {
-    let rows = problems[task.id] ?? []
-    var order: [String] = []
-    var byReason: [String: [TaskItem]] = [:]
-    for item in rows {
-      if byReason[item.reason] == nil { order.append(item.reason) }
-      byReason[item.reason, default: []].append(item)
-    }
-    return order.map { ReasonGroup(task: task, reason: $0, items: byReason[$0]!) }
-      .sorted { $0.items.count > $1.items.count }
-  }
+struct ActiveDownloadRow: View {
+  let item: ActiveDownloadItem
+  let onCancel: () -> Void
+  @State private var hovering = false
 
-  private func binding(_ id: String) -> Binding<Bool> {
-    Binding(
-      get: { expanded.contains(id) },
-      set: { open in if open { expanded.insert(id) } else { expanded.remove(id) } })
-  }
-
-  @ViewBuilder private func groupLabel(_ group: ReasonGroup) -> some View {
-    HStack(alignment: .top, spacing: 10) {
-      Image(systemName: group.partial ? "exclamationmark.circle.fill" : "xmark.octagon.fill")
-        .foregroundStyle(group.partial ? Color.orange : Color.red)
-      VStack(alignment: .leading, spacing: 2) {
-        Text("\(group.label) · \(group.items.count) 条").font(.body.weight(.medium))
-        if let step = group.step {
-          Text(step).font(.callout).foregroundStyle(.secondary).fixedSize(horizontal: false, vertical: true)
-        }
-      }
-      Spacer(minLength: 12)
-      if loginReasons.contains(group.reason) {
-        Button("去登录") { signIn(group.items[0].platform) }
-      }
-      Button("重试这 \(group.items.count) 条") { run(["retry", group.task.id] + group.items.map(\.key)) }
-        .disabled(group.task.isActive || ["selection_missing", "no_formats"].contains(group.reason))
-    }
-    .padding(.vertical, 4)
-  }
-
-  @ViewBuilder private func itemRow(_ item: TaskItem, task: TaskSummary) -> some View {
+  var body: some View {
     HStack(spacing: 12) {
-      VStack(alignment: .leading, spacing: 2) {
-        Text(item.title.isEmpty ? "未读到标题" : item.title).lineLimit(1)
-          .foregroundStyle(item.title.isEmpty ? Color.secondary : Color.primary)
-        Text(
-          [platformName(item.platform), item.author, item.status == "partial" ? "部分保存" : "未保存"]
-            .filter { !$0.isEmpty }.joined(separator: " · ")
+      ZStack {
+        RoundedRectangle(cornerRadius: 8, style: .continuous)
+          .fill(item.isRunning ? fetchyAccent.opacity(0.14) : Color.primary.opacity(0.06))
+        Image(
+          systemName: item.isInterrupted
+            ? "pause.circle"
+            : item.kind == "video"
+              ? "film"
+              : item.kind == "audio" ? "waveform" : "photo"
         )
-        .font(.caption).foregroundStyle(.secondary)
+        .foregroundStyle(item.isRunning ? fetchyAccent : .secondary)
       }
-      Spacer(minLength: 12)
-      if let file = item.file {
-        Button("离线页") { NSWorkspace.shared.open(file) }
-      }
-      if let source = item.sourceUrl {
-        Button("打开原帖") { app.open(source) }
-      }
-      Button("重试") { run(["retry", task.id, item.key]) }.disabled(task.isActive)
-    }
-    .buttonStyle(.borderless)
-    .padding(.vertical, 2)
-  }
+      .frame(width: 36, height: 36)
 
-  private func signIn(_ platform: String) {
-    app.focusedSite = platform
-    app.sidebar = .accounts
-  }
-
-  private func run(_ args: [String]) {
-    Task {
-      do {
-        _ = try await commands.run(args, bridge: true)
-        notice = args[0] == "resume" ? "已继续保存。" : "已开始重试，进度在「进行中」。"
-        await library.refresh()
-      } catch { notice = error.localizedDescription }
-    }
-  }
-
-  /// Every failed and partial entry of the tasks shown, page by page, so entry 300 still shows.
-  private func loadProblems() async {
-    var details: [String: [TaskItem]] = [:]
-    do {
-      for task in troubled.prefix(20) {
-        var rows: [[String: Any]] = []
-        while true {
-          let detail =
-            try await commands.run(["task", task.id, String(rows.count), "failed"], bridge: true)
-            as? [String: Any]
-          let page = detail?["items"] as? [[String: Any]] ?? []
-          rows += page
-          if page.isEmpty || rows.count >= (detail?["totalItems"] as? Int ?? 0) { break }
+      VStack(alignment: .leading, spacing: 5) {
+        HStack(spacing: 6) {
+          Text(item.title).font(.callout.weight(.medium)).lineLimit(1)
+          Spacer(minLength: 8)
+          Text(statusRightText)
+            .font(.caption).monospacedDigit().foregroundStyle(.secondary)
         }
-        details[task.id] = rows.compactMap { TaskItem(task: task.id, $0) }
+
+        if let fraction = item.fraction {
+          ProgressView(value: fraction)
+            .progressViewStyle(.linear)
+            .tint(fetchyAccent)
+        } else if item.isRunning {
+          ProgressView()
+            .progressViewStyle(.linear)
+            .tint(fetchyAccent)
+        } else {
+          ProgressView(value: 0)
+            .progressViewStyle(.linear)
+        }
+
+        HStack(spacing: 6) {
+          Text(metaLine)
+            .font(.caption).foregroundStyle(.secondary).lineLimit(1)
+          Spacer()
+        }
       }
-    } catch {
-      notice = error.localizedDescription
+
+      Button(action: onCancel) {
+        Image(systemName: "xmark.circle.fill")
+          .foregroundStyle(hovering ? Color.primary.opacity(0.7) : Color.secondary.opacity(0.55))
+          .font(.title3)
+      }
+      .buttonStyle(.plain)
+      .help("取消此条下载")
     }
-    problems = details
-    loaded = true
-    // Small groups open on first sight; large ones stay folded until asked.
-    for task in troubled.prefix(20) {
-      for group in groups(task) where !seen.contains(group.id) {
-        seen.insert(group.id)
-        if group.items.count <= 6 { expanded.insert(group.id) }
+    .padding(.horizontal, 12).padding(.vertical, 9)
+    .background {
+      RoundedRectangle(cornerRadius: 9, style: .continuous)
+        .fill(Color(nsColor: .controlBackgroundColor))
+        .overlay {
+          RoundedRectangle(cornerRadius: 9, style: .continuous)
+            .strokeBorder(Color.primary.opacity(0.06), lineWidth: 1)
+        }
+    }
+    .onHover { hovering = $0 }
+  }
+
+  private var metaLine: String {
+    var parts = [platformName(item.platform)]
+    if !item.folder.isEmpty { parts.append(item.folder) }
+    parts.append(item.stageText)
+    return parts.joined(separator: " · ")
+  }
+
+  private var statusRightText: String {
+    if item.totalBytes > 0 {
+      let pct = Int((Double(item.downloadedBytes) / Double(item.totalBytes) * 100).rounded())
+      var parts = ["\(formatBytes(item.downloadedBytes)) / \(formatBytes(item.totalBytes))"]
+      let spd = formatSpeed(item.speedBytesPerSec)
+      if !spd.isEmpty { parts.append(spd) }
+      parts.append("\(pct)%")
+      return parts.joined(separator: " · ")
+    }
+    if item.downloadedBytes > 0 {
+      let spd = formatSpeed(item.speedBytesPerSec)
+      return spd.isEmpty
+        ? formatBytes(item.downloadedBytes)
+        : "\(formatBytes(item.downloadedBytes)) · \(spd)"
+    }
+    return item.isRunning ? "进行中" : (item.isInterrupted ? "已中断" : "排队中")
+  }
+}
+
+/// Flat list of failed downloads shown when the user selects the "失败" filter pill.
+struct FailedDownloadsSection: View {
+  @EnvironmentObject var app: AppState
+  @ObservedObject var downloads: DownloadsModel
+
+  var body: some View {
+    if downloads.failed.isEmpty {
+      ContentUnavailableView {
+        Label("没有失败的下载", systemImage: "checkmark.circle")
+      } description: {
+        Text("下载失败的条目会出现在这里，可以查看具体原因并一键重试。")
       }
+      .frame(maxWidth: .infinity, minHeight: 280)
+    } else {
+      VStack(alignment: .leading, spacing: 12) {
+        HStack {
+          Text("共 \(downloads.failed.count) 条下载失败")
+            .font(.callout).foregroundStyle(.secondary)
+          Spacer()
+          Button("重试全部") { Task { await downloads.retryAllFailed() } }
+            .buttonStyle(.borderedProminent).controlSize(.small)
+          Button("清空失败记录") { Task { await downloads.dismissFailed() } }
+            .controlSize(.small)
+        }
+
+        LazyVStack(spacing: 8) {
+          ForEach(downloads.failed) { item in
+            FailedDownloadRow(downloads: downloads, item: item)
+          }
+        }
+      }
+    }
+  }
+}
+
+struct FailedDownloadRow: View {
+  @EnvironmentObject var app: AppState
+  @ObservedObject var downloads: DownloadsModel
+  let item: FailedDownloadItem
+
+  var body: some View {
+    HStack(alignment: .center, spacing: 12) {
+      Image(systemName: "exclamationmark.triangle.fill")
+        .foregroundStyle((item.needsLogin || item.needsVerification) ? Color.orange : Color.red)
+        .font(.title3)
+
+      VStack(alignment: .leading, spacing: 3) {
+        HStack(spacing: 8) {
+          Text(item.title).font(.callout.weight(.medium)).lineLimit(1)
+          Text(item.reasonLabel)
+            .font(.caption2.weight(.semibold))
+            .foregroundStyle((item.needsLogin || item.needsVerification) ? Color.orange : Color.red)
+            .padding(.horizontal, 6).padding(.vertical, 2)
+            .background(
+              Capsule().fill(((item.needsLogin || item.needsVerification) ? Color.orange : Color.red).opacity(0.12)))
+        }
+        Text(
+          ([platformName(item.platform), item.author].filter { !$0.isEmpty }.joined(separator: " · ")
+            + (item.stepHint.isEmpty ? "" : " · " + item.stepHint))
+        )
+        .font(.caption).foregroundStyle(.secondary).lineLimit(2)
+      }
+
+      Spacer(minLength: 10)
+
+      HStack(spacing: 6) {
+        if item.needsVerification, let source = item.sourceUrl {
+          Button("去验证") {
+            app.open(source, signingIn: false)
+          }
+          .controlSize(.small)
+        } else if item.needsLogin {
+          Button("去登录") {
+            if let shortcut = shortcutFor(site: item.platform) {
+              app.open(shortcut.url, signingIn: true)
+            } else if let source = item.sourceUrl {
+              app.open(source, signingIn: true)
+            } else {
+              app.focusedSite = item.platform
+              app.pane = .accounts
+            }
+          }
+          .controlSize(.small)
+        }
+        if let source = item.sourceUrl {
+          Button("原帖") { app.open(source) }
+            .controlSize(.small)
+        }
+        Button("重试") { Task { await downloads.retryItem(item) } }
+          .buttonStyle(.borderedProminent).controlSize(.small)
+        Button {
+          Task { await downloads.dismissFailed([item.key]) }
+        } label: {
+          Image(systemName: "xmark")
+            .foregroundStyle(.secondary)
+        }
+        .buttonStyle(.borderless)
+        .help("移除此失败记录")
+      }
+    }
+    .padding(.horizontal, 14).padding(.vertical, 10)
+    .background {
+      RoundedRectangle(cornerRadius: 10, style: .continuous)
+        .fill(Color(nsColor: .controlBackgroundColor))
+        .overlay {
+          RoundedRectangle(cornerRadius: 10, style: .continuous)
+            .strokeBorder(Color.primary.opacity(0.07), lineWidth: 1)
+        }
     }
   }
 }

@@ -223,6 +223,18 @@ export function captureArchivePage(allowLoopback = false) {
 			}
 			return {type: 'post', entry};
 		}
+		function normalizeXhsVisit(rawHref, id) {
+			try {
+				const u = new URL(rawHref, url);
+				const next = new URL('/explore/' + id, u.origin);
+				for (const key of ['xsec_token', 'xsec_source']) {
+					if (u.searchParams.has(key)) next.searchParams.set(key, u.searchParams.get(key));
+				}
+				return next.href;
+			} catch {
+				return url.origin + '/explore/' + id;
+			}
+		}
 		function noteCards(panel) {
 			const entries = [];
 			for (const item of all(panel, '.note-item')) {
@@ -230,18 +242,33 @@ export function captureArchivePage(allowLoopback = false) {
 				const canonical = links.find(
 					(a) => clean(a.href)?.pathname.startsWith('/explore/') && xhsId(a.href),
 				);
-				const cover = query(item, 'a.cover[href]') || links.find((a) => xhsId(a.href));
-				const id = xhsId(canonical?.href || cover?.href);
+				const coverLink = query(item, 'a.cover[href]') || links.find((a) => xhsId(a.href));
+				const id = xhsId(canonical?.href || coverLink?.href);
 				if (!id) continue;
-				const visitUrl = cover && xhsId(cover.href) === id ? cover.href : canonical.href;
+				const rawVisit =
+					coverLink && xhsId(coverLink.href) === id ? coverLink.href : canonical.href;
+				const visitUrl = normalizeXhsVisit(rawVisit, id);
+				const imgEl = query(item, 'a.cover img, img.cover, img');
+				const rawCover = imgEl?.currentSrc || imgEl?.getAttribute('src') || '';
+				const cover = /^https?:\/\//i.test(rawCover)
+					? rawCover.replace(/^http:\/\//i, 'https://')
+					: '';
+				const title =
+					txt(query(item, '.title, .footer .title, a.title')) ||
+					(imgEl?.getAttribute('alt') || '').trim();
+				const author = txt(query(item, '.author .name, .author-wrapper .name, .name'));
+				const isVideo = Boolean(query(item, '.play-icon, [class*="play-icon"], svg.play-icon'));
 				entries.push({
 					...rawPost(
 						'xiaohongshu',
 						id,
 						new URL(visitUrl, url).origin + '/explore/' + id,
-						txt(query(item, '.title')),
+						title,
+						author,
 					),
 					visitUrl,
+					...(cover ? {cover} : {}),
+					mediaHint: isVideo ? 'video' : 'image',
 				});
 			}
 			return entries;
@@ -263,56 +290,104 @@ export function captureArchivePage(allowLoopback = false) {
 			);
 		}
 		if (/^\/user\/profile\/[a-f\d]+\/?$/i.test(url.pathname)) {
-			const active = all(document, '.reds-tab-item.active').map(txt);
-			if (!active.some((label) => /^收藏(?:$|[·・•\s])/.test(label)))
-				return unsupported('unsupported_page');
-			const notesTab = active.find((label) => /^笔记(?:$|[·・•\s])/.test(label));
-			if (notesTab) {
+			const uid = url.pathname.split('/')[3];
+			const active = all(document, '.reds-tab-item.active').map(txt).filter(Boolean);
+			const pickActivePanel = () => {
 				const width = window.innerWidth;
-				const panels = all(document, '.tab-content-item')
-					.map((panel) => {
-						const box = panel.getBoundingClientRect();
-						return {
-							panel,
-							overlap: Math.max(0, Math.min(width, box.right) - Math.max(0, box.left)),
-						};
-					})
-					.sort((a, b) => b.overlap - a.overlap);
+				const panels = all(document, '.tab-content-item').map((panel) => {
+					const box = panel.getBoundingClientRect();
+					return {
+						panel,
+						overlap: Math.max(0, Math.min(width, box.right) - Math.max(0, box.left)),
+						height: Number.isFinite(box.height) ? box.height : 100,
+					};
+				});
+				const visible = panels.filter((p) => p.overlap > width / 2 && p.height > 20);
+				const ranked = (visible.length ? visible : panels).sort(
+					(a, b) => b.overlap - a.overlap || b.height - a.height,
+				);
+				if (!ranked[0] || ranked[0].overlap <= width / 2) return null;
 				if (
-					!panels[0] ||
-					panels[0].overlap <= width / 2 ||
-					panels[0].overlap === panels[1]?.overlap
+					ranked[1] &&
+					ranked[0].overlap === ranked[1].overlap &&
+					ranked[0].height === ranked[1].height
 				)
+					return null;
+				return ranked[0].panel;
+			};
+			if (active.some((label) => /^收藏(?:$|[·・•\s])/.test(label))) {
+				if (active.some((label) => /^专辑(?:$|[·・•\s])/.test(label))) {
+					const boards = [];
+					for (const a of all(document, 'a.board-card[href]')) {
+						const u = clean(a.href);
+						const id = u?.origin === url.origin && /^\/board\/([\w-]+)\/?$/.exec(u.pathname)?.[1];
+						if (!id) continue;
+						boards.push({
+							platform: 'xiaohongshu',
+							id,
+							name: txt(query(a, '.title')) || txt(a),
+							url: u.origin + u.pathname,
+						});
+					}
+					const expected = /专辑\s*[·・•]?\s*([\d,]+)/.exec(active.join(' '))?.[1];
+					const total = expected ? Number(expected.replaceAll(',', '')) : null;
+					const folders = dedup(boards);
+					if (folders.length || total === 0)
+						return {type: 'folders', folders, total, complete: total === folders.length};
 					return unsupported('source_not_ready');
-				const scope = query(panels[0].panel, '.feeds-container');
-				if (!scope) return unsupported('source_not_ready');
-				const count = /^笔记\s*[·・•]?\s*([\d,]+)$/.exec(notesTab)?.[1];
+				}
+				const notesTab = active.find((label) => /^笔记(?:$|[·・•\s])/.test(label));
+				if (notesTab) {
+					const panel = pickActivePanel();
+					if (!panel) return unsupported('source_not_ready');
+					const scope = query(panel, '.feeds-container');
+					if (!scope) return unsupported('source_not_ready');
+					const count = /^笔记\s*[·・•]?\s*([\d,]+)$/.exec(notesTab)?.[1];
+					return folderResult(
+						{platform: 'xiaohongshu', id: 'saved-' + uid, name: '收藏笔记'},
+						noteCards(scope),
+						count ? Number(count.replaceAll(',', '')) : null,
+						scope,
+					);
+				}
+				return unsupported('unsupported_page');
+			}
+			const panel = pickActivePanel();
+			const scope =
+				(panel ? query(panel, '.feeds-container') : null) || query(document, '.feeds-container');
+			const seen = scope ? noteCards(scope) : [];
+			if (seen.length) {
+				const activeLabel = active.join(' · ');
 				return folderResult(
-					{platform: 'xiaohongshu', id: 'saved-' + url.pathname.split('/')[3], name: '收藏笔记'},
-					noteCards(scope),
-					count ? Number(count.replaceAll(',', '')) : null,
+					{
+						platform: 'xiaohongshu',
+						id: 'profile-' + uid + '-' + (activeLabel || 'notes'),
+						name: activeLabel || '用户笔记',
+					},
+					seen,
+					null,
 					scope,
 				);
 			}
-			if (!active.some((label) => /^专辑(?:$|[·・•\s])/.test(label)))
-				return unsupported('unsupported_page');
-			const boards = [];
-			for (const a of all(document, 'a.board-card[href]')) {
-				const u = clean(a.href);
-				const id = u?.origin === url.origin && /^\/board\/([\w-]+)\/?$/.exec(u.pathname)?.[1];
-				if (!id) continue;
-				boards.push({
-					platform: 'xiaohongshu',
-					id,
-					name: txt(query(a, '.title')) || txt(a),
-					url: u.origin + u.pathname,
-				});
+		}
+		if (/^\/(?:explore|search_result)\/?$/i.test(url.pathname)) {
+			const scope = query(document, '#exploreFeeds, .feeds-container') || document;
+			const seen = noteCards(scope);
+			if (seen.length) {
+				const channel = txt(query(document, '.channel.active, .channel-item.active'));
+				const isSearch = url.pathname.startsWith('/search_result');
+				const label = isSearch ? '小红书搜索' : channel ? '小红书 · ' + channel : '小红书发现';
+				return folderResult(
+					{
+						platform: 'xiaohongshu',
+						id: isSearch ? 'search' : 'explore-' + (url.searchParams.get('channel_id') || 'home'),
+						name: label,
+					},
+					seen,
+					null,
+					scope,
+				);
 			}
-			const expected = /专辑\s*[·・•]?\s*([\d,]+)/.exec(active.join(' '))?.[1];
-			const total = expected ? Number(expected.replaceAll(',', '')) : null;
-			const folders = dedup(boards);
-			if (folders.length || total === 0)
-				return {type: 'folders', folders, total, complete: total === folders.length};
 		}
 		return unsupported('unsupported_page');
 	}
@@ -355,6 +430,11 @@ export function captureArchivePage(allowLoopback = false) {
 					)
 				)
 					entry.kind = 'video';
+				const xCover =
+					entry.attachments.find((m) => m.kind === 'image' && m.url)?.url ||
+					query(tweet, 'video')?.getAttribute('poster') ||
+					'';
+				if (xCover && /^https?:\/\//i.test(xCover)) entry.cover = xCover;
 				entries.push(entry);
 			}
 			const folders = all(primary, 'a[href]')
@@ -432,9 +512,11 @@ export function captureArchivePage(allowLoopback = false) {
 					u = a && clean(a.href);
 				const id = u?.origin === url.origin && u.searchParams.get('v');
 				if (!/^[\w-]{11}$/.test(id || '')) continue;
+				const ytImg = query(tile, 'img')?.src || 'https://i.ytimg.com/vi/' + id + '/mqdefault.jpg';
 				items.push({
 					...rawPost('youtube', id, 'https://www.youtube.com/watch?v=' + id, txt(a)),
 					kind: 'video',
+					cover: ytImg,
 				});
 			}
 			const root = query(document, 'ytd-playlist-header-renderer,yt-page-header-renderer');
@@ -463,6 +545,26 @@ export function captureArchivePage(allowLoopback = false) {
 				.filter(Boolean);
 			return {type: 'folders', folders: dedup(dirs), complete: false};
 		}
+	}
+	if (
+		zhihu &&
+		(/^\/collections\/mine\/?$/.test(url.pathname) ||
+			/^\/people\/[^/]+\/collections\/?$/.test(url.pathname))
+	) {
+		const folders = [];
+		for (const a of all(document, 'a[href*="/collection/"]')) {
+			const u = safeUrl(a.href);
+			const id = u && /^\/collection\/(\d+)\/?$/.exec(u.pathname)?.[1];
+			if (!id) continue;
+			folders.push({
+				platform: 'zhihu',
+				id,
+				name: txt(a) || '收藏夹 ' + id,
+				url: 'https://www.zhihu.com/collection/' + id,
+			});
+		}
+		const uniqueFolders = dedup(folders);
+		if (uniqueFolders.length) return {type: 'folders', folders: uniqueFolders};
 	}
 	if (zhihu && /^\/collection\/\d+\/?$/.test(url.pathname)) {
 		const id = url.pathname.split('/')[2],
@@ -544,14 +646,21 @@ export function captureArchivePage(allowLoopback = false) {
 
 export function advanceArchivePage(fromTop = false) {
 	const width = window.innerWidth;
-	const panels = Array.from(document.querySelectorAll('.tab-content-item'))
-		.map((panel) => {
-			const r = panel.getBoundingClientRect();
-			return {panel, overlap: Math.min(width, r.right) - Math.max(0, r.left)};
-		})
-		.sort((a, b) => b.overlap - a.overlap);
-	const root = panels[0]?.overlap > width / 2 ? panels[0].panel : document;
-	let scrolling = document.scrollingElement || document.documentElement;
+	const panels = Array.from(document.querySelectorAll('.tab-content-item')).map((panel) => {
+		const r = panel.getBoundingClientRect();
+		return {
+			panel,
+			overlap: Math.max(0, Math.min(width, r.right) - Math.max(0, r.left)),
+			height: Number.isFinite(r.height) ? r.height : 100,
+		};
+	});
+	const visiblePanels = panels.filter((p) => p.overlap > width / 2 && p.height > 20);
+	const ranked = (visiblePanels.length ? visiblePanels : panels).sort(
+		(a, b) => b.overlap - a.overlap || b.height - a.height,
+	);
+	const root = ranked[0]?.overlap > width / 2 ? ranked[0].panel : document;
+	const docEl = document.scrollingElement || document.documentElement;
+	let scrolling = docEl;
 	for (
 		let parent =
 			root.querySelector(
@@ -569,12 +678,26 @@ export function advanceArchivePage(fromTop = false) {
 			break;
 		}
 	}
+	if (
+		!fromTop &&
+		scrolling !== docEl &&
+		scrolling.scrollTop + scrolling.clientHeight >= scrolling.scrollHeight - 2 &&
+		docEl.scrollHeight > docEl.clientHeight + 2 &&
+		docEl.scrollTop + docEl.clientHeight < docEl.scrollHeight - 2
+	) {
+		scrolling = docEl;
+	}
 	const before = scrolling.scrollTop,
 		viewport = Math.min(window.innerHeight, scrolling.clientHeight || window.innerHeight);
+	const nextTop = fromTop ? 0 : before + Math.max(1, Math.floor(viewport * 0.8));
 	scrolling.scrollTo({
-		top: fromTop ? 0 : before + Math.max(1, Math.floor(viewport * 0.8)),
+		top: nextTop,
 		behavior: 'instant',
 	});
+	try {
+		scrolling.dispatchEvent(new Event('scroll', {bubbles: true}));
+		if (scrolling === docEl) window.dispatchEvent(new Event('scroll'));
+	} catch {}
 	return {before, position: scrolling.scrollTop, height: scrolling.scrollHeight, viewport};
 }
 
@@ -631,6 +754,9 @@ export async function readBilibiliCollectionPage(folderId, page = 1, ownerId = n
 				author: m.upper?.name || '',
 				kind: 'video',
 				sourceUrl: 'https://www.bilibili.com/video/' + id + '/',
+				...(typeof m.cover === 'string' && /^https?:\/\//i.test(m.cover)
+					? {cover: m.cover.replace(/^http:\/\//i, 'https://')}
+					: {}),
 				savedAt: m.fav_time ? new Date(m.fav_time * 1000).toISOString() : null,
 				...(m.type === 2 ? {} : {coverage: 'unavailable_resource'}),
 			};

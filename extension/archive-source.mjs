@@ -226,12 +226,21 @@ export function manifestFolder(collection) {
 export async function readPostPage(url, maxBytes) {
 	let response;
 	try {
-		response = await fetch(url, {credentials: 'include', redirect: 'follow'});
+		response = await fetch(url, {
+			credentials: 'include',
+			redirect: 'follow',
+			headers: {Accept: 'text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8'},
+		});
 	} catch {
 		return {error: 'network_error'};
 	}
 	if ([401, 403].includes(response.status)) return {error: 'login_required'};
 	if (!response.ok) return {error: 'network_error'};
+	try {
+		const finalPath = new URL(response.url).pathname;
+		if (/^\/404(?:\/|$)|captcha|security-check|(?:^|\/)(?:website-)?login(?:\/|$)/i.test(finalPath))
+			return {error: 'redirected', url: response.url};
+	} catch {}
 	const text = await response.text();
 	const parts = [];
 	for (const m of text.matchAll(/<meta\b[^>]*>/gi)) parts.push(m[0]);

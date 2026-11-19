@@ -90,6 +90,25 @@ try {
 	const {requestNative} = await import('../native/client.mjs');
 	let result;
 	switch (command) {
+		case 'downloads':
+			result = await requestNative('libraryDownloads', {});
+			break;
+		case 'download-url':
+			result = await requestNative('libraryDownloadUrl', JSON.parse(await readStdin(64 * 1024)));
+			break;
+		case 'cancel-item':
+			result = await requestNative('libraryCancelItem', {
+				id: args[0],
+				taskId: args[1] || '',
+				key: args[2] || '',
+			});
+			break;
+		case 'dismiss-failed': {
+			const raw = await readStdin(1024 ** 2);
+			const keys = raw.trim() ? JSON.parse(raw) : [];
+			result = await requestNative('libraryDismissFailed', {keys});
+			break;
+		}
 		case 'tasks':
 			result = await requestNative('libraryTasks', {offset: Number(args[0]) || 0});
 			break;
