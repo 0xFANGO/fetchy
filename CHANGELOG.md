@@ -26,7 +26,8 @@ Notable changes for users, following [Keep a Changelog](https://keepachangelog.c
 ### Fixed
 
 - Fetchy recognizes Xiaohongshu notes on `rednote.com` and keeps the same desktop account when the site redirects there after sign-in. Visiting the login page as a guest no longer counts as signing in.
-- The desktop app's built-in browser identifies as Safari, so Bilibili and similar sites no longer show an outdated-browser page.
+- The desktop app's built-in browser identifies as Safari 18.5, shares a single persistent session store across sites (with host-scoped cookie export and single-site logout), opens real auxiliary windows for OAuth popups, disables unavailable embedded Passkey prompts so Google and X sign-in fall back cleanly, supports JS dialogs, file pickers, HTTP redirects, load-error banners, web downloads, zoom, and imports cookies from Chrome, Safari, Edge, Firefox, or Brave.
+- The built-in browser toolbar adds a Home button, address-bar clear button, keyword search, loading progress bar, copy-link and open-in-default-browser actions, a collapsible side panel with media-count badge, a persistent bookmarks bar for all 9 supported platforms, standard macOS shortcuts, close-window protection during active downloads, and bare-domain link detection in the Downloads bar.
 - Media downloads work behind fake-IP proxies that resolve names into 198.18.0.0/15.
 
 ## [0.3.1] - 2026-11-02

@@ -1,19 +1,141 @@
 import AppKit
+import CryptoKit
 import SwiftUI
 import WebKit
 
-/// WebKit's default user agent names no browser, and some sites (Bilibili among them) answer
-/// it with an "upgrade your browser" page. Every Fetchy web view presents as this Mac's Safari.
-let safariUserAgent: String = {
-  let plist = URL(fileURLWithPath: "/Applications/Safari.app/Contents/Info.plist")
-  let major = ProcessInfo.processInfo.operatingSystemVersion.majorVersion
-  // Safari 17 shipped with macOS 14 and 18 with 15; from macOS 26 the numbers match.
-  let fallback = major >= 26 ? "\(major).0" : "\(major + 3).0"
-  let version = NSDictionary(contentsOf: plist)?["CFBundleShortVersionString"] as? String ?? fallback
-  return "Version/\(version) Safari/605.1.15"
-}()
+/// Present as modern macOS Safari so sites like Bilibili and Google render normally.
+let safariUserAgent = "Version/18.5 Safari/605.1.15"
 
-/// What Node knows about a site: its WebKit store and which cookies mean "signed in".
+private let signInDefaults =
+  UserDefaults(suiteName: "app.fetchy.desktop.sign-in") ?? .standard
+
+/// Single shared persistent WebKit store for Fetchy's built-in browser so cross-site logins
+/// (e.g. Google OAuth on X / YouTube) share sessions naturally. Isolates by UUID when
+/// `FETCHY_DATA_DIR` is overridden (such as in automated tests).
+@MainActor func sharedBrowserStore() -> WKWebsiteDataStore {
+  if let dir = dataDirectoryOverride ?? ProcessInfo.processInfo.environment["FETCHY_DATA_DIR"],
+    !dir.isEmpty
+  {
+    let digest = SHA256.hash(data: Data((dir + "\0shared-browser").utf8))
+    let b = Array(digest.prefix(16))
+    let uuid = UUID(uuid: (
+      b[0], b[1], b[2], b[3], b[4], b[5], b[6], b[7],
+      b[8], b[9], b[10], b[11], b[12], b[13], b[14], b[15]
+    ))
+    return WKWebsiteDataStore(forIdentifier: uuid)
+  }
+  return .default()
+}
+
+func recordMatchesHosts(_ displayName: String, hosts: Set<String>) -> Bool {
+  let name = displayName.lowercased()
+  guard !name.isEmpty else { return false }
+  return hosts.contains { host in
+    let h = host.lowercased()
+    return h == name || h.hasSuffix("." + name)
+  }
+}
+
+/// Remove cookies and storage for a single site's hosts without touching other signed-in sites.
+@MainActor func clearSiteData(hosts: Set<String>, legacyProfile: UUID?) async {
+  let store = sharedBrowserStore()
+  if !hosts.isEmpty {
+    let cookies = await store.httpCookieStore.allCookies()
+    for cookie in cookies where hosts.contains(where: { cookie.matches(host: $0) }) {
+      await store.httpCookieStore.deleteCookie(cookie)
+    }
+    let types = WKWebsiteDataStore.allWebsiteDataTypes()
+    let records = await store.dataRecords(ofTypes: types)
+    let matched = records.filter { recordMatchesHosts($0.displayName, hosts: hosts) }
+    if !matched.isEmpty {
+      await store.removeData(ofTypes: types, for: matched)
+    }
+  }
+  if let legacyProfile {
+    XiaohongshuLogin.shared.forget(legacyProfile)
+    let existing = await WKWebsiteDataStore.allDataStoreIdentifiers
+    if existing.contains(legacyProfile) {
+      let legacy = WKWebsiteDataStore(forIdentifier: legacyProfile)
+      await legacy.removeData(
+        ofTypes: WKWebsiteDataStore.allWebsiteDataTypes(), modifiedSince: .distantPast)
+      try? await WKWebsiteDataStore.remove(forIdentifier: legacyProfile)
+    }
+  }
+}
+
+/// One-time migration from earlier per-site UUID stores into the shared browser store.
+@MainActor func migrateLegacyProfileIfNeeded(_ profile: UUID, hosts: Set<String>) async {
+  guard !hosts.isEmpty else { return }
+  let flagKey = "migrated-legacy-profile.\(profile.uuidString)"
+  if signInDefaults.bool(forKey: flagKey) { return }
+  // Initialize WebKit main RunLoop before calling class-level WKWebsiteDataStore APIs.
+  let sharedStore = sharedBrowserStore()
+  let existingIds = await WKWebsiteDataStore.allDataStoreIdentifiers
+  guard existingIds.contains(profile) else {
+    signInDefaults.set(true, forKey: flagKey)
+    return
+  }
+  let legacyStore = WKWebsiteDataStore(forIdentifier: profile)
+  let legacyCookies = await legacyStore.httpCookieStore.allCookies()
+  let existingCookies = await sharedStore.httpCookieStore.allCookies()
+  let existingKeys = Set(existingCookies.map { "\($0.name)\0\($0.domain)\0\($0.path)" })
+  let now = Date()
+  for cookie in legacyCookies {
+    guard (cookie.expiresDate.map { $0 > now } ?? true),
+      hosts.contains(where: { cookie.matches(host: $0) })
+    else { continue }
+    let key = "\(cookie.name)\0\(cookie.domain)\0\(cookie.path)"
+    if !existingKeys.contains(key) {
+      await sharedStore.httpCookieStore.setCookie(cookie)
+    }
+  }
+  signInDefaults.set(true, forKey: flagKey)
+}
+
+/// Insert validated external-browser cookies for a single site into the shared WebKit store.
+@MainActor func applyImportedCookies(
+  _ rows: [[String: Any]], profile: UUID, hosts: Set<String>
+) async -> Int {
+  let store = sharedBrowserStore()
+  let now = Date()
+  var imported: [HTTPCookie] = []
+  for row in rows {
+    guard let name = row["name"] as? String, !name.isEmpty,
+      let value = row["value"] as? String,
+      let domain = row["domain"] as? String, !domain.isEmpty
+    else { continue }
+    let path = (row["path"] as? String).flatMap { $0.isEmpty ? nil : $0 } ?? "/"
+    let secure = row["secure"] as? Bool ?? false
+    let expiresTs = (row["expires"] as? NSNumber)?.doubleValue ?? 0
+    var props: [HTTPCookiePropertyKey: Any] = [
+      .name: name,
+      .value: value,
+      .domain: domain,
+      .path: path,
+    ]
+    if secure { props[.secure] = "TRUE" }
+    if expiresTs > 0 {
+      let date = Date(timeIntervalSince1970: expiresTs)
+      if date <= now { continue }
+      props[.expires] = date
+    }
+    guard let cookie = HTTPCookie(properties: props),
+      hosts.contains(where: { cookie.matches(host: $0) })
+    else { continue }
+    await store.httpCookieStore.setCookie(cookie)
+    imported.append(cookie)
+  }
+  // Explicitly imported Xiaohongshu/Rednote web_session cookies should be recognized immediately.
+  for regionHost in ["www.xiaohongshu.com", "www.rednote.com"] {
+    let regional = imported.filter { $0.name == "web_session" && $0.matches(host: regionHost) }
+    if !regional.isEmpty {
+      XiaohongshuLogin.shared.observe("member", cookies: regional, host: regionHost, profile: profile)
+    }
+  }
+  return imported.count
+}
+
+/// What Node knows about a site: its identifier and which cookies mean "signed in".
 struct SiteInfo: Equatable {
   let site: String
   let label: String
@@ -27,15 +149,372 @@ private func json(_ value: Any) -> Data? {
   try? JSONSerialization.data(withJSONObject: value)
 }
 
+// MARK: - Shared WebKit Dialog & Download Helpers
+
+@MainActor private func presentJSAlert(
+  on window: NSWindow?, message: String, host: String, completion: @escaping () -> Void
+) {
+  let alert = NSAlert()
+  alert.messageText = host.isEmpty ? "网页提示" : "来自 \(host) 的提示"
+  alert.informativeText = message
+  alert.addButton(withTitle: "确定")
+  if let window {
+    alert.beginSheetModal(for: window) { _ in completion() }
+  } else {
+    alert.runModal()
+    completion()
+  }
+}
+
+@MainActor private func presentJSConfirm(
+  on window: NSWindow?, message: String, host: String, completion: @escaping (Bool) -> Void
+) {
+  let alert = NSAlert()
+  alert.messageText = host.isEmpty ? "确认操作" : "来自 \(host) 的确认"
+  alert.informativeText = message
+  alert.addButton(withTitle: "确定")
+  alert.addButton(withTitle: "取消")
+  if let window {
+    alert.beginSheetModal(for: window) { completion($0 == .alertFirstButtonReturn) }
+  } else {
+    completion(alert.runModal() == .alertFirstButtonReturn)
+  }
+}
+
+@MainActor private func presentJSPrompt(
+  on window: NSWindow?, prompt: String, defaultText: String?, host: String,
+  completion: @escaping (String?) -> Void
+) {
+  let alert = NSAlert()
+  alert.messageText = host.isEmpty ? "网页输入" : "来自 \(host) 的输入请求"
+  alert.informativeText = prompt
+  alert.addButton(withTitle: "确定")
+  alert.addButton(withTitle: "取消")
+  let input = NSTextField(frame: NSRect(x: 0, y: 0, width: 320, height: 24))
+  input.stringValue = defaultText ?? ""
+  alert.accessoryView = input
+  alert.window.initialFirstResponder = input
+  if let window {
+    alert.beginSheetModal(for: window) { response in
+      completion(response == .alertFirstButtonReturn ? input.stringValue : nil)
+    }
+  } else {
+    completion(alert.runModal() == .alertFirstButtonReturn ? input.stringValue : nil)
+  }
+}
+
+@MainActor private func presentOpenPanel(
+  on window: NSWindow?, parameters: WKOpenPanelParameters, completion: @escaping ([URL]?) -> Void
+) {
+  let panel = NSOpenPanel()
+  panel.canChooseFiles = true
+  panel.canChooseDirectories = parameters.allowsDirectories
+  panel.allowsMultipleSelection = parameters.allowsMultipleSelection
+  if let window {
+    panel.beginSheetModal(for: window) { response in
+      completion(response == .OK ? panel.urls : nil)
+    }
+  } else {
+    completion(panel.runModal() == .OK ? panel.urls : nil)
+  }
+}
+
+@MainActor private func presentHTTPAuth(
+  on window: NSWindow?, challenge: URLAuthenticationChallenge,
+  completion: @escaping (URLSession.AuthChallengeDisposition, URLCredential?) -> Void
+) {
+  let method = challenge.protectionSpace.authenticationMethod
+  guard method == NSURLAuthenticationMethodHTTPBasic || method == NSURLAuthenticationMethodHTTPDigest
+  else {
+    completion(.performDefaultHandling, nil)
+    return
+  }
+  let alert = NSAlert()
+  alert.messageText = "需要身份验证"
+  alert.informativeText = "\(challenge.protectionSpace.host) 要求输入用户名和密码。"
+  alert.addButton(withTitle: "登录")
+  alert.addButton(withTitle: "取消")
+  let container = NSView(frame: NSRect(x: 0, y: 0, width: 300, height: 58))
+  let userField = NSTextField(frame: NSRect(x: 0, y: 32, width: 300, height: 24))
+  userField.placeholderString = "用户名"
+  let passField = NSSecureTextField(frame: NSRect(x: 0, y: 0, width: 300, height: 24))
+  passField.placeholderString = "密码"
+  container.addSubview(userField)
+  container.addSubview(passField)
+  alert.accessoryView = container
+  alert.window.initialFirstResponder = userField
+  let finish: (NSApplication.ModalResponse) -> Void = { response in
+    if response == .alertFirstButtonReturn {
+      let cred = URLCredential(
+        user: userField.stringValue, password: passField.stringValue, persistence: .forSession)
+      completion(.useCredential, cred)
+    } else {
+      completion(.cancelAuthenticationChallenge, nil)
+    }
+  }
+  if let window {
+    alert.beginSheetModal(for: window, completionHandler: finish)
+  } else {
+    finish(alert.runModal())
+  }
+}
+
+private func shouldOpenAsPopup(_ action: WKNavigationAction, features: WKWindowFeatures) -> Bool {
+  if features.width != nil || features.height != nil { return true }
+  if action.navigationType == .other { return true }
+  guard let url = action.request.url else { return true }
+  if url.scheme == "about" { return true }
+  let host = (url.host ?? "").lowercased()
+  let path = url.path.lowercased()
+  let authHosts = [
+    "accounts.google.com", "appleid.apple.com", "login.microsoftonline.com",
+    "login.live.com", "github.com", "passport.bilibili.com",
+  ]
+  if authHosts.contains(host) && (host != "github.com" || path.contains("login") || path.contains("oauth")) {
+    return true
+  }
+  if path.contains("oauth") || path.contains("/authorize") || path.contains("signin") {
+    return true
+  }
+  return false
+}
+
+private func isAttachmentResponse(_ response: WKNavigationResponse) -> Bool {
+  if !response.canShowMIMEType { return true }
+  if let http = response.response as? HTTPURLResponse,
+    let disposition = http.value(forHTTPHeaderField: "Content-Disposition")?.lowercased(),
+    disposition.contains("attachment")
+  {
+    return true
+  }
+  return false
+}
+
+private func uniqueDownloadURL(in directory: URL, suggestedFilename: String) -> URL {
+  let clean = (suggestedFilename as NSString).lastPathComponent
+  let baseName = clean.isEmpty ? "download" : clean
+  let fm = FileManager.default
+  try? fm.createDirectory(at: directory, withIntermediateDirectories: true)
+  var candidate = directory.appendingPathComponent(baseName)
+  if !fm.fileExists(atPath: candidate.path) { return candidate }
+  let ext = candidate.pathExtension
+  let stem = candidate.deletingPathExtension().lastPathComponent
+  for index in 2...999 {
+    let next = ext.isEmpty ? "\(stem) (\(index))" : "\(stem) (\(index)).\(ext)"
+    candidate = directory.appendingPathComponent(next)
+    if !fm.fileExists(atPath: candidate.path) { return candidate }
+  }
+  return directory.appendingPathComponent(UUID().uuidString + (ext.isEmpty ? "" : "." + ext))
+}
+
+@MainActor final class BrowserDownloadHandler: NSObject, WKDownloadDelegate {
+  private let directory: URL
+  private let onFinish: (URL) -> Void
+  private let onFail: (String) -> Void
+  private var destination: URL?
+
+  init(directory: URL, onFinish: @escaping (URL) -> Void, onFail: @escaping (String) -> Void) {
+    self.directory = directory
+    self.onFinish = onFinish
+    self.onFail = onFail
+  }
+
+  func download(
+    _ download: WKDownload, decideDestinationUsing response: URLResponse,
+    suggestedFilename: String, completionHandler: @escaping (URL?) -> Void
+  ) {
+    let url = uniqueDownloadURL(in: directory, suggestedFilename: suggestedFilename)
+    destination = url
+    completionHandler(url)
+  }
+
+  func downloadDidFinish(_ download: WKDownload) {
+    if let destination { onFinish(destination) }
+  }
+
+  func download(_ download: WKDownload, didFailWithError error: Error, resumeData: Data?) {
+    onFail(error.localizedDescription)
+  }
+}
+
+/// Real auxiliary popup window for OAuth / window.open flows so `window.opener` stays intact.
+@MainActor final class BrowserPopupController: NSObject, NSWindowDelegate, WKNavigationDelegate,
+  WKUIDelegate
+{
+  let webView: WKWebView
+  let window: NSWindow
+  private weak var owner: BrowserModel?
+  private var titleObs: NSKeyValueObservation?
+  private var urlObs: NSKeyValueObservation?
+  private var closed = false
+
+  init(
+    configuration: WKWebViewConfiguration, features: WKWindowFeatures,
+    parentWindow: NSWindow?, owner: BrowserModel
+  ) {
+    self.owner = owner
+    let width = min(max(CGFloat(features.width?.doubleValue ?? 560), 440), 980)
+    let height = min(max(CGFloat(features.height?.doubleValue ?? 700), 500), 860)
+    webView = WKWebView(frame: NSRect(x: 0, y: 0, width: width, height: height), configuration: configuration)
+    webView.allowsBackForwardNavigationGestures = true
+    webView.allowsMagnification = true
+    webView.isInspectable = true
+    window = NSWindow(
+      contentRect: NSRect(x: 0, y: 0, width: width, height: height),
+      styleMask: [.titled, .closable, .resizable, .miniaturizable],
+      backing: .buffered, defer: false
+    )
+    super.init()
+    webView.navigationDelegate = self
+    webView.uiDelegate = self
+    window.contentView = webView
+    window.title = "验证与登录"
+    window.isReleasedWhenClosed = false
+    window.delegate = self
+    titleObs = webView.observe(\.title, options: [.new]) { [weak self] view, _ in
+      let t = view.title ?? ""
+      let host = view.url?.host ?? ""
+      DispatchQueue.main.async {
+        self?.window.title = t.isEmpty ? (host.isEmpty ? "验证与登录" : host) : t
+      }
+    }
+    urlObs = webView.observe(\.url, options: [.new]) { [weak self] view, _ in
+      let host = view.url?.host ?? ""
+      DispatchQueue.main.async {
+        guard let self, self.window.title == "验证与登录", !host.isEmpty else { return }
+        self.window.title = host
+      }
+    }
+    if let parent = parentWindow {
+      let pf = parent.frame
+      let origin = NSPoint(x: pf.midX - width / 2, y: pf.midY - height / 2)
+      window.setFrameOrigin(origin)
+    } else {
+      window.center()
+    }
+    window.makeKeyAndOrderFront(nil)
+  }
+
+  func closePopup() {
+    guard !closed else { return }
+    closed = true
+    window.delegate = nil
+    window.close()
+    owner?.popupDidClose(self)
+  }
+
+  func windowWillClose(_ notification: Notification) {
+    guard !closed else { return }
+    closed = true
+    owner?.popupDidClose(self)
+  }
+
+  func webViewDidClose(_ webView: WKWebView) {
+    closePopup()
+  }
+
+  func webView(
+    _ webView: WKWebView, createWebViewWith configuration: WKWebViewConfiguration,
+    for navigationAction: WKNavigationAction, windowFeatures: WKWindowFeatures
+  ) -> WKWebView? {
+    owner?.openPopup(configuration: configuration, features: windowFeatures, parentWindow: window)
+  }
+
+  func webView(
+    _ webView: WKWebView, decidePolicyFor action: WKNavigationAction,
+    decisionHandler: @escaping (WKNavigationActionPolicy) -> Void
+  ) {
+    guard let url = action.request.url,
+      ["http", "https", "about", "blob", "data"].contains(url.scheme ?? "")
+    else {
+      decisionHandler(.cancel)
+      return
+    }
+    if action.shouldPerformDownload {
+      decisionHandler(.download)
+      return
+    }
+    decisionHandler(.allow)
+  }
+
+  func webView(
+    _ webView: WKWebView, decidePolicyFor response: WKNavigationResponse,
+    decisionHandler: @escaping (WKNavigationResponsePolicy) -> Void
+  ) {
+    decisionHandler(isAttachmentResponse(response) ? .download : .allow)
+  }
+
+  func webView(_ webView: WKWebView, navigationAction: WKNavigationAction, didBecome download: WKDownload) {
+    owner?.attachWebDownload(download)
+  }
+
+  func webView(_ webView: WKWebView, navigationResponse: WKNavigationResponse, didBecome download: WKDownload) {
+    owner?.attachWebDownload(download)
+  }
+
+  func webView(
+    _ webView: WKWebView, didReceive challenge: URLAuthenticationChallenge,
+    completionHandler: @escaping (URLSession.AuthChallengeDisposition, URLCredential?) -> Void
+  ) {
+    presentHTTPAuth(on: window, challenge: challenge, completion: completionHandler)
+  }
+
+  func webView(
+    _ webView: WKWebView, runJavaScriptAlertPanelWithMessage message: String,
+    initiatedByFrame frame: WKFrameInfo, completionHandler: @escaping () -> Void
+  ) {
+    presentJSAlert(on: window, message: message, host: frame.securityOrigin.host, completion: completionHandler)
+  }
+
+  func webView(
+    _ webView: WKWebView, runJavaScriptConfirmPanelWithMessage message: String,
+    initiatedByFrame frame: WKFrameInfo, completionHandler: @escaping (Bool) -> Void
+  ) {
+    presentJSConfirm(on: window, message: message, host: frame.securityOrigin.host, completion: completionHandler)
+  }
+
+  func webView(
+    _ webView: WKWebView, runJavaScriptTextInputPanelWithPrompt prompt: String,
+    defaultText: String?, initiatedByFrame frame: WKFrameInfo,
+    completionHandler: @escaping (String?) -> Void
+  ) {
+    presentJSPrompt(
+      on: window, prompt: prompt, defaultText: defaultText,
+      host: frame.securityOrigin.host, completion: completionHandler)
+  }
+
+  func webView(
+    _ webView: WKWebView, runOpenPanelWith parameters: WKOpenPanelParameters,
+    initiatedByFrame frame: WKFrameInfo, completionHandler: @escaping ([URL]?) -> Void
+  ) {
+    presentOpenPanel(on: window, parameters: parameters, completion: completionHandler)
+  }
+}
+
+// MARK: - Main Browser Model
+
 @MainActor final class BrowserModel: NSObject, ObservableObject, WKNavigationDelegate, WKUIDelegate {
   @Published var address = ""
+  @Published var pageTitle = ""
   @Published var canGoBack = false
   @Published var canGoForward = false
   @Published var isLoading = false
+  @Published var estimatedProgress: Double = 0
+  @Published var showingStartPage = true
   @Published var site: SiteInfo?
   @Published var signedIn: Bool?
   @Published var notice = ""
+  @Published var loadError: String?
+  @Published var failedUrl: URL?
   @Published var showOpenDownloads = false
+  @Published var showOpenDownloadsFolder = false
+  @Published var copiedLink = false
+  @Published var pageZoom: CGFloat = 1.0
+  @Published var focusAddressToken = 0
+  @Published var showSidePanel: Bool = {
+    if UserDefaults.standard.object(forKey: "browser.panelOpen") == nil { return true }
+    return UserDefaults.standard.bool(forKey: "browser.panelOpen")
+  }()
   @Published private(set) var webView: WKWebView?
   @Published var pendingFavoritesShortcut: PlatformShortcut?
   weak var downloads: DownloadsModel?
@@ -48,11 +527,28 @@ private func json(_ value: Any) -> Data? {
   private var regionalMonitor: Task<Void, Never>?
   private var regionalCheck: Task<Void, Never>?
   private var favoritesResolveTask: Task<Void, Never>?
+  private var siteLookupTask: Task<Void, Never>?
+  private var copiedResetTask: Task<Void, Never>?
   private var regionalSessionBound = false
+  private var popups: [BrowserPopupController] = []
+  private var downloadHandlers: [ObjectIdentifier: BrowserDownloadHandler] = [:]
+  private var lastTerminateDates: [Date] = []
+  private var lastResolvedHost = ""
+  private var navigationGeneration = 0
 
   override init() {
     super.init()
     panel.browser = self
+  }
+
+  var currentUrl: URL? {
+    guard !showingStartPage else { return nil }
+    return webView?.url ?? failedUrl
+  }
+
+  func isViewing(hosts: Set<String>) -> Bool {
+    guard let host = webView?.url?.host?.lowercased() else { return false }
+    return hosts.contains { $0.lowercased() == host }
   }
 
   func siteInfo(_ input: String) async throws -> SiteInfo {
@@ -66,33 +562,92 @@ private func json(_ value: Any) -> Data? {
       hosts: row["hosts"] as? [String] ?? [], session: row["session"] as? [String] ?? [])
   }
 
-  /// Typed in the address bar or chosen elsewhere. In-page links keep the current store,
-  /// so a sign-in that passes through another site stays with the site being signed in to.
+  /// Resolve user address bar input into a URL (supporting http/https, bare domains, or keyword search).
+  private func resolveInputToURL(_ raw: String) -> URL? {
+    let trimmed = raw.trimmingCharacters(in: .whitespacesAndNewlines)
+    guard !trimmed.isEmpty else { return nil }
+    if trimmed.hasPrefix("https://") || trimmed.hasPrefix("http://") {
+      if let url = URL(string: trimmed), url.host != nil { return url }
+    }
+    let hasWhitespace = trimmed.contains(where: \.isWhitespace)
+    if !hasWhitespace {
+      let lower = trimmed.lowercased()
+      if lower == "localhost" || lower.hasPrefix("localhost:") || lower.hasPrefix("localhost/")
+        || lower.hasPrefix("127.0.0.1") || lower.hasPrefix("[::1]")
+      {
+        if let url = URL(string: "http://" + trimmed), url.host != nil { return url }
+      }
+      if trimmed.contains(".") && !trimmed.hasPrefix(".") && !trimmed.hasSuffix(".") {
+        let hostPart = trimmed.split(separator: "/").first.map(String.init) ?? trimmed
+        let bareHost = hostPart.split(separator: ":").first.map(String.init) ?? hostPart
+        if bareHost.range(
+          of: #"^[a-zA-Z0-9-]+(?:\.[a-zA-Z0-9-]+)+$"#, options: .regularExpression) != nil
+        {
+          if let url = URL(string: "https://" + trimmed), url.host != nil { return url }
+        }
+      }
+    }
+    var comps = URLComponents(string: "https://duckduckgo.com/")
+    comps?.queryItems = [URLQueryItem(name: "q", value: trimmed)]
+    return comps?.url
+  }
+
+  /// Navigate to a URL or search query; empty input returns to the start page.
   func go(_ text: String, keepPendingFavorites: Bool = false) {
-    var raw = text.trimmingCharacters(in: .whitespacesAndNewlines)
-    guard !raw.isEmpty else { return }
-    if !raw.contains("://") { raw = "https://" + raw }
-    guard let url = URL(string: raw), let host = url.host,
-      url.scheme == "https" || (url.scheme == "http" && ["localhost", "127.0.0.1"].contains(host))
-    else {
-      notice = "请输入 HTTPS 网址。"
+    let raw = text.trimmingCharacters(in: .whitespacesAndNewlines)
+    guard !raw.isEmpty else {
+      goHome()
+      return
+    }
+    guard let url = resolveInputToURL(raw) else {
+      notice = "无法解析输入内容。"
       showOpenDownloads = false
+      showOpenDownloadsFolder = false
       return
     }
     if !keepPendingFavorites {
-      pendingFavoritesShortcut = nil
-      favoritesResolveTask?.cancel()
-      favoritesResolveTask = nil
+      cancelPendingFavorites(clearNotice: false)
     }
+    showingStartPage = false
+    loadError = nil
+    failedUrl = nil
     notice = ""
     showOpenDownloads = false
-    Task {
-      do {
-        let info = try await siteInfo(url.absoluteString)
-        if site?.profile != info.profile || webView == nil { makeView(info) }
-        site = info
-        webView?.load(URLRequest(url: url))
-      } catch { notice = error.localizedDescription }
+    showOpenDownloadsFolder = false
+    ensureWebView()
+    navigationGeneration += 1
+    let gen = navigationGeneration
+    address = url.absoluteString
+    Task { @MainActor [weak self] in
+      guard let self, self.navigationGeneration == gen else { return }
+      if let info = try? await self.siteInfo(url.absoluteString) {
+        await migrateLegacyProfileIfNeeded(info.profile, hosts: Set(info.hosts))
+        guard self.navigationGeneration == gen else { return }
+        self.applySiteInfo(info)
+      }
+      guard self.navigationGeneration == gen else { return }
+      self.webView?.load(URLRequest(url: url))
+    }
+  }
+
+  func goHome() {
+    navigationGeneration += 1
+    cancelPendingFavorites(clearNotice: true)
+    loadError = nil
+    failedUrl = nil
+    showOpenDownloads = false
+    showOpenDownloadsFolder = false
+    showingStartPage = true
+  }
+
+  func cancelPendingFavorites(clearNotice: Bool = true) {
+    pendingFavoritesShortcut = nil
+    favoritesResolveTask?.cancel()
+    favoritesResolveTask = nil
+    if clearNotice {
+      notice = ""
+      showOpenDownloads = false
+      showOpenDownloadsFolder = false
     }
   }
 
@@ -106,9 +661,12 @@ private func json(_ value: Any) -> Data? {
 
   /// Download the current webpage directly through Fetchy's unified downloader.
   func downloadCurrentPage() async {
-    guard let url = webView?.url?.absoluteString, url.hasPrefix("https://") else {
-      notice = "请先打开一个 HTTPS 网页。"
+    guard let url = currentUrl?.absoluteString,
+      url.hasPrefix("https://") || url.hasPrefix("http://")
+    else {
+      notice = "请先打开一个网页。"
       showOpenDownloads = false
+      showOpenDownloadsFolder = false
       return
     }
     guard let downloads else { return }
@@ -117,40 +675,100 @@ private func json(_ value: Any) -> Data? {
     if ok {
       notice = "已加入下载队列，文件将直接保存到下载文件夹。"
       showOpenDownloads = true
+      showOpenDownloadsFolder = false
     } else if !downloads.notice.isEmpty {
       notice = downloads.notice
       showOpenDownloads = false
+      showOpenDownloadsFolder = false
     }
   }
 
-  private func makeView(_ info: SiteInfo) {
+  func copyCurrentLink() {
+    guard let raw = currentUrl?.absoluteString, !raw.isEmpty else { return }
+    NSPasteboard.general.clearContents()
+    NSPasteboard.general.setString(raw, forType: .string)
+    copiedLink = true
+    copiedResetTask?.cancel()
+    copiedResetTask = Task { [weak self] in
+      try? await Task.sleep(nanoseconds: 1_800_000_000)
+      guard !Task.isCancelled else { return }
+      self?.copiedLink = false
+    }
+  }
+
+  func openInDefaultBrowser() {
+    guard let url = currentUrl else { return }
+    NSWorkspace.shared.open(url)
+  }
+
+  func zoomIn() {
+    guard let webView, !showingStartPage else { return }
+    let next = min(3.0, ((webView.pageZoom + 0.1) * 10).rounded() / 10)
+    webView.pageZoom = next
+    pageZoom = next
+  }
+
+  func zoomOut() {
+    guard let webView, !showingStartPage else { return }
+    let next = max(0.5, ((webView.pageZoom - 0.1) * 10).rounded() / 10)
+    webView.pageZoom = next
+    pageZoom = next
+  }
+
+  func resetZoom() {
+    guard let webView else { return }
+    webView.pageZoom = 1.0
+    pageZoom = 1.0
+  }
+
+  func toggleSidePanel() {
+    showSidePanel.toggle()
+    UserDefaults.standard.set(showSidePanel, forKey: "browser.panelOpen")
+  }
+
+  func requestFocusAddress() {
+    focusAddressToken += 1
+  }
+
+  private func ensureWebView() {
+    if webView != nil { return }
     let configuration = WKWebViewConfiguration()
-    configuration.websiteDataStore = WKWebsiteDataStore(forIdentifier: info.profile)
+    configuration.websiteDataStore = sharedBrowserStore()
     configuration.applicationNameForUserAgent = safariUserAgent
-    if let snifferUrl = Bundle.main.url(forResource: "media-sniffer", withExtension: "js"),
-      let snifferSource = try? String(contentsOf: snifferUrl, encoding: .utf8)
-    {
-      configuration.userContentController.addUserScript(
-        WKUserScript(
-          source: snifferSource, injectionTime: .atDocumentStart, forMainFrameOnly: false))
+    configuration.preferences.isElementFullscreenEnabled = true
+    configuration.preferences.tabFocusesLinks = true
+    configuration.preferences.javaScriptCanOpenWindowsAutomatically = true
+    configuration.allowsAirPlayForMediaPlayback = true
+    for resource in ["browser-compat", "media-sniffer"] {
+      if let url = Bundle.main.url(forResource: resource, withExtension: "js"),
+        let source = try? String(contentsOf: url, encoding: .utf8)
+      {
+        configuration.userContentController.addUserScript(
+          WKUserScript(source: source, injectionTime: .atDocumentStart, forMainFrameOnly: false))
+      }
     }
     let view = WKWebView(frame: .zero, configuration: configuration)
     view.navigationDelegate = self
     view.uiDelegate = self
     view.allowsBackForwardNavigationGestures = true
+    view.allowsMagnification = true
+    view.isInspectable = true
     observations = [
       view.observe(\.url, options: [.initial, .new]) { [weak self] view, _ in
         let value = view.url?.absoluteString ?? ""
         DispatchQueue.main.async {
           guard let self else { return }
           self.address = value
-          // Re-inspect whenever the URL changes (including SPA routes or pages whose background
-          // telemetry keeps isLoading true long after the feed is interactive).
+          self.syncSiteForCurrentURL(view.url)
           if !value.isEmpty && value != self.panelAddress {
             self.panelAddress = value
             self.panel.pageChanged()
           }
         }
+      },
+      view.observe(\.title, options: [.initial, .new]) { [weak self] view, _ in
+        let value = view.title ?? ""
+        DispatchQueue.main.async { self?.pageTitle = value }
       },
       view.observe(\.canGoBack, options: [.initial, .new]) { [weak self] view, _ in
         let value = view.canGoBack
@@ -164,35 +782,161 @@ private func json(_ value: Any) -> Data? {
         let value = view.isLoading
         DispatchQueue.main.async { self?.isLoading = value }
       },
+      view.observe(\.estimatedProgress, options: [.initial, .new]) { [weak self] view, _ in
+        let value = view.estimatedProgress
+        DispatchQueue.main.async { self?.estimatedProgress = value }
+      },
     ]
-    regionalCheck?.cancel()
-    regionalCheck = nil
-    regionalMonitor?.cancel()
-    regionalSessionBound = false
     webView = view
-    if info.site == "xiaohongshu" {
-      // A login modal can complete without loading a new page or changing the URL.
-      regionalMonitor = Task { [weak self, weak view] in
-        while !Task.isCancelled {
-          try? await Task.sleep(nanoseconds: 2_000_000_000)
-          guard !Task.isCancelled, let self, let view, self.webView === view else { return }
-          if NSApp.isActive, view.window?.isVisible == true, !view.isLoading {
-            self.refreshSignIn()
-          }
-        }
-      }
-    }
-    signedIn = nil
     panelAddress = ""
     panel.reset()
   }
 
-  func stop() { webView?.stopLoading() }
-  func back() { webView?.goBack() }
-  func forward() { webView?.goForward() }
-  func reload() { webView?.reload() }
+  private func syncSiteForCurrentURL(_ url: URL?) {
+    guard let url, let host = url.host?.lowercased(), ["http", "https"].contains(url.scheme ?? "") else {
+      return
+    }
+    // Cancel pending favorites auto-jump if the user navigated to a different platform.
+    if let pending = pendingFavoritesShortcut, !hostBelongsToPlatform(host, site: pending.site) {
+      cancelPendingFavorites(clearNotice: true)
+    }
+    if host == lastResolvedHost, let site, site.hosts.contains(where: { $0.lowercased() == host }) {
+      return
+    }
+    lastResolvedHost = host
+    siteLookupTask?.cancel()
+    siteLookupTask = Task { @MainActor [weak self] in
+      guard let self else { return }
+      if let info = try? await self.siteInfo(url.absoluteString) {
+        guard !Task.isCancelled else { return }
+        self.applySiteInfo(info)
+        self.refreshSignIn()
+      }
+    }
+  }
 
-  /// Signed in means one of the site's session cookies is in its store and not expired.
+  private func hostBelongsToPlatform(_ host: String, site: String) -> Bool {
+    let h = host.lowercased()
+    switch site {
+    case "xiaohongshu":
+      return h.hasSuffix("xiaohongshu.com") || h.hasSuffix("rednote.com")
+    case "bilibili":
+      return h.hasSuffix("bilibili.com") || h.hasSuffix("biligame.com") || h.hasSuffix("b23.tv")
+    case "instagram":
+      return h.hasSuffix("instagram.com") || h.hasSuffix("facebook.com") || h.hasSuffix("meta.com")
+    case "tiktok":
+      return h.hasSuffix("tiktok.com")
+    default:
+      return true
+    }
+  }
+
+  private func applySiteInfo(_ info: SiteInfo) {
+    let changed = site?.site != info.site
+    site = info
+    if changed {
+      signedIn = nil
+      regionalSessionBound = false
+      regionalCheck?.cancel()
+      regionalCheck = nil
+    }
+    if info.site == "xiaohongshu" {
+      if regionalMonitor == nil, let view = webView {
+        // A login modal can complete without loading a new page or changing the URL.
+        regionalMonitor = Task { [weak self, weak view] in
+          while !Task.isCancelled {
+            try? await Task.sleep(nanoseconds: 2_000_000_000)
+            guard !Task.isCancelled, let self, let view, self.webView === view else { return }
+            guard self.site?.site == "xiaohongshu" else {
+              self.regionalMonitor = nil
+              return
+            }
+            if NSApp.isActive, view.window?.isVisible == true, !view.isLoading {
+              self.refreshSignIn()
+            }
+          }
+        }
+      }
+    } else {
+      regionalMonitor?.cancel()
+      regionalMonitor = nil
+    }
+  }
+
+  func stop() { webView?.stopLoading() }
+
+  func back() {
+    if showingStartPage, webView?.url != nil {
+      showingStartPage = false
+      return
+    }
+    webView?.goBack()
+  }
+
+  func forward() {
+    guard !showingStartPage else { return }
+    webView?.goForward()
+  }
+
+  func reload() {
+    guard !showingStartPage else { return }
+    loadError = nil
+    if let failed = failedUrl, webView?.url == nil {
+      failedUrl = nil
+      webView?.load(URLRequest(url: failed))
+    } else {
+      failedUrl = nil
+      webView?.reload()
+    }
+  }
+
+  func openPopup(
+    configuration: WKWebViewConfiguration, features: WKWindowFeatures, parentWindow: NSWindow?
+  ) -> WKWebView {
+    let controller = BrowserPopupController(
+      configuration: configuration, features: features,
+      parentWindow: parentWindow ?? webView?.window, owner: self)
+    popups.append(controller)
+    return controller.webView
+  }
+
+  func popupDidClose(_ popup: BrowserPopupController) {
+    popups.removeAll { $0 === popup }
+    webView?.window?.makeKeyAndOrderFront(nil)
+    refreshSignIn()
+  }
+
+  func attachWebDownload(_ download: WKDownload) {
+    let dir =
+      downloads?.downloadsDir
+      ?? FileManager.default.homeDirectoryForCurrentUser.appendingPathComponent(
+        "Downloads/Fetchy", isDirectory: true)
+    let id = ObjectIdentifier(download)
+    let handler = BrowserDownloadHandler(
+      directory: dir,
+      onFinish: { [weak self] fileUrl in
+        guard let self else { return }
+        self.downloadHandlers.removeValue(forKey: id)
+        self.notice = "已保存网页文件：\(fileUrl.lastPathComponent)"
+        self.showOpenDownloads = false
+        self.showOpenDownloadsFolder = true
+      },
+      onFail: { [weak self] message in
+        guard let self else { return }
+        self.downloadHandlers.removeValue(forKey: id)
+        self.notice = "网页文件下载失败：\(message)"
+        self.showOpenDownloads = false
+        self.showOpenDownloadsFolder = false
+      }
+    )
+    downloadHandlers[id] = handler
+    download.delegate = handler
+    notice = "正在下载网页文件…"
+    showOpenDownloads = false
+    showOpenDownloadsFolder = false
+  }
+
+  /// Signed in means one of the site's session cookies is in the shared store and not expired.
   func refreshSignIn() {
     guard let site, let webView else { return }
     if site.site == "xiaohongshu" {
@@ -212,8 +956,11 @@ private func json(_ value: Any) -> Data? {
       let ok =
         site.session.isEmpty ? !live.isEmpty : live.contains { site.session.contains($0.name) }
       DispatchQueue.main.async {
-        if self?.webView === webView {
-          self?.signedIn = ok
+        guard let self, self.webView === webView, self.site?.site == site.site else { return }
+        let becameSignedIn = self.signedIn != true && ok
+        self.signedIn = ok
+        if becameSignedIn, self.pendingFavoritesShortcut != nil {
+          self.resolvePendingFavorites(webView)
         }
       }
     }
@@ -238,16 +985,23 @@ private func json(_ value: Any) -> Data? {
       }
       let verified = sessions.contains { login.mayUse($0, profile: site.profile) }
       let status: Bool? = verified ? true : (state == "guest" ? false : nil)
+      let becameSignedIn = self.signedIn != true && status == true
       if self.signedIn != status { self.signedIn = status }
+      if becameSignedIn, self.pendingFavoritesShortcut != nil {
+        self.resolvePendingFavorites(view)
+      }
     }
   }
 
+  /// Resolve dynamic-UID favorites routes; stays active across login until resolved or user leaves the site.
   private func resolvePendingFavorites(_ view: WKWebView) {
     guard let shortcut = pendingFavoritesShortcut else { return }
     favoritesResolveTask?.cancel()
     favoritesResolveTask = Task { [weak self, weak view] in
-      for _ in 0..<6 {
-        guard !Task.isCancelled, let self, let view, self.webView === view,
+      let startedAt = Date()
+      var attempt = 0
+      while !Task.isCancelled && Date().timeIntervalSince(startedAt) < 300 {
+        guard let self, let view, self.webView === view,
           self.pendingFavoritesShortcut?.site == shortcut.site
         else { return }
         if let result = try? await self.runTool("findFavorites") as? [String: Any],
@@ -255,19 +1009,27 @@ private func json(_ value: Any) -> Data? {
           let target = URL(string: rawUrl), target.scheme == "https"
         {
           self.pendingFavoritesShortcut = nil
+          self.notice = ""
+          self.showOpenDownloads = false
+          self.showOpenDownloadsFolder = false
           if view.url?.absoluteString != target.absoluteString {
             view.load(URLRequest(url: target))
           }
           return
         }
-        try? await Task.sleep(nanoseconds: 600_000_000)
+        attempt += 1
+        if attempt == 5 {
+          self.notice = "请先登录 \(shortcut.label)，登录完成后将自动跳转到「\(shortcut.favoritesLabel)」。"
+          self.showOpenDownloads = false
+          self.showOpenDownloadsFolder = false
+        }
+        let delayNs: UInt64 = attempt < 8 ? 650_000_000 : 2_000_000_000
+        try? await Task.sleep(nanoseconds: delayNs)
       }
       guard !Task.isCancelled, let self, self.pendingFavoritesShortcut?.site == shortcut.site else {
         return
       }
       self.pendingFavoritesShortcut = nil
-      self.notice = "未能自动定位「\(shortcut.label) · \(shortcut.favoritesLabel)」，请先登录后再点一次上方「收藏夹」。"
-      self.showOpenDownloads = false
     }
   }
 
@@ -293,6 +1055,8 @@ private func json(_ value: Any) -> Data? {
     return try JSONSerialization.jsonObject(with: data)
   }
 
+  // MARK: - WKNavigationDelegate
+
   func webView(
     _ webView: WKWebView, decidePolicyFor action: WKNavigationAction,
     decisionHandler: @escaping (WKNavigationActionPolicy) -> Void
@@ -303,31 +1067,44 @@ private func json(_ value: Any) -> Data? {
       decisionHandler(.cancel)
       return
     }
-    if url.scheme == "http" && !["localhost", "127.0.0.1"].contains(url.host ?? "") {
-      decisionHandler(.cancel)
-      notice = "已阻止不加密的 HTTP 页面。"
-      showOpenDownloads = false
+    if action.shouldPerformDownload {
+      decisionHandler(.download)
       return
     }
     decisionHandler(.allow)
   }
 
-  // Pages that open a new window (often sign-in) continue in this view and this store.
   func webView(
-    _ webView: WKWebView, createWebViewWith configuration: WKWebViewConfiguration,
-    for navigationAction: WKNavigationAction, windowFeatures: WKWindowFeatures
-  ) -> WKWebView? {
-    if navigationAction.targetFrame == nil { webView.load(navigationAction.request) }
-    return nil
+    _ webView: WKWebView, decidePolicyFor response: WKNavigationResponse,
+    decisionHandler: @escaping (WKNavigationResponsePolicy) -> Void
+  ) {
+    decisionHandler(isAttachmentResponse(response) ? .download : .allow)
+  }
+
+  func webView(_ webView: WKWebView, navigationAction: WKNavigationAction, didBecome download: WKDownload) {
+    attachWebDownload(download)
+  }
+
+  func webView(_ webView: WKWebView, navigationResponse: WKNavigationResponse, didBecome download: WKDownload) {
+    attachWebDownload(download)
   }
 
   func webView(_ webView: WKWebView, didStartProvisionalNavigation navigation: WKNavigation!) {
+    loadError = nil
+    failedUrl = nil
     regionalCheck?.cancel()
     regionalCheck = nil
     regionalSessionBound = false
   }
 
+  func webView(_ webView: WKWebView, didCommit navigation: WKNavigation!) {
+    loadError = nil
+    failedUrl = nil
+  }
+
   func webView(_ webView: WKWebView, didFinish navigation: WKNavigation!) {
+    loadError = nil
+    failedUrl = nil
     refreshSignIn()
     let current = webView.url?.absoluteString ?? ""
     if current != panelAddress || panel.kind == "none" {
@@ -337,6 +1114,100 @@ private func json(_ value: Any) -> Data? {
     if pendingFavoritesShortcut != nil {
       resolvePendingFavorites(webView)
     }
+  }
+
+  func webView(
+    _ webView: WKWebView, didFailProvisionalNavigation navigation: WKNavigation!,
+    withError error: Error
+  ) {
+    handleLoadFailure(error)
+  }
+
+  func webView(_ webView: WKWebView, didFail navigation: WKNavigation!, withError error: Error) {
+    handleLoadFailure(error)
+  }
+
+  private func handleLoadFailure(_ error: Error) {
+    let nsError = error as NSError
+    // Ignore user cancellations and WebKit frame-load-interrupted (normal for redirects/downloads).
+    if nsError.code == NSURLErrorCancelled || (nsError.domain == "WebKitErrorDomain" && nsError.code == 102) {
+      return
+    }
+    if let failing = nsError.userInfo[NSURLErrorFailingURLErrorKey] as? URL {
+      failedUrl = failing
+    }
+    loadError = nsError.localizedDescription
+  }
+
+  func webViewWebContentProcessDidTerminate(_ webView: WKWebView) {
+    let now = Date()
+    lastTerminateDates = lastTerminateDates.filter { now.timeIntervalSince($0) < 10 }
+    if lastTerminateDates.count < 2 {
+      lastTerminateDates.append(now)
+      webView.reload()
+    } else {
+      loadError = "网页渲染进程意外中断，请点击重试刷新页面。"
+    }
+  }
+
+  func webView(
+    _ webView: WKWebView, didReceive challenge: URLAuthenticationChallenge,
+    completionHandler: @escaping (URLSession.AuthChallengeDisposition, URLCredential?) -> Void
+  ) {
+    presentHTTPAuth(on: webView.window, challenge: challenge, completion: completionHandler)
+  }
+
+  // MARK: - WKUIDelegate
+
+  func webView(
+    _ webView: WKWebView, createWebViewWith configuration: WKWebViewConfiguration,
+    for navigationAction: WKNavigationAction, windowFeatures: WKWindowFeatures
+  ) -> WKWebView? {
+    if shouldOpenAsPopup(navigationAction, features: windowFeatures) {
+      return openPopup(
+        configuration: configuration, features: windowFeatures, parentWindow: webView.window)
+    }
+    if navigationAction.targetFrame == nil, let url = navigationAction.request.url,
+      ["http", "https"].contains(url.scheme ?? "")
+    {
+      webView.load(navigationAction.request)
+    }
+    return nil
+  }
+
+  func webView(
+    _ webView: WKWebView, runJavaScriptAlertPanelWithMessage message: String,
+    initiatedByFrame frame: WKFrameInfo, completionHandler: @escaping () -> Void
+  ) {
+    presentJSAlert(
+      on: webView.window, message: message, host: frame.securityOrigin.host,
+      completion: completionHandler)
+  }
+
+  func webView(
+    _ webView: WKWebView, runJavaScriptConfirmPanelWithMessage message: String,
+    initiatedByFrame frame: WKFrameInfo, completionHandler: @escaping (Bool) -> Void
+  ) {
+    presentJSConfirm(
+      on: webView.window, message: message, host: frame.securityOrigin.host,
+      completion: completionHandler)
+  }
+
+  func webView(
+    _ webView: WKWebView, runJavaScriptTextInputPanelWithPrompt prompt: String,
+    defaultText: String?, initiatedByFrame frame: WKFrameInfo,
+    completionHandler: @escaping (String?) -> Void
+  ) {
+    presentJSPrompt(
+      on: webView.window, prompt: prompt, defaultText: defaultText,
+      host: frame.securityOrigin.host, completion: completionHandler)
+  }
+
+  func webView(
+    _ webView: WKWebView, runOpenPanelWith parameters: WKOpenPanelParameters,
+    initiatedByFrame frame: WKFrameInfo, completionHandler: @escaping ([URL]?) -> Void
+  ) {
+    presentOpenPanel(on: webView.window, parameters: parameters, completion: completionHandler)
   }
 }
 
@@ -367,81 +1238,306 @@ struct WebViewHost: NSViewRepresentable {
 
 struct BrowserPane: View {
   @ObservedObject var browser: BrowserModel
+  @ObservedObject var panel: SitePanelModel
   @State private var typed = ""
   @FocusState private var editing: Bool
 
-  private let columns = [GridItem(.adaptive(minimum: 168, maximum: 240), spacing: 12)]
+  init(browser: BrowserModel) {
+    self.browser = browser
+    self.panel = browser.panel
+  }
+
+  private let columns = [GridItem(.adaptive(minimum: 184, maximum: 250), spacing: 12)]
+
+  private var detectedBadgeCount: Int {
+    if !panel.media.isEmpty { return panel.media.count }
+    if !panel.items.isEmpty { return panel.items.count }
+    return 0
+  }
+
+  private var canGoBackNow: Bool {
+    browser.canGoBack || (browser.showingStartPage && browser.webView?.url != nil)
+  }
+
+  private var windowTitle: String {
+    if browser.showingStartPage { return "浏览器" }
+    if !browser.pageTitle.isEmpty { return browser.pageTitle }
+    return browser.site?.label ?? "浏览器"
+  }
 
   var body: some View {
     VStack(spacing: 0) {
-      HStack(spacing: 8) {
-        Button(action: browser.back) { Image(systemName: "chevron.left") }
-          .disabled(!browser.canGoBack).help("后退")
-        Button(action: browser.forward) { Image(systemName: "chevron.right") }
-          .disabled(!browser.canGoForward).help("前进")
-        Button(action: { browser.isLoading ? browser.stop() : browser.reload() }) {
-          Image(systemName: browser.isLoading ? "xmark" : "arrow.clockwise")
-        }.disabled(browser.webView == nil).help(browser.isLoading ? "停止" : "刷新")
-        TextField("输入网址，例如 www.xiaohongshu.com", text: $typed)
-          .textFieldStyle(.roundedBorder).focused($editing)
-          .onSubmit { browser.go(typed) }
-        Menu {
-          ForEach(platformShortcuts) { shortcut in
-            Button {
-              browser.openFavorites(shortcut)
-            } label: {
-              Label("\(shortcut.label) · \(shortcut.favoritesLabel)", systemImage: shortcut.symbol)
-            }
-          }
-        } label: {
-          Label("收藏夹", systemImage: "star.square.on.square")
-        }
-        .menuStyle(.borderlessButton)
-        .fixedSize()
-        .help("快捷跳转到各平台收藏夹 / 书签")
-        Button {
-          Task { await browser.downloadCurrentPage() }
-        } label: {
-          Label("下载此页", systemImage: "arrow.down.circle")
-        }
-        .buttonStyle(.bordered)
-        .controlSize(.small)
-        .disabled(browser.webView?.url?.scheme != "https")
-        .help("直接下载当前页面对应的视频或图文")
-        signInBadge
-      }
-      .buttonStyle(.borderless).padding(.horizontal, 12).padding(.vertical, 8)
-      .onChange(of: browser.address, initial: true) { _, value in if !editing { typed = value } }
-      if !browser.notice.isEmpty {
-        HStack(spacing: 10) {
-          Text(browser.notice).font(.callout).foregroundStyle(.secondary)
-          Spacer()
-          if browser.showOpenDownloads {
-            Button("查看下载") { browser.onOpenDownloads?() }
-              .buttonStyle(.link).controlSize(.small)
-          }
-          Button {
-            browser.notice = ""
-            browser.showOpenDownloads = false
-          } label: {
-            Image(systemName: "xmark")
-          }
-          .buttonStyle(.plain).foregroundStyle(.secondary)
-        }
-        .padding(.horizontal, 12).padding(.bottom, 6)
-      }
+      toolbarRow
+      progressBar
+      bookmarksBar
+      statusBanner
       Divider()
       HStack(spacing: 0) {
-        if let view = browser.webView {
+        if !browser.showingStartPage, let view = browser.webView {
           WebViewHost(view: view)
         } else {
           startPage
         }
-        Divider()
-        SitePanel(panel: browser.panel).frame(width: 360)
+        if browser.showSidePanel {
+          Divider()
+          SitePanel(panel: panel).frame(width: 344)
+        }
       }
     }
-    .navigationTitle(browser.site?.label ?? "浏览器")
+    .navigationTitle(windowTitle)
+    .onChange(of: browser.address, initial: true) { _, value in
+      if !editing && !browser.showingStartPage { typed = value }
+    }
+    .onChange(of: browser.showingStartPage) { _, onStart in
+      if onStart {
+        editing = false
+        typed = ""
+      } else if !editing {
+        typed = browser.address
+      }
+    }
+    .onChange(of: editing) { _, isEditing in
+      if !isEditing && !browser.showingStartPage && typed != browser.address {
+        typed = browser.address
+      }
+    }
+    .onChange(of: browser.focusAddressToken) { _, _ in
+      editing = true
+      DispatchQueue.main.async {
+        NSApp.sendAction(#selector(NSText.selectAll(_:)), to: nil, from: nil)
+      }
+    }
+  }
+
+  private var toolbarRow: some View {
+    HStack(spacing: 8) {
+      HStack(spacing: 4) {
+        Button(action: browser.back) { Image(systemName: "chevron.left") }
+          .disabled(!canGoBackNow).help("后退 (⌘[)")
+        Button(action: browser.forward) { Image(systemName: "chevron.right") }
+          .disabled(!browser.canGoForward || browser.showingStartPage).help("前进 (⌘])")
+        Button(action: { browser.isLoading ? browser.stop() : browser.reload() }) {
+          Image(systemName: browser.isLoading ? "xmark" : "arrow.clockwise")
+        }
+        .disabled(browser.showingStartPage || browser.webView == nil)
+        .help(browser.isLoading ? "停止加载" : "刷新 (⌘R)")
+        Button(action: browser.goHome) { Image(systemName: "house") }
+          .foregroundStyle(browser.showingStartPage ? fetchyAccent : .primary)
+          .help("起始页 (⇧⌘H)")
+      }
+      .buttonStyle(.borderless)
+
+      HStack(spacing: 6) {
+        Image(systemName: addressLeadingSymbol)
+          .font(.caption)
+          .foregroundStyle(.secondary)
+        TextField("输入网址或搜索关键词", text: $typed)
+          .textFieldStyle(.plain)
+          .focused($editing)
+          .onSubmit {
+            let value = typed
+            browser.go(value)
+            editing = false
+          }
+        if !typed.isEmpty {
+          Button {
+            typed = ""
+            editing = true
+          } label: {
+            Image(systemName: "xmark.circle.fill")
+              .font(.caption)
+              .foregroundStyle(.secondary)
+          }
+          .buttonStyle(.plain)
+          .help("清空地址栏")
+        }
+      }
+      .padding(.horizontal, 10).padding(.vertical, 5)
+      .background(
+        RoundedRectangle(cornerRadius: 7, style: .continuous)
+          .fill(Color(nsColor: .textBackgroundColor))
+      )
+      .overlay(
+        RoundedRectangle(cornerRadius: 7, style: .continuous)
+          .strokeBorder(
+            editing ? fetchyAccent.opacity(0.75) : Color(nsColor: .separatorColor).opacity(0.65),
+            lineWidth: editing ? 1.5 : 1)
+      )
+
+      if browser.pageZoom != 1.0 && !browser.showingStartPage {
+        Button("\(Int((browser.pageZoom * 100).rounded()))%") {
+          browser.resetZoom()
+        }
+        .buttonStyle(.bordered)
+        .controlSize(.mini)
+        .help("重置页面缩放 (⌘0)")
+      }
+
+      Button {
+        Task { await browser.downloadCurrentPage() }
+      } label: {
+        Label("下载此页", systemImage: "arrow.down.circle")
+      }
+      .buttonStyle(.bordered)
+      .controlSize(.small)
+      .disabled(browser.currentUrl == nil)
+      .help("直接下载当前页面对应的视频或图文")
+
+      HStack(spacing: 6) {
+        Button(action: browser.copyCurrentLink) {
+          Image(systemName: browser.copiedLink ? "checkmark" : "link")
+            .foregroundStyle(browser.copiedLink ? Color.green : Color.primary)
+        }
+        .disabled(browser.currentUrl == nil)
+        .help(browser.copiedLink ? "已复制链接" : "复制当前链接")
+
+        Button(action: browser.openInDefaultBrowser) {
+          Image(systemName: "arrow.up.forward.app")
+        }
+        .disabled(browser.currentUrl == nil)
+        .help("在默认浏览器中打开")
+      }
+      .buttonStyle(.borderless)
+
+      signInBadge
+
+      Button(action: browser.toggleSidePanel) {
+        HStack(spacing: 4) {
+          Image(systemName: "sidebar.right")
+          if detectedBadgeCount > 0 {
+            Text("\(detectedBadgeCount)")
+              .font(.caption2.weight(.semibold)).monospacedDigit()
+              .foregroundStyle(.white)
+              .padding(.horizontal, 5).padding(.vertical, 1)
+              .background(Capsule().fill(fetchyAccent))
+          }
+        }
+        .foregroundStyle(browser.showSidePanel ? fetchyAccent : .primary)
+      }
+      .buttonStyle(.bordered)
+      .controlSize(.small)
+      .help(browser.showSidePanel ? "收起右侧媒体栏 (⌘\\)" : "展开右侧媒体栏 (⌘\\)")
+    }
+    .padding(.horizontal, 12).padding(.vertical, 7)
+  }
+
+  private var addressLeadingSymbol: String {
+    if browser.showingStartPage { return "magnifyingglass" }
+    if browser.currentUrl?.scheme == "https" { return "lock.fill" }
+    return "globe"
+  }
+
+  @ViewBuilder private var progressBar: some View {
+    if browser.isLoading && !browser.showingStartPage {
+      GeometryReader { geo in
+        Rectangle()
+          .fill(fetchyAccent)
+          .frame(width: max(18, geo.size.width * min(1.0, max(0.06, browser.estimatedProgress))))
+          .animation(.easeOut(duration: 0.18), value: browser.estimatedProgress)
+      }
+      .frame(height: 2)
+    } else {
+      Color.clear.frame(height: 0)
+    }
+  }
+
+  private var bookmarksBar: some View {
+    VStack(spacing: 0) {
+      Divider().opacity(0.6)
+      ScrollView(.horizontal, showsIndicators: false) {
+        HStack(spacing: 6) {
+          ForEach(platformShortcuts) { shortcut in
+            let active = !browser.showingStartPage && browser.site?.site == shortcut.site
+            Button {
+              browser.openFavorites(shortcut)
+            } label: {
+              HStack(spacing: 4) {
+                Image(systemName: shortcut.symbol)
+                  .font(.caption2)
+                Text(shortcut.label)
+                  .font(.caption.weight(active ? .semibold : .regular))
+              }
+              .foregroundStyle(active ? fetchyAccent : .primary)
+              .padding(.horizontal, 8).padding(.vertical, 4)
+              .background(
+                Capsule().fill(
+                  active ? fetchyAccent.opacity(0.14) : Color.primary.opacity(0.05))
+              )
+            }
+            .buttonStyle(.plain)
+            .help("打开 \(shortcut.label) · \(shortcut.favoritesLabel)")
+            .contextMenu {
+              Button("打开\(shortcut.favoritesLabel)") {
+                browser.openFavorites(shortcut)
+              }
+              Button("打开\(shortcut.label)主页") {
+                browser.go(shortcut.homeUrl)
+              }
+              Divider()
+              Button("在默认浏览器打开") {
+                if let url = URL(string: shortcut.url) { NSWorkspace.shared.open(url) }
+              }
+            }
+          }
+        }
+        .padding(.horizontal, 12).padding(.vertical, 5)
+      }
+      .background(.bar)
+    }
+  }
+
+  @ViewBuilder private var statusBanner: some View {
+    if let errorText = browser.loadError {
+      HStack(spacing: 10) {
+        Image(systemName: "exclamationmark.triangle.fill")
+          .foregroundStyle(.orange)
+        Text("页面加载失败：\(errorText)")
+          .font(.callout)
+          .lineLimit(2)
+        Spacer()
+        Button("重试") { browser.reload() }
+          .controlSize(.small)
+        if browser.currentUrl != nil {
+          Button("默认浏览器打开") { browser.openInDefaultBrowser() }
+            .controlSize(.small)
+        }
+        Button {
+          browser.loadError = nil
+        } label: {
+          Image(systemName: "xmark").font(.caption)
+        }
+        .buttonStyle(.plain).foregroundStyle(.secondary)
+      }
+      .padding(.horizontal, 12).padding(.vertical, 7)
+      .background(Color.orange.opacity(0.1))
+    } else if !browser.notice.isEmpty {
+      HStack(spacing: 10) {
+        Text(browser.notice).font(.callout).foregroundStyle(.secondary)
+        Spacer()
+        if browser.showOpenDownloads {
+          Button("查看下载") { browser.onOpenDownloads?() }
+            .buttonStyle(.link).controlSize(.small)
+        }
+        if browser.showOpenDownloadsFolder {
+          Button("打开下载文件夹") { browser.downloads?.openDownloadsFolder() }
+            .buttonStyle(.link).controlSize(.small)
+        }
+        Button {
+          if browser.pendingFavoritesShortcut != nil {
+            browser.cancelPendingFavorites(clearNotice: true)
+          } else {
+            browser.notice = ""
+            browser.showOpenDownloads = false
+            browser.showOpenDownloadsFolder = false
+          }
+        } label: {
+          Image(systemName: "xmark").font(.caption)
+        }
+        .buttonStyle(.plain).foregroundStyle(.secondary)
+      }
+      .padding(.horizontal, 12).padding(.vertical, 6)
+      .background(Color.primary.opacity(0.035))
+    }
   }
 
   var startPage: some View {
@@ -449,7 +1545,7 @@ struct BrowserPane: View {
       VStack(alignment: .leading, spacing: 18) {
         VStack(alignment: .leading, spacing: 6) {
           Text("快捷打开收藏夹").font(.title2.bold())
-          Text("点击任意平台直接进入收藏夹/书签；也可以在上方地址栏打开任意网页，播放视频时右侧会自动嗅探媒体。")
+          Text("点击任意平台直接进入收藏夹/书签；也可以在上方地址栏输入网址或关键词，播放任意网页视频时右侧栏会自动嗅探媒体。")
             .font(.callout).foregroundStyle(.secondary)
         }
         LazyVGrid(columns: columns, alignment: .leading, spacing: 12) {
@@ -480,24 +1576,28 @@ struct BrowserPane: View {
               )
             }
             .buttonStyle(.plain)
+            .contextMenu {
+              Button("打开\(shortcut.favoritesLabel)") { browser.openFavorites(shortcut) }
+              Button("打开\(shortcut.label)主页") { browser.go(shortcut.homeUrl) }
+            }
           }
         }
       }
       .padding(28)
-      .frame(maxWidth: 780, alignment: .leading)
+      .frame(maxWidth: 820, alignment: .leading)
     }
     .frame(maxWidth: .infinity, maxHeight: .infinity)
   }
 
   @ViewBuilder var signInBadge: some View {
-    if let site = browser.site {
+    if !browser.showingStartPage, let site = browser.site {
       let text =
         browser.signedIn == true ? "已登录" : browser.signedIn == false ? "未登录" : "检查中"
       Label(
         site.label + " · " + text,
         systemImage: browser.signedIn == true ? "checkmark.seal" : "person"
       )
-      .font(.callout).foregroundStyle(browser.signedIn == true ? Color.green : Color.secondary)
+      .font(.caption).foregroundStyle(browser.signedIn == true ? Color.green : Color.secondary)
       .lineLimit(1).help("登录状态按本站在 Fetchy 里的登录信息判断")
     }
   }
@@ -747,7 +1847,7 @@ private func normalizedPostReadUrl(_ raw: String) -> String {
   }
 
   private func inspect(_ mine: Int) async {
-    guard let browser, let url = browser.webView?.url, url.scheme == "https" else { return }
+    guard let browser, let url = browser.webView?.url, ["https", "http"].contains(url.scheme ?? "") else { return }
     origin = (url.scheme ?? "") + "://" + (url.host ?? "")
     // Continuously sniff playable media on ANY page (never gated on collection/post detection).
     startMediaSniff(mine)

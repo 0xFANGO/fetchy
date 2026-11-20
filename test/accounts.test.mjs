@@ -240,3 +240,58 @@ test('listing every site records each sign-in once, without losing concurrent up
 	const after = await accounts.listAccounts({readCookies: async () => []});
 	assert.ok(after.filter((row) => row.verified).every((row) => row.status === 'expired'));
 });
+
+test('importBrowserCookies validates browser, filters to site hosts, clears expired state, and syncs status', async () => {
+	await assert.rejects(() => accounts.importBrowserCookies('x', 'netscape'), {
+		code: 'invalid_options',
+	});
+
+	await assert.rejects(
+		() =>
+			accounts.importBrowserCookies('x', 'chrome', {
+				extractCookies: async () => [],
+				writeCookies: async () => {},
+			}),
+		{code: 'auth_required'},
+	);
+
+	// Guest-only cookies without session cookie are rejected for verified sites
+	await assert.rejects(
+		() =>
+			accounts.importBrowserCookies('x', 'chrome', {
+				extractCookies: async () => [
+					{name: 'guest_id', value: 'v1', domain: '.x.com', path: '/', secure: true},
+				],
+				writeCookies: async () => {},
+			}),
+		{code: 'auth_required'},
+	);
+
+	// Mark X expired first, then import valid Chrome cookies (with an unrelated domain mixed in)
+	const xAccount = await accounts.findAccount('x');
+	await accounts.markExpired(xAccount, {
+		readCookies: async () => [{name: 'auth_token', value: 'old', domain: '.x.com', path: '/'}],
+	});
+	const written = [];
+	const imported = await accounts.importBrowserCookies('x', 'chrome', {
+		extractCookies: async (_browser, hosts) => {
+			assert.ok(hosts.includes('x.com'));
+			return [
+				{name: 'auth_token', value: 'fresh-token', domain: '.x.com', path: '/', secure: true},
+				{name: 'SID', value: 'should-not-leak', domain: '.google.com', path: '/', secure: true},
+			];
+		},
+		writeCookies: async (_account, cookies) => {
+			written.push(...cookies);
+		},
+		readCookies: async () => written,
+	});
+	assert.equal(imported.imported, true);
+	assert.equal(imported.site, 'x');
+	assert.equal(imported.count, 1);
+	assert.equal(imported.status, 'logged_in');
+	assert.deepEqual(
+		written.map((c) => c.name),
+		['auth_token'],
+	);
+});

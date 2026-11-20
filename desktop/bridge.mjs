@@ -160,6 +160,22 @@ try {
 			result = {site, label, url};
 			break;
 		}
+		case 'import-cookies': {
+			const {importBrowserCookies} = await import('../bin/accounts.mjs');
+			if (args.includes('--inline')) {
+				let captured = null;
+				result = await importBrowserCookies(args[0], args[1] || 'chrome', {
+					writeCookies: async (account, cookies) => {
+						captured = {profile: account.profile, hosts: account.hosts, cookies};
+					},
+					readCookies: async () => captured?.cookies ?? [],
+				});
+				result = {...result, ...captured};
+			} else {
+				result = await importBrowserCookies(args[0], args[1] || 'chrome');
+			}
+			break;
+		}
 		case 'start': {
 			// {manifest, selected, feed} from the app's side column.
 			const payload = JSON.parse(await readStdin(48 * 1024 ** 2));
@@ -219,11 +235,12 @@ try {
 	}
 	console.log(JSON.stringify(result));
 } catch (error) {
+	const known = typeof error?.code === 'string' && !error.code.startsWith('ERR_') && error.message;
 	console.error(
 		JSON.stringify({
 			error: {
-				code: error.code ?? 'unavailable',
-				message: '无法读取收藏任务或清单，请检查服务和清单格式后重试。',
+				code: error?.code ?? 'unavailable',
+				message: known ? error.message : '无法读取收藏任务或清单，请检查服务和清单格式后重试。',
 			},
 		}),
 	);

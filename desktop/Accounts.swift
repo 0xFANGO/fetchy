@@ -32,6 +32,14 @@ struct AccountRow: Identifiable {
   }
 }
 
+private let externalBrowsers: [(id: String, label: String)] = [
+  ("chrome", "Chrome"),
+  ("safari", "Safari"),
+  ("edge", "Edge"),
+  ("firefox", "Firefox"),
+  ("brave", "Brave"),
+]
+
 /// One row per site. Status comes from `fetchy accounts`, which reads each site's own cookies.
 struct AccountsPane: View {
   @EnvironmentObject var app: AppState
@@ -39,13 +47,15 @@ struct AccountsPane: View {
   @State private var rows: [AccountRow] = []
   @State private var newSite = ""
   @State private var notice = ""
+  @State private var noticeIsError = false
   @State private var busy = false
 
   var body: some View {
     VStack(alignment: .leading, spacing: 14) {
       HStack {
-        Text("在这里登录一次，桌面端、浏览器扩展和命令行都会复用同一份登录态。")
+        Text("在这里登录一次，桌面端、浏览器扩展和命令行都会复用同一份登录态。如遇到复杂验证，也可从 Chrome / Safari 导入登录态。")
           .foregroundStyle(.secondary)
+          .fixedSize(horizontal: false, vertical: true)
         Spacer()
         Button {
           Task { await refresh() }
@@ -54,9 +64,33 @@ struct AccountsPane: View {
         }
         .controlSize(.small).disabled(busy)
       }
+      if !notice.isEmpty {
+        HStack(spacing: 8) {
+          Image(systemName: noticeIsError ? "exclamationmark.triangle" : "checkmark.circle")
+            .foregroundStyle(noticeIsError ? .orange : .green)
+          Text(notice)
+            .font(.callout)
+            .foregroundStyle(noticeIsError ? .primary : .secondary)
+            .fixedSize(horizontal: false, vertical: true)
+          Spacer()
+          Button {
+            notice = ""
+            noticeIsError = false
+          } label: {
+            Image(systemName: "xmark").font(.caption)
+          }
+          .buttonStyle(.plain)
+          .foregroundStyle(.secondary)
+        }
+        .padding(.horizontal, 12).padding(.vertical, 8)
+        .background(
+          RoundedRectangle(cornerRadius: 8, style: .continuous)
+            .fill(noticeIsError ? Color.orange.opacity(0.1) : Color.primary.opacity(0.05))
+        )
+      }
       ScrollViewReader { proxy in
         List(rows) { row in
-          HStack(spacing: 12) {
+          HStack(spacing: 10) {
             VStack(alignment: .leading, spacing: 2) {
               Text(row.label).font(.headline)
               Text(row.url).font(.caption).foregroundStyle(.secondary)
@@ -73,6 +107,16 @@ struct AccountsPane: View {
               app.open(row.url, signingIn: true)
             }
             .controlSize(.small)
+            Menu("导入登录态") {
+              ForEach(externalBrowsers, id: \.id) { browser in
+                Button("从 \(browser.label) 导入") {
+                  Task { await importFromBrowser(row, browser: browser.id, label: browser.label) }
+                }
+              }
+            }
+            .controlSize(.small)
+            .fixedSize()
+            .disabled(busy)
             if row.status != "logged_out" {
               Button("退出登录") { Task { await logout(row) } }
                 .controlSize(.small).disabled(busy)
@@ -93,7 +137,6 @@ struct AccountsPane: View {
         Button("添加") { Task { await add() } }
           .disabled(busy || newSite.trimmingCharacters(in: .whitespaces).isEmpty)
       }
-      if !notice.isEmpty { Text(notice).foregroundStyle(.secondary) }
     }
     .padding(22)
     .navigationTitle("账号")
@@ -105,8 +148,42 @@ struct AccountsPane: View {
     do {
       let result = try await commands.run(["accounts"]) as? [[String: Any]] ?? []
       rows = result.compactMap(AccountRow.init)
-      notice = ""
-    } catch { notice = error.localizedDescription }
+    } catch {
+      notice = error.localizedDescription
+      noticeIsError = true
+    }
+  }
+
+  private func importFromBrowser(_ row: AccountRow, browser: String, label: String) async {
+    busy = true
+    defer { busy = false }
+    notice = "正在从 \(label) 读取 \(row.label) 登录态…"
+    noticeIsError = false
+    do {
+      let result =
+        try await commands.run(["import-cookies", row.site, browser, "--inline"], bridge: true)
+        as? [String: Any]
+      var count = result?["count"] as? Int ?? 0
+      if let rawProfile = result?["profile"] as? String,
+        let profile = UUID(uuidString: rawProfile),
+        let hosts = result?["hosts"] as? [String],
+        let cookieRows = result?["cookies"] as? [[String: Any]]
+      {
+        count = await applyImportedCookies(cookieRows, profile: profile, hosts: Set(hosts))
+      }
+      if let info = try? await app.browser.siteInfo(row.url),
+        app.browser.isViewing(hosts: Set(info.hosts))
+      {
+        app.browser.reload()
+        app.browser.refreshSignIn()
+      }
+      await refresh()
+      notice = "已从 \(label) 导入 \(row.label) 登录态（\(count) 条 Cookie）。"
+      noticeIsError = false
+    } catch {
+      notice = error.localizedDescription
+      noticeIsError = true
+    }
   }
 
   private func logout(_ row: AccountRow) async {
@@ -114,18 +191,20 @@ struct AccountsPane: View {
     defer { busy = false }
     do {
       let info = try await app.browser.siteInfo(row.url)
-      await withCheckedContinuation { (done: CheckedContinuation<Void, Never>) in
-        WKWebsiteDataStore(forIdentifier: info.profile).removeData(
-          ofTypes: WKWebsiteDataStore.allWebsiteDataTypes(), modifiedSince: .distantPast
-        ) { done.resume() }
-      }
+      let hostSet = Set(info.hosts)
+      await clearSiteData(hosts: hostSet, legacyProfile: info.profile)
       _ = try await commands.run(["logout", row.site])
-      if app.browser.site?.profile == info.profile {
+      if app.browser.isViewing(hosts: hostSet) {
         app.browser.reload()
         app.browser.refreshSignIn()
       }
       await refresh()
-    } catch { notice = error.localizedDescription }
+      notice = "已退出 \(row.label)，其他站点登录态不受影响。"
+      noticeIsError = false
+    } catch {
+      notice = error.localizedDescription
+      noticeIsError = true
+    }
   }
 
   private func add() async {
@@ -139,8 +218,13 @@ struct AccountsPane: View {
         let site = row["site"] as? String
       else { throw FetchyFailure(text: "无法添加这个网站。") }
       newSite = ""
+      notice = ""
+      noticeIsError = false
       await refresh()
       app.focusedSite = site
-    } catch { notice = error.localizedDescription }
+    } catch {
+      notice = error.localizedDescription
+      noticeIsError = true
+    }
   }
 }

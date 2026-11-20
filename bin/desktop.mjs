@@ -140,7 +140,9 @@ export async function logout(input) {
 	const {findAccount, forgetAccount} = await import('./accounts.mjs');
 	const account = await findAccount(input);
 	const binary = path.join(await appBundle(), 'Contents/MacOS/Fetchy');
-	const result = await runProcess(binary, ['logout', account.profile], {timeoutMs: 30000});
+	const result = await runProcess(binary, ['logout', account.profile, account.hosts.join(',')], {
+		timeoutMs: 30000,
+	});
 	if (result.code !== 0)
 		throw new EngineError('browser_unavailable', '无法清除本站的 Fetchy 会话。');
 	await forgetAccount(account);

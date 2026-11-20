@@ -11,6 +11,7 @@ import {
 import {captureSocialCollection} from '../extension/collection-page.mjs';
 import {captureSocialPost} from '../extension/social-post.mjs';
 import {isCollectionRoute, readPostPage} from '../extension/archive-source.mjs';
+import {installBrowserCompat} from '../src/browser-compat.mjs';
 import {installMediaSniffer} from '../src/browser-sniffer.mjs';
 import {runProcess} from '../src/process.mjs';
 
@@ -83,10 +84,22 @@ try {
 	function findFavoritesUrl() {
 		const host = location.hostname.replace(/^www\./, '');
 		if (host === 'xiaohongshu.com' || host === 'rednote.com') {
-			let uid =
-				window.__INITIAL_STATE__?.user?.userInfo?.userId ||
-				window.__INITIAL_STATE__?.user?.userPageData?.basicInfo?.userId ||
-				'';
+			const unwrap = (v) => (v && v.__v_isRef === true ? v.value : v);
+			const app =
+				document.querySelector('[data-v-app]')?.__vue_app__ ??
+				document.querySelector('#app')?.__vue_app__;
+			const liveUser = unwrap(app?.config?.globalProperties?.$pinia?.state?.value?.user);
+			const initUser = unwrap(window.__INITIAL_STATE__?.user);
+			const liveInfo = unwrap(liveUser?.userInfo);
+			const initInfo = unwrap(initUser?.userInfo);
+			const guest =
+				liveInfo?.guest === true || (liveInfo?.guest === undefined && initInfo?.guest === true);
+			let uid = guest
+				? ''
+				: liveInfo?.userId ||
+					initInfo?.userId ||
+					unwrap(initUser?.userPageData)?.basicInfo?.userId ||
+					'';
 			if (!uid) {
 				for (const a of document.querySelectorAll('a[href*="/user/profile/"]')) {
 					const m = /\/user\/profile\/([a-f0-9]{16,32})/i.exec(a.getAttribute('href') || '');
@@ -174,6 +187,10 @@ try {
 	await writeFile(
 		path.join(resources, 'media-sniffer.js'),
 		`(${installMediaSniffer.toString()})();\n`,
+	);
+	await writeFile(
+		path.join(resources, 'browser-compat.js'),
+		`(${installBrowserCompat.toString()})();\n`,
 	);
 	await cp(path.join(root, 'package.json'), path.join(app, 'package.json'));
 	const portable = process.argv.includes('--portable');

@@ -169,13 +169,32 @@ struct DownloadsHomePane: View {
   @FocusState private var gridFocused: Bool
   private let commands = LocalCommands()
 
-  /// Detect a pasted link even when wrapped in Xiaohongshu / Douyin share copy.
+  /// Detect a pasted link (with or without https://) even when wrapped in share copy.
   private var detectedLink: String? {
     let trimmed = text.trimmingCharacters(in: .whitespacesAndNewlines)
     guard !trimmed.isEmpty else { return nil }
-    if let range = trimmed.range(of: #"https?://[^\s<>'"\u3000\uFF0C\u3002\uFF01\uFF1F]+"#, options: .regularExpression) {
+    if let range = trimmed.range(
+      of: #"https?://[^\s<>'"\u3000\uFF0C\u3002\uFF01\uFF1F]+"#,
+      options: .regularExpression
+    ) {
       let candidate = String(trimmed[range])
       if let u = URL(string: candidate), u.host != nil { return candidate }
+    }
+    let knownPlatformPattern =
+      #"(?:^|[\s\u3000\uFF0C\u3002\uFF01\uFF1F])((?:[a-zA-Z0-9-]+\.)*(?:youtube\.com|youtu\.be|bilibili\.com|b23\.tv|xiaohongshu\.com|xhslink\.com|rednote\.com|douyin\.com|iesdouyin\.com|x\.com|twitter\.com|t\.co|instagram\.com|threads\.com|threads\.net|tiktok\.com|zhihu\.com|weibo\.com|kuaishou\.com|vimeo\.com|twitch\.tv|reddit\.com|dailymotion\.com)(?:/[^\s<>'"\u3000\uFF0C\u3002\uFF01\uFF1F]*)?)"#
+    if let regex = try? NSRegularExpression(pattern: knownPlatformPattern, options: .caseInsensitive),
+      let match = regex.firstMatch(in: trimmed, range: NSRange(trimmed.startIndex..., in: trimmed)),
+      let range = Range(match.range(at: 1), in: trimmed)
+    {
+      let candidate = "https://" + String(trimmed[range])
+      if let u = URL(string: candidate), u.host != nil { return candidate }
+    }
+    if !trimmed.contains(where: \.isWhitespace) {
+      let bareUrlPattern = #"^(?:www\.)?[a-zA-Z0-9-]+(?:\.[a-zA-Z0-9-]+)*\.[a-zA-Z]{2,}/[^\s<>'"]+$"#
+      if trimmed.range(of: bareUrlPattern, options: .regularExpression) != nil {
+        let candidate = "https://" + trimmed
+        if let u = URL(string: candidate), u.host != nil { return candidate }
+      }
     }
     return nil
   }

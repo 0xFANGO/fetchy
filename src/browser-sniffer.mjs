@@ -158,10 +158,36 @@ export function installMediaSniffer() {
 		store.set(item.url, item);
 	}
 
+	const JSON_VIDEO_HOST_RE =
+		/(?:^|\.)(?:douyin\.com|iesdouyin\.com|xiaohongshu\.com|rednote\.com)$/i;
+	const JSON_VIDEO_PATH_RE =
+		/(?:\/aweme\/|\/web\/v\d\/|\/api\/sns\/web\/|\/(?:feed|detail|note|collect|favor|item|post))/i;
+	const AUTH_PATH_RE = /(?:login|signin|sign_in|passport|oauth|captcha|verify|account|auth|token)/i;
+	const SNIFFABLE_BODY_MIMES = new Set([
+		'',
+		'text/plain',
+		'application/octet-stream',
+		'application/xml',
+		'text/xml',
+	]);
+
+	function isWhitelistedJsonVideoApi(rawUrl) {
+		const pageHost = String(location?.hostname || '').replace(/^www\./, '');
+		if (!JSON_VIDEO_HOST_RE.test(pageHost)) return false;
+		try {
+			const u = new URL(rawUrl, location.href);
+			if (!JSON_VIDEO_HOST_RE.test(u.hostname)) return false;
+			if (AUTH_PATH_RE.test(u.pathname)) return false;
+			return JSON_VIDEO_PATH_RE.test(u.pathname);
+		} catch {
+			return false;
+		}
+	}
+
 	function extractJsonVideos(text) {
 		if (!text || text.length > 2 * 1024 * 1024) return;
 		const host = location.hostname.replace(/^www\./, '');
-		if (!/(?:douyin\.com|iesdouyin\.com|xiaohongshu\.com|rednote\.com)$/i.test(host)) return;
+		if (!JSON_VIDEO_HOST_RE.test(host)) return;
 		if (!text.includes('url_list') && !text.includes('masterUrl')) return;
 		try {
 			const data = JSON.parse(text);
@@ -267,34 +293,33 @@ export function installMediaSniffer() {
 					const url = res.url || reqUrl;
 					const mime = res.headers?.get('content-type') || '';
 					const size = Number(res.headers?.get('content-length') || 0) || 0;
+					const baseMime = mime.split(';')[0].trim().toLowerCase();
 					const direct = classify(url, mime);
 					if (direct) {
 						record(url, {type: direct, mime, size});
-					} else if (
-						res.ok &&
-						(mime.includes('text') ||
-							mime.includes('xml') ||
-							mime.includes('mpegurl') ||
-							mime.includes('octet-stream') ||
-							mime.includes('json') ||
-							!mime)
-					) {
-						const cloned = res.clone();
-						if (mime.includes('json')) {
-							cloned
+					} else if (res.ok && baseMime.includes('json')) {
+						if (isWhitelistedJsonVideoApi(url) && (size === 0 || size <= 2 * 1024 * 1024)) {
+							res
+								.clone()
 								.text()
 								.then(extractJsonVideos)
 								.catch(() => {});
-						} else if (size === 0 || size <= 512 * 1024) {
-							cloned
-								.text()
-								.then((body) => {
-									const head = body.slice(0, 512);
-									const detected = classify(url, mime, head);
-									if (detected) record(url, {type: detected, mime, size});
-								})
-								.catch(() => {});
 						}
+					} else if (
+						res.ok &&
+						size > 0 &&
+						size <= 1024 * 1024 &&
+						SNIFFABLE_BODY_MIMES.has(baseMime)
+					) {
+						res
+							.clone()
+							.text()
+							.then((body) => {
+								const head = body.slice(0, 512);
+								const detected = classify(url, mime, head);
+								if (detected) record(url, {type: detected, mime, size});
+							})
+							.catch(() => {});
 					}
 				} catch {}
 				return res;
@@ -322,7 +347,8 @@ export function installMediaSniffer() {
 						if (!this.responseType || this.responseType === 'text') {
 							if (typeof this.responseText === 'string') {
 								head = this.responseText.slice(0, 512);
-								if (mime.includes('json')) extractJsonVideos(this.responseText);
+								if (mime.includes('json') && isWhitelistedJsonVideoApi(url))
+									extractJsonVideos(this.responseText);
 							}
 						}
 						const type = classify(url, mime, head);

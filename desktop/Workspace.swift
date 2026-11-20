@@ -161,6 +161,7 @@ struct PlatformShortcut: Identifiable, Hashable {
   let site: String
   let label: String
   let favoritesLabel: String
+  let homeUrl: String
   let url: String
   let symbol: String
   let needsResolve: Bool
@@ -170,31 +171,40 @@ struct PlatformShortcut: Identifiable, Hashable {
 let platformShortcuts: [PlatformShortcut] = [
   PlatformShortcut(
     site: "xiaohongshu", label: "小红书", favoritesLabel: "收藏笔记",
+    homeUrl: "https://www.xiaohongshu.com/explore",
     url: "https://www.xiaohongshu.com/explore", symbol: "bookmark.fill", needsResolve: true),
   PlatformShortcut(
     site: "bilibili", label: "B站", favoritesLabel: "收藏夹",
+    homeUrl: "https://www.bilibili.com/",
     url: "https://space.bilibili.com/", symbol: "star.fill", needsResolve: true),
   PlatformShortcut(
     site: "douyin", label: "抖音", favoritesLabel: "收藏",
+    homeUrl: "https://www.douyin.com/",
     url: "https://www.douyin.com/user/self?showTab=favorite_collection",
     symbol: "music.note", needsResolve: false),
   PlatformShortcut(
     site: "x", label: "X", favoritesLabel: "书签",
+    homeUrl: "https://x.com/",
     url: "https://x.com/i/bookmarks", symbol: "bookmark", needsResolve: false),
   PlatformShortcut(
     site: "youtube", label: "YouTube", favoritesLabel: "播放列表",
+    homeUrl: "https://www.youtube.com/",
     url: "https://www.youtube.com/feed/playlists", symbol: "play.square.stack", needsResolve: false),
   PlatformShortcut(
     site: "zhihu", label: "知乎", favoritesLabel: "收藏夹",
+    homeUrl: "https://www.zhihu.com/",
     url: "https://www.zhihu.com/collections/mine", symbol: "text.book.closed", needsResolve: false),
   PlatformShortcut(
     site: "instagram", label: "Instagram", favoritesLabel: "收藏",
+    homeUrl: "https://www.instagram.com/",
     url: "https://www.instagram.com/", symbol: "camera", needsResolve: true),
   PlatformShortcut(
     site: "threads", label: "Threads", favoritesLabel: "已保存",
+    homeUrl: "https://www.threads.com/",
     url: "https://www.threads.com/saved", symbol: "at", needsResolve: false),
   PlatformShortcut(
     site: "tiktok", label: "TikTok", favoritesLabel: "收藏",
+    homeUrl: "https://www.tiktok.com/",
     url: "https://www.tiktok.com/", symbol: "film", needsResolve: true),
 ]
 

@@ -7,6 +7,7 @@ import test from 'node:test';
 import vm from 'node:vm';
 import {advanceArchivePage, captureArchivePage} from '../extension/capture-page.mjs';
 import {LibraryBridge} from '../native/library-bridge.mjs';
+import {installBrowserCompat} from '../src/browser-compat.mjs';
 import {installMediaSniffer} from '../src/browser-sniffer.mjs';
 import {looseJson, normalizeXiaohongshuPostUrl} from '../src/library/post-pages.mjs';
 import {
@@ -622,4 +623,135 @@ test('advanceArchivePage falls back to document.scrollingElement when inner scro
 	});
 	assert.equal(res.before, 0);
 	assert.equal(res.position, 560);
+});
+
+test('installMediaSniffer never clones JSON or streaming responses on unrelated/auth endpoints', async () => {
+	const clonedUrls = [];
+	const mockWindow = {
+		top: null,
+		addEventListener() {},
+		async fetch(url, opts = {}) {
+			const headers = new Map(Object.entries(opts.headers || {}));
+			return {
+				ok: true,
+				url,
+				headers,
+				clone() {
+					clonedUrls.push(url);
+					return {text: async () => '{}'};
+				},
+			};
+		},
+	};
+	mockWindow.top = mockWindow;
+
+	const prev = {
+		window: globalThis.window,
+		document: globalThis.document,
+		location: globalThis.location,
+		performance: globalThis.performance,
+		PerformanceObserver: globalThis.PerformanceObserver,
+		XMLHttpRequest: globalThis.XMLHttpRequest,
+		setInterval: globalThis.setInterval,
+	};
+	try {
+		globalThis.window = mockWindow;
+		globalThis.location = {href: 'https://x.com/i/flow/login', hostname: 'x.com'};
+		globalThis.document = {
+			title: 'Log in to X',
+			querySelectorAll: () => [],
+			addEventListener() {},
+		};
+		globalThis.performance = {getEntriesByType: () => []};
+		globalThis.PerformanceObserver = class {
+			observe() {}
+		};
+		globalThis.XMLHttpRequest = undefined;
+		globalThis.setInterval = () => 1;
+
+		installMediaSniffer();
+
+		// Unrelated JSON (Google/X login, GraphQL), missing Content-Length, oversized text, HTML
+		await mockWindow.fetch('https://accounts.google.com/v3/signin/_/AccountsSignInUi/data', {
+			headers: {'content-type': 'application/json', 'content-length': '2048'},
+		});
+		await mockWindow.fetch('https://x.com/i/api/graphql/abc/TweetDetail', {
+			headers: {'content-type': 'application/json', 'content-length': '4096'},
+		});
+		await mockWindow.fetch('https://x.com/i/events/stream', {
+			headers: {'content-type': 'text/plain'},
+		});
+		await mockWindow.fetch('https://x.com/assets/large.txt', {
+			headers: {'content-type': 'text/plain', 'content-length': String(2 * 1024 * 1024)},
+		});
+		await mockWindow.fetch('https://x.com/home', {
+			headers: {'content-type': 'text/html; charset=utf-8', 'content-length': '1024'},
+		});
+		// Explicit 0 < Content-Length <= 1MB plain text IS allowed to be inspected for HLS/DASH
+		await mockWindow.fetch('https://cdn.example.com/playlist/probe', {
+			headers: {'content-type': 'text/plain', 'content-length': '256'},
+		});
+		await new Promise((r) => setTimeout(r, 10));
+
+		assert.deepEqual(clonedUrls, ['https://cdn.example.com/playlist/probe']);
+	} finally {
+		Object.assign(globalThis, prev);
+	}
+});
+
+test('installBrowserCompat disables unavailable platform passkeys while preserving non-publicKey credentials', async () => {
+	let passthroughCalled = false;
+	class FakePublicKeyCredential {
+		static async isUserVerifyingPlatformAuthenticatorAvailable() {
+			return true;
+		}
+		static async isConditionalMediationAvailable() {
+			return true;
+		}
+		static async getClientCapabilities() {
+			return {
+				conditionalGet: true,
+				userVerifyingPlatformAuthenticator: true,
+				hybridTransport: true,
+			};
+		}
+	}
+	const fakeCredentials = {
+		async get(options) {
+			passthroughCalled = options?.password === true;
+			return {type: 'password'};
+		},
+		async create() {
+			return {type: 'password'};
+		},
+	};
+	const sandbox = {
+		DOMException,
+		PublicKeyCredential: FakePublicKeyCredential,
+		navigator: {credentials: fakeCredentials},
+	};
+	sandbox.window = sandbox;
+	vm.runInNewContext('(' + installBrowserCompat.toString() + ')()', sandbox);
+
+	assert.equal(
+		await sandbox.PublicKeyCredential.isUserVerifyingPlatformAuthenticatorAvailable(),
+		false,
+	);
+	assert.equal(await sandbox.PublicKeyCredential.isConditionalMediationAvailable(), false);
+	const caps = await sandbox.PublicKeyCredential.getClientCapabilities();
+	assert.equal(caps.userVerifyingPlatformAuthenticator, false);
+	assert.equal(caps.conditionalGet, false);
+	assert.equal(caps.hybridTransport, false);
+
+	await assert.rejects(
+		() => sandbox.navigator.credentials.get({publicKey: {challenge: new Uint8Array(8)}}),
+		{name: 'NotAllowedError'},
+	);
+	await assert.rejects(
+		() => sandbox.navigator.credentials.create({publicKey: {challenge: new Uint8Array(8)}}),
+		{name: 'NotAllowedError'},
+	);
+	const res = await sandbox.navigator.credentials.get({password: true});
+	assert.equal(passthroughCalled, true);
+	assert.equal(res.type, 'password');
 });

@@ -2,7 +2,9 @@ import {createHash} from 'node:crypto';
 import {mkdtemp, rm, writeFile} from 'node:fs/promises';
 import {tmpdir} from 'node:os';
 import path from 'node:path';
+import {fileURLToPath} from 'node:url';
 import {dataDirectory, privateDirectory, readJson, writeJson} from '../native/settings.mjs';
+import {findExecutable, ytDlpCommand} from '../src/dependencies.mjs';
 import {EngineError, runProcess} from '../src/process.mjs';
 import {appBundle, sessionTarget} from './desktop.mjs';
 import xiaohongshu, {isRednoteHost} from '../src/sites/xiaohongshu.mjs';
@@ -338,4 +340,137 @@ export async function siteCookieHeader(url, {readCookies = readSiteCookies} = {}
 	} catch {
 		return '';
 	}
+}
+
+export const IMPORT_BROWSERS = [
+	'chrome',
+	'safari',
+	'edge',
+	'firefox',
+	'brave',
+	'chromium',
+	'vivaldi',
+	'opera',
+];
+const BROWSER_LABELS = {
+	chrome: 'Chrome',
+	safari: 'Safari',
+	edge: 'Edge',
+	firefox: 'Firefox',
+	brave: 'Brave',
+	chromium: 'Chromium',
+	vivaldi: 'Vivaldi',
+	opera: 'Opera',
+};
+
+function findPythonForCookies() {
+	const ytdlp = ytDlpCommand();
+	if (path.isAbsolute(ytdlp)) {
+		const dir = path.dirname(ytdlp);
+		const venvPy =
+			findExecutable(path.join(dir, 'python3')) ?? findExecutable(path.join(dir, 'python'));
+		if (venvPy) return venvPy;
+	}
+	return findExecutable('python3') ?? 'python3';
+}
+
+export async function extractExternalBrowserCookies(browser, hosts) {
+	const script = fileURLToPath(new URL('../src/browser-cookies.py', import.meta.url));
+	const python = findPythonForCookies();
+	const result = await runProcess(python, [script, browser, hosts.join(',')], {
+		timeoutMs: 30000,
+		maxOutputBytes: 4 * 1024 * 1024,
+	});
+	let payload;
+	try {
+		payload = JSON.parse(result.stdout);
+	} catch {}
+	if (result.code !== 0 || !payload?.ok || !Array.isArray(payload.cookies)) {
+		const code = typeof payload?.error === 'string' ? payload.error : 'unavailable';
+		const message =
+			typeof payload?.message === 'string' && payload.message
+				? payload.message
+				: `无法从 ${BROWSER_LABELS[browser] ?? browser} 读取登录信息。`;
+		throw new EngineError(code, message);
+	}
+	return payload.cookies.filter(
+		(c) =>
+			typeof c?.name === 'string' &&
+			typeof c.value === 'string' &&
+			typeof c.domain === 'string' &&
+			hosts.some((h) => matchesCookieHost(h, c.domain)),
+	);
+}
+
+/**
+ * Import cookies for a single site from a local browser (Chrome, Safari, etc.)
+ * into Fetchy's shared WebKit data store so desktop, extension and CLI share the session.
+ */
+export async function importBrowserCookies(
+	input,
+	browser = 'chrome',
+	{
+		extractCookies = extractExternalBrowserCookies,
+		readCookies = readSiteCookies,
+		writeCookies,
+	} = {},
+) {
+	const normalized = String(browser || '')
+		.trim()
+		.toLowerCase();
+	if (!IMPORT_BROWSERS.includes(normalized)) {
+		throw new EngineError('invalid_options', '请选择 Chrome、Safari、Edge、Firefox 或 Brave。');
+	}
+	const account = await findAccount(input);
+	const cookies = (await extractCookies(normalized, account.hosts)).filter(
+		(c) =>
+			typeof c?.name === 'string' &&
+			typeof c.value === 'string' &&
+			typeof c.domain === 'string' &&
+			account.hosts.some((h) => matchesCookieHost(h, c.domain)),
+	);
+	const browserLabel = BROWSER_LABELS[normalized] ?? normalized;
+	if (!cookies.length) {
+		throw new EngineError(
+			'auth_required',
+			`${browserLabel} 中未找到 ${account.label} 的登录信息，请先在 ${browserLabel} 登录该站。`,
+		);
+	}
+	if (account.session?.length && !sessionDigest(account, cookies)) {
+		throw new EngineError(
+			'auth_required',
+			`${browserLabel} 中只有 ${account.label} 的访客 Cookie，请先在 ${browserLabel} 完成登录。`,
+		);
+	}
+	if (writeCookies) {
+		await writeCookies(account, cookies);
+	} else {
+		const binary = path.join(await appBundle(), 'Contents/MacOS/Fetchy');
+		const result = await runProcess(
+			binary,
+			['import-cookies', account.profile, account.hosts.join(',')],
+			{
+				input: JSON.stringify(cookies),
+				timeoutMs: 30000,
+				maxOutputBytes: 64 * 1024,
+			},
+		);
+		let payload;
+		try {
+			payload = JSON.parse(result.stdout);
+		} catch {}
+		if (result.code !== 0 || !payload?.ok) {
+			throw new EngineError('browser_unavailable', '无法将登录信息写入 Fetchy 内置浏览器。');
+		}
+	}
+	await forgetAccount(account);
+	const status = await accountStatus(account, {readCookies});
+	return {
+		imported: true,
+		site: account.site,
+		label: account.label,
+		browser: normalized,
+		count: cookies.length,
+		status: status.status,
+	};
 }
