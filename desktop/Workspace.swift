@@ -273,7 +273,7 @@ struct LibraryEntry: Identifiable, Equatable {
     id = key
     title = (row["title"] as? String).flatMap { $0.isEmpty ? nil : $0 } ?? key
     platform = row["platform"] as? String ?? ""
-    author = row["author"] as? String ?? ""
+    author = (row["author"] as? String ?? "").replacingOccurrences(of: "\\s+", with: " ", options: .regularExpression).trimmingCharacters(in: .whitespaces)
     status = row["status"] as? String ?? ""
     kind = row["kind"] as? String ?? "post"
     folders = (row["folders"] as? [[String: Any]] ?? []).compactMap { $0["name"] as? String }
@@ -307,8 +307,8 @@ struct LibraryEntry: Identifiable, Equatable {
     switch kind {
     case "video": return "视频"
     case "audio": return "音频"
-    case "article": return "文章"
-    default: return "图文"
+    case "article": return "长文"
+    default: return mediaCount == 0 ? "文字" : "图文"
     }
   }
 

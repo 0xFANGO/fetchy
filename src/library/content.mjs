@@ -477,18 +477,71 @@ async function uniqueDir(directory, stem) {
 	return fallback;
 }
 
+export function renderPostMarkdown(item, attachmentRelNames = []) {
+	const title = displayTitle(item);
+	const author = String(item.author || '')
+		.replace(/\s*\n+\s*/g, ' ')
+		.replace(/\s+/g, ' ')
+		.trim();
+	const lines = [`# ${title}`, ''];
+	if (author) lines.push(`- 作者：${author}`);
+	if (item.sourceUrl) lines.push(`- 来源：${item.sourceUrl}`);
+	if (item.savedAt) lines.push(`- 保存时间：${item.savedAt}`);
+	if (lines.length > 2) lines.push('', '---', '');
+	const body = String(item.body || '').trim();
+	if (body) lines.push(body, '');
+	if (attachmentRelNames.length) {
+		for (const [idx, rel] of attachmentRelNames.entries()) {
+			const ext = path.extname(rel).toLowerCase();
+			if (['.jpg', '.jpeg', '.png', '.webp', '.gif', '.avif'].includes(ext)) {
+				lines.push(`![图片 ${idx + 1}](./${rel})`, '');
+			} else {
+				lines.push(`[附件 ${idx + 1}: ${rel}](./${rel})`, '');
+			}
+		}
+	}
+	return lines.join('\n').trimEnd() + '\n';
+}
+
 /**
- * Materialize verified media attachments directly into the user's downloads folder
- * with readable filenames. Single-media items land as `<title>.<ext>` directly inside
- * `outputDir`; multi-media posts land in `<outputDir>/<title>/01.<ext>, 02.<ext>, ...`.
+ * Materialize verified media attachments and text/article posts directly into the user's
+ * downloads folder with readable filenames:
+ * - Pure text/article posts (e.g. X text/article) -> `<outputDir>/<title>.md`
+ * - X/Threads/Zhihu image+text posts -> `<outputDir>/<title>/<title>.md` + `01.<ext>...`
+ * - Single-media items (video/audio/photo) -> `<outputDir>/<title>.<ext>`
+ * - Multi-media galleries (e.g. Xiaohongshu) -> `<outputDir>/<title>/01.<ext>, 02.<ext>...`
  */
 export async function publishLibraryMedia(root, item, outputDir) {
 	if (!outputDir) return {savedFiles: [], savedDir: null};
 	const ready = (item.attachments ?? []).filter((a) => typeof a.path === 'string' && a.path);
-	if (!ready.length) return {savedFiles: [], savedDir: null};
+	const hasBody = Boolean(typeof item.body === 'string' && item.body.trim());
+	if (!ready.length && !hasBody) return {savedFiles: [], savedDir: null};
 	await mkdir(outputDir, {recursive: true});
 	const baseDir = await realpath(outputDir);
-	// Reuse already-published files if every attachment still exists on disk.
+	const stem = mediaStem(item);
+
+	// Pure text / article post with no media attachments -> direct Markdown file.
+	if (!ready.length) {
+		const prev = Array.isArray(item.savedFiles) ? item.savedFiles[0] : null;
+		if (typeof prev === 'string' && prev.endsWith('.md') && prev.startsWith(baseDir + path.sep)) {
+			try {
+				if ((await stat(prev)).isFile()) {
+					await writeFile(prev, renderPostMarkdown(item, []), 'utf8');
+					return {savedFiles: [prev], savedDir: null};
+				}
+			} catch {}
+		}
+		const target = await uniqueFile(baseDir, stem, '.md');
+		await writeFile(target, renderPostMarkdown(item, []), 'utf8');
+		return {savedFiles: [target], savedDir: null};
+	}
+
+	const includeMarkdown =
+		['x', 'threads', 'zhihu'].includes(item.platform) &&
+		hasBody &&
+		ready.every((a) => a.kind === 'image');
+
+	// Reuse already-published files if every attachment (and markdown if needed) still exists.
 	const existing = [];
 	let allPresent = ready.length > 0;
 	for (const a of ready) {
@@ -505,15 +558,21 @@ export async function publishLibraryMedia(root, item, outputDir) {
 	}
 	if (allPresent) {
 		const savedDir =
-			ready.length > 1 &&
+			(ready.length > 1 || includeMarkdown) &&
 			typeof item.savedDir === 'string' &&
 			item.savedDir.startsWith(baseDir + path.sep)
 				? item.savedDir
 				: null;
+		if (includeMarkdown && savedDir) {
+			const mdTarget = path.join(savedDir, stem + '.md');
+			const rels = existing.map((f) => path.basename(f));
+			await writeFile(mdTarget, renderPostMarkdown(item, rels), 'utf8');
+			return {savedFiles: [mdTarget, ...existing], savedDir};
+		}
 		return {savedFiles: existing, savedDir};
 	}
-	const stem = mediaStem(item);
-	if (ready.length === 1) {
+
+	if (ready.length === 1 && !includeMarkdown) {
 		const a = ready[0];
 		const src = path.join(root, a.path);
 		const ext =
@@ -532,17 +591,26 @@ export async function publishLibraryMedia(root, item, outputDir) {
 		a.savedPath = target;
 		return {savedFiles: [target], savedDir: null};
 	}
+
 	const folder = await uniqueDir(baseDir, stem);
 	const savedFiles = [];
+	const relNames = [];
 	const pad = String(ready.length).length < 2 ? 2 : String(ready.length).length;
 	for (const [i, a] of ready.entries()) {
 		const src = path.join(root, a.path);
 		const ext =
 			path.extname(a.path) || (a.kind === 'audio' ? '.m4a' : a.kind === 'video' ? '.mp4' : '.jpg');
-		const target = path.join(folder, String(i + 1).padStart(pad, '0') + ext);
+		const name = String(i + 1).padStart(pad, '0') + ext;
+		const target = path.join(folder, name);
 		await placeFile(src, target);
 		a.savedPath = target;
 		savedFiles.push(target);
+		relNames.push(name);
+	}
+	if (includeMarkdown) {
+		const mdTarget = path.join(folder, stem + '.md');
+		await writeFile(mdTarget, renderPostMarkdown(item, relNames), 'utf8');
+		savedFiles.unshift(mdTarget);
 	}
 	return {savedFiles, savedDir: folder};
 }

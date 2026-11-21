@@ -392,50 +392,77 @@ export function captureArchivePage(allowLoopback = false) {
 		return unsupported('unsupported_page');
 	}
 	if (x) {
+		const cleanAuthor = (raw) =>
+			String(raw || '')
+				.replace(/\s*\n+\s*/g, ' ')
+				.replace(/\s*·.*$/, '')
+				.replace(/\s+/g, ' ')
+				.trim();
+		const hasOwnVideo = (tweet) =>
+			all(tweet, 'video').some(
+				(v) =>
+					!v.closest(
+						'aside,nav,footer,[aria-hidden="true"],[data-testid="quoteTweet"],div[role="link"]',
+					),
+			);
+		const buildXTweet = (tweet, forcedId, forcedUrl) => {
+			const a = query(tweet, 'time')?.closest('a[href]');
+			const id = forcedId || (a && xId(a.href));
+			if (!id) return null;
+			const canonicalUrl =
+				forcedUrl ||
+				(a
+					? new URL(a.href, url.origin).origin + new URL(a.href, url.origin).pathname
+					: url.origin + url.pathname);
+			const article = query(
+				tweet,
+				'[data-testid="twitterArticleRichTextView"],[data-testid="longformRichTextComponent"]',
+			);
+			const body = query(tweet, '[data-testid="tweetText"]');
+			const author = cleanAuthor(txt(query(tweet, '[data-testid="User-Name"]')));
+			const titleText =
+				txt(query(article, 'h1')) ||
+				txt(body).replace(/\s+/g, ' ').slice(0, 120) ||
+				(author ? `${author} 的帖子` : id);
+			const entry = {
+				...rawPost('x', id, canonicalUrl, titleText, author),
+				visitUrl: a?.href || canonicalUrl,
+			};
+			entry.body = article ? markdown(article) : txt(body);
+			entry.bodyFormat = article ? 'markdown' : 'text';
+			entry.bodyComplete = Boolean(article || body) && !isTruncated(tweet);
+			entry.attachments = collectDomMedia(
+				article || tweet,
+				'[data-testid="tweetPhoto"] img,video,figure img',
+				['pbs.twimg.com', 'video.twimg.com'],
+			);
+			const video = hasOwnVideo(tweet);
+			const hasImage = entry.attachments.some((m) => m.kind === 'image');
+			if (video) {
+				entry.kind = 'video';
+				entry.mediaHint = 'video';
+			} else if (article) {
+				entry.kind = 'article';
+				entry.mediaHint = 'article';
+			} else if (hasImage) {
+				entry.mediaHint = 'images';
+			} else {
+				entry.mediaHint = 'text';
+			}
+			const xCover =
+				entry.attachments.find((m) => m.kind === 'image' && m.url)?.url ||
+				query(tweet, 'video')?.getAttribute('poster') ||
+				'';
+			if (xCover && /^https?:\/\//i.test(xCover)) entry.cover = xCover;
+			return entry;
+		};
 		const bookmark = /^\/i\/bookmarks(?:\/(\d+))?\/?$/.exec(url.pathname);
 		const primary = query(document, '[data-testid="primaryColumn"]') || query(document, 'main');
 		if (bookmark && primary) {
 			const entries = [];
 			for (const tweet of all(primary, 'article[data-testid="tweet"]')) {
-				const a = query(tweet, 'time')?.closest('a[href]');
-				const id = a && xId(a.href);
-				if (!id) continue;
-				// The timeline already shows each post; its text and files come from here.
-				const body = query(tweet, '[data-testid="tweetText"]');
-				const entry = {
-					...rawPost(
-						'x',
-						id,
-						new URL(a.href).origin + new URL(a.href).pathname,
-						txt(body).slice(0, 160),
-						txt(query(tweet, '[data-testid="User-Name"]')),
-					),
-					visitUrl: a.href,
-				};
-				entry.body = txt(body);
-				entry.bodyComplete = Boolean(body) && !isTruncated(tweet);
-				entry.attachments = collectDomMedia(tweet, '[data-testid="tweetPhoto"] img,video', [
-					'pbs.twimg.com',
-					'video.twimg.com',
-				]);
-				// A timeline video plays from a blob; the native worker saves it from the post link.
-				// A quoted post renders inside the tweet as a nested link container; its video
-				// is not this post's.
-				if (
-					all(tweet, 'video').some(
-						(v) =>
-							!v.closest(
-								'aside,nav,footer,[aria-hidden="true"],[data-testid="quoteTweet"],div[role="link"]',
-							),
-					)
-				)
-					entry.kind = 'video';
-				const xCover =
-					entry.attachments.find((m) => m.kind === 'image' && m.url)?.url ||
-					query(tweet, 'video')?.getAttribute('poster') ||
-					'';
-				if (xCover && /^https?:\/\//i.test(xCover)) entry.cover = xCover;
-				entries.push(entry);
+				const entry = buildXTweet(tweet);
+				if (entry) entries.push(entry);
 			}
 			const folders = all(primary, 'a[href]')
 				.map((a) => {
@@ -459,32 +486,45 @@ export function captureArchivePage(allowLoopback = false) {
 			};
 		}
 		const id = xId(url.href);
-		if (!id || !primary) return unsupported('unsupported_page');
-		const tweet = all(primary, 'article[data-testid="tweet"]').find(
-			(el) => xId(query(el, 'time')?.closest('a[href]')?.href) === id,
-		);
-		if (!tweet) return unsupported('source_not_ready');
-		const article = query(
-			tweet,
-			'[data-testid="twitterArticleRichTextView"],[data-testid="longformRichTextComponent"]',
-		);
-		const body = query(tweet, '[data-testid="tweetText"]');
-		const entry = rawPost(
-			'x',
-			id,
-			url.origin + url.pathname,
-			txt(query(article, 'h1')) || txt(body).slice(0, 100),
-			txt(query(tweet, '[data-testid="User-Name"]')),
-		);
-		entry.body = article ? markdown(article) : txt(body);
-		entry.bodyFormat = article ? 'markdown' : 'text';
-		entry.bodyComplete = Boolean(article || body) && !isTruncated(tweet);
-		entry.attachments = collectDomMedia(
-			article || tweet,
-			'[data-testid="tweetPhoto"] img,video,figure img',
-			['pbs.twimg.com', 'video.twimg.com'],
-		);
-		return {type: 'post', entry};
+		if (id && primary) {
+			const tweet = all(primary, 'article[data-testid="tweet"]').find(
+				(el) => xId(query(el, 'time')?.closest('a[href]')?.href) === id,
+			);
+			if (!tweet) return unsupported('source_not_ready');
+			const entry = buildXTweet(tweet, id, url.origin + url.pathname);
+			return {type: 'post', entry};
+		}
+		if (primary) {
+			const tweets = all(primary, 'article[data-testid="tweet"]');
+			if (tweets.length) {
+				const vh = (typeof window !== 'undefined' && window.innerHeight) || 900;
+				const seenIds = new Set();
+				const visibleEntries = tweets
+					.map((el) => {
+						const rect =
+							typeof el.getBoundingClientRect === 'function' ? el.getBoundingClientRect() : null;
+						if (!rect) return {el, top: 0, overlap: 200};
+						const top = Math.max(0, rect.top);
+						const bottom = Math.min(vh, rect.bottom);
+						return {el, top: rect.top, overlap: bottom - top};
+					})
+					.filter((r) => r.overlap > 60)
+					.sort((a, b) => a.top - b.top)
+					.map((r) => buildXTweet(r.el))
+					.filter((entry) => {
+						if (!entry || seenIds.has(entry.id)) return false;
+						seenIds.add(entry.id);
+						return true;
+					});
+				return {
+					type: 'feed',
+					platform: 'x',
+					folder: {platform: 'x', id: 'feed', name: '当前屏幕帖子'},
+					items: visibleEntries,
+				};
+			}
+		}
+		return unsupported('unsupported_page');
 	}
 	if (url.hostname === 'space.bilibili.com' && /^\/\d+\/favlist\/?$/.test(url.pathname)) {
 		const ownerId = url.pathname.split('/')[1],

@@ -511,10 +511,8 @@ private func uniqueDownloadURL(in directory: URL, suggestedFilename: String) -> 
   @Published var copiedLink = false
   @Published var pageZoom: CGFloat = 1.0
   @Published var focusAddressToken = 0
-  @Published var showSidePanel: Bool = {
-    if UserDefaults.standard.object(forKey: "browser.panelOpen") == nil { return true }
-    return UserDefaults.standard.bool(forKey: "browser.panelOpen")
-  }()
+  @Published var showSidePanel: Bool = false
+  private var userPinnedSidePanel: Bool? = nil
   @Published private(set) var webView: WKWebView?
   @Published var pendingFavoritesShortcut: PlatformShortcut?
   weak var downloads: DownloadsModel?
@@ -723,7 +721,20 @@ private func uniqueDownloadURL(in directory: URL, suggestedFilename: String) -> 
 
   func toggleSidePanel() {
     showSidePanel.toggle()
-    UserDefaults.standard.set(showSidePanel, forKey: "browser.panelOpen")
+    userPinnedSidePanel = showSidePanel
+  }
+
+  func syncSidePanelVisibility(for kind: String) {
+    if let pinned = userPinnedSidePanel {
+      showSidePanel = pinned
+      return
+    }
+    switch kind {
+    case "post", "collection", "folders":
+      showSidePanel = true
+    default:
+      showSidePanel = false
+    }
   }
 
   func requestFocusAddress() {
@@ -1250,8 +1261,9 @@ struct BrowserPane: View {
   private let columns = [GridItem(.adaptive(minimum: 184, maximum: 250), spacing: 12)]
 
   private var detectedBadgeCount: Int {
-    if !panel.media.isEmpty { return panel.media.count }
+    if panel.kind == "post" { return 1 }
     if !panel.items.isEmpty { return panel.items.count }
+    if !panel.media.isEmpty { return panel.media.count }
     return 0
   }
 
@@ -1692,7 +1704,23 @@ struct PanelItem: Identifiable {
   let author: String
   let coverUrl: URL?
   let isVideo: Bool
+  let contentLabel: String
   let raw: [String: Any]
+}
+
+private func panelContentLabel(_ row: [String: Any], isVideo: Bool) -> String {
+  if isVideo { return "视频" }
+  switch row["mediaHint"] as? String {
+  case "video": return "视频"
+  case "article": return "长文"
+  case "images": return "图文"
+  case "text": return "文字"
+  default:
+    if row["kind"] as? String == "article" { return "长文" }
+    let attachments = row["attachments"] as? [[String: Any]] ?? []
+    if !attachments.isEmpty { return "图文" }
+    return (row["platform"] as? String == "x") ? "文字" : "图文"
+  }
 }
 
 private func cleanManifestRaw(_ raw: [String: Any]) -> [String: Any] {
@@ -1812,19 +1840,52 @@ private func normalizedPostReadUrl(_ raw: String) -> String {
       complete = false
       total = nil
       stalled = 0
+      mediaTask?.cancel()
+      mediaTask = nil
+      media = []
       let attachments = entry["attachments"] as? [[String: Any]] ?? []
       let images = attachments.filter { $0["kind"] as? String == "image" }.count
       let videos = attachments.filter { $0["kind"] as? String == "video" }.count
+      let isVideoPost = (entry["kind"] as? String == "video") || videos > 0
+      let isArticle = (entry["kind"] as? String == "article") || (entry["bodyFormat"] as? String == "markdown")
+      let formatTag: String
+      if isVideoPost {
+        formatTag = videos > 1 ? "\(videos) 个视频 · MP4" : "视频 · MP4"
+      } else if isArticle {
+        formatTag = images > 0 ? "长文 · Markdown + \(images) 图" : "长文 · Markdown"
+      } else if images > 0 {
+        formatTag = (entry["platform"] as? String == "x") ? "图文 · Markdown + \(images) 图" : "\(images) 张图片"
+      } else {
+        formatTag = "文字 · Markdown"
+      }
       postTitle =
         (entry["title"] as? String).flatMap { $0.isEmpty ? nil : $0 }
         ?? (entry["id"] as? String ?? "")
       postMeta = [
         entry["author"] as? String ?? "",
-        entry["bodyComplete"] as? Bool == true ? "正文完整" : "正文可能不完整",
-        "\(images) 张图片", "\(videos) 个视频",
+        formatTag,
+        entry["bodyComplete"] as? Bool == true ? "正文完整" : "保存时自动补全正文",
       ].filter { !$0.isEmpty }.joined(separator: " · ")
       postPreview = String((entry["body"] as? String ?? "").prefix(280))
+      browser?.syncSidePanelVisibility(for: "post")
+    case "feed":
+      mediaTask?.cancel()
+      mediaTask = nil
+      media = []
+      post = nil
+      folder = snap["folder"] as? [String: Any] ?? [:]
+      folderName = folder["name"] as? String ?? "当前屏幕可见"
+      provider = snap["platform"] as? String
+      kind = "feed"
+      reason = nil
+      complete = false
+      total = nil
+      applyFeedItems(snap["items"] as? [[String: Any]] ?? [])
+      browser?.syncSidePanelVisibility(for: "feed")
     case "collection":
+      mediaTask?.cancel()
+      mediaTask = nil
+      media = []
       items = []
       selected = []
       pages = []
@@ -1840,7 +1901,11 @@ private func normalizedPostReadUrl(_ raw: String) -> String {
       kind = "collection"
       _ = merge(snap)
       selected = Set(items.map(\.id))
+      browser?.syncSidePanelVisibility(for: "collection")
     case "folders":
+      mediaTask?.cancel()
+      mediaTask = nil
+      media = []
       kind = "folders"
       items = []
       selected = []
@@ -1856,17 +1921,51 @@ private func normalizedPostReadUrl(_ raw: String) -> String {
         guard let url = row["url"] as? String else { return nil }
         return LinkRow(label: row["name"] as? String ?? url, url: url)
       }
+      browser?.syncSidePanelVisibility(for: "folders")
     default:
       kind = "none"
+      browser?.syncSidePanelVisibility(for: "none")
+      startMediaSniff(mine)
+    }
+  }
+
+  private func makePanelItem(_ row: [String: Any]) -> PanelItem? {
+    guard let k = key(row) else { return nil }
+    let coverUrl: URL? = (row["cover"] as? String).flatMap { raw in
+      guard !raw.isEmpty, let u = URL(string: raw), u.scheme == "https" else { return nil }
+      return u
+    }
+    let isVideo = (row["kind"] as? String == "video") || (row["mediaHint"] as? String == "video")
+    return PanelItem(
+      id: k,
+      title: (row["title"] as? String).flatMap { $0.isEmpty ? nil : $0 } ?? k,
+      author: (row["author"] as? String ?? "")
+        .replacingOccurrences(of: "\\s+", with: " ", options: .regularExpression)
+        .trimmingCharacters(in: .whitespaces),
+      coverUrl: coverUrl,
+      isVideo: isVideo,
+      contentLabel: panelContentLabel(row, isVideo: isVideo),
+      raw: row)
+  }
+
+  private func applyFeedItems(_ rows: [[String: Any]]) {
+    var seen = Set<String>()
+    var next: [PanelItem] = []
+    for row in rows {
+      guard let item = makePanelItem(row), seen.insert(item.id).inserted else { continue }
+      next.append(item)
+    }
+    let oldKeys = items.map { "\($0.id)|\($0.title)|\($0.contentLabel)" }
+    let newKeys = next.map { "\($0.id)|\($0.title)|\($0.contentLabel)" }
+    if oldKeys != newKeys {
+      items = next
     }
   }
 
   private func inspect(_ mine: Int) async {
     guard let browser, let url = browser.webView?.url, ["https", "http"].contains(url.scheme ?? "") else { return }
     origin = (url.scheme ?? "") + "://" + (url.host ?? "")
-    // Continuously sniff playable media on ANY page (never gated on collection/post detection).
-    startMediaSniff(mine)
-    // Like the extension, wait for pages that render their content after loading.
+    // Wait briefly for SPA hydration before deciding between structured post/feed/collection vs generic media sniff.
     var found: [String: Any]?
     for _ in 0..<15 {
       found = try? await browser.runTool("capture") as? [String: Any]
@@ -1880,6 +1979,9 @@ private func normalizedPostReadUrl(_ raw: String) -> String {
     guard mine == generation else { return }
     if let snap = found {
       applySnapshot(snap, mine: mine)
+    } else {
+      browser.syncSidePanelVisibility(for: "none")
+      startMediaSniff(mine)
     }
     // Bilibili pages come from its API, not from the page; a sync would rewind them.
     if provider != "bilibili" { startSync(mine) }
@@ -1936,22 +2038,11 @@ private func normalizedPostReadUrl(_ raw: String) -> String {
     var added: [String] = []
     let known = Set(items.map(\.id))
     for row in page["items"] as? [[String: Any]] ?? [] {
-      guard let k = key(row), !known.contains(k), !added.contains(k) else { continue }
-      added.append(k)
-      let coverUrl: URL? = (row["cover"] as? String).flatMap { raw in
-        guard !raw.isEmpty, let u = URL(string: raw), u.scheme == "https" else { return nil }
-        return u
+      guard let item = makePanelItem(row), !known.contains(item.id), !added.contains(item.id) else {
+        continue
       }
-      let isVideo =
-        (row["kind"] as? String == "video") || (row["mediaHint"] as? String == "video")
-      items.append(
-        PanelItem(
-          id: k,
-          title: (row["title"] as? String).flatMap { $0.isEmpty ? nil : $0 } ?? k,
-          author: row["author"] as? String ?? "",
-          coverUrl: coverUrl,
-          isVideo: isVideo,
-          raw: row))
+      added.append(item.id)
+      items.append(item)
     }
     if !added.isEmpty {
       stalled = 0
@@ -1983,7 +2074,8 @@ private func normalizedPostReadUrl(_ raw: String) -> String {
     sync?.cancel()
     sync = Task { [weak self] in
       while !Task.isCancelled {
-        try? await Task.sleep(nanoseconds: 1_200_000_000)
+        let interval: UInt64 = (self?.kind == "feed") ? 850_000_000 : 1_200_000_000
+        try? await Task.sleep(nanoseconds: interval)
         guard let self, mine == self.generation, !self.reading,
           self.provider != "bilibili",
           let page = try? await self.browser?.runTool("capture") as? [String: Any],
@@ -1994,7 +2086,13 @@ private func normalizedPostReadUrl(_ raw: String) -> String {
           // Transient layout / modal / hydration states must never poison the active collection.
           continue
         }
-        if snapType == "collection" {
+        if snapType == "feed" {
+          if self.kind == "feed" {
+            self.applyFeedItems(page["items"] as? [[String: Any]] ?? [])
+          } else {
+            self.applySnapshot(page, mine: mine)
+          }
+        } else if snapType == "collection" {
           let pageFolderId = (page["folder"] as? [String: Any])?["id"] as? String
           let currentFolderId = self.folder["id"] as? String
           if self.kind == "collection" && pageFolderId == currentFolderId {
@@ -2175,9 +2273,12 @@ private func normalizedPostReadUrl(_ raw: String) -> String {
     guard queuedItemIds.insert(item.id).inserted else { return }
     let entry = cleanManifestRaw(item.raw)
     let rawKind = entry["kind"] as? String ?? "post"
+    let bodyComplete = entry["bodyComplete"] as? Bool ?? false
     let needsFeed =
-      rawKind != "video" && (entry["body"] as? String ?? "").isEmpty
-      && (entry["attachments"] as? [Any] ?? []).isEmpty
+      rawKind != "video"
+      && (!bodyComplete
+        || ((entry["body"] as? String ?? "").isEmpty
+          && (entry["attachments"] as? [Any] ?? []).isEmpty))
     let task: [String: Any]
     do {
       guard
@@ -2304,6 +2405,7 @@ struct SitePanel: View {
       VStack(alignment: .leading, spacing: 12) {
         switch panel.kind {
         case "post": postSection
+        case "feed": feedSection
         case "collection": collectionSection
         case "folders": foldersSection
         default:
@@ -2331,8 +2433,8 @@ struct SitePanel: View {
               .fill(fetchyAccent.opacity(0.08))
           )
         }
-        if !panel.media.isEmpty {
-          if panel.kind != "none" || !panel.notice.isEmpty { Divider() }
+        if panel.kind == "none" && !panel.media.isEmpty {
+          if !panel.notice.isEmpty { Divider() }
           sniffedMediaSection
         }
       }.padding(14).frame(maxWidth: .infinity, alignment: .leading)
@@ -2346,11 +2448,77 @@ struct SitePanel: View {
       if !panel.postPreview.isEmpty {
         Text(panel.postPreview).font(.callout).lineLimit(5).foregroundStyle(.secondary)
       }
-      Button(panel.submitting ? "正在加入队列…" : "下载这篇帖子") {
+      Button(panel.submitting ? "正在加入队列…" : "保存这篇帖子") {
         Task { await panel.savePost() }
       }
       .buttonStyle(.borderedProminent)
       .disabled(panel.submitting)
+    }
+  }
+
+  var feedSection: some View {
+    VStack(alignment: .leading, spacing: 10) {
+      VStack(alignment: .leading, spacing: 3) {
+        HStack {
+          Text("当前屏幕可见 (\(panel.items.count))").font(.headline)
+          Spacer()
+        }
+        Text("仅同步当前窗口里正在浏览的帖子；点进单帖或书签页可批量保存。")
+          .font(.caption).foregroundStyle(.secondary)
+      }
+
+      if panel.items.isEmpty {
+        Text("继续滚动即可识别当前屏幕上的帖子。")
+          .font(.caption).foregroundStyle(.secondary)
+          .padding(.vertical, 6)
+      } else {
+        LazyVStack(alignment: .leading, spacing: 8) {
+          ForEach(panel.items) { item in
+            HStack(alignment: .center, spacing: 8) {
+              VStack(alignment: .leading, spacing: 4) {
+                Text(item.title)
+                  .font(.callout.weight(.medium))
+                  .lineLimit(2)
+                HStack(spacing: 5) {
+                  Text(item.contentLabel)
+                    .font(.caption2.bold())
+                    .padding(.horizontal, 5).padding(.vertical, 1)
+                    .background(fetchyAccent.opacity(0.14), in: Capsule())
+                    .foregroundStyle(fetchyAccent)
+                  if !item.author.isEmpty {
+                    Text(item.author)
+                      .font(.caption2)
+                      .foregroundStyle(.secondary)
+                      .lineLimit(1)
+                  }
+                }
+              }
+
+              Spacer(minLength: 4)
+
+              if panel.queuedItemIds.contains(item.id) {
+                Label("已加入", systemImage: "checkmark")
+                  .font(.caption2)
+                  .foregroundStyle(.secondary)
+              } else {
+                Button("保存") {
+                  Task { await panel.saveSingleItem(item) }
+                }
+                .controlSize(.small)
+              }
+            }
+            .padding(8)
+            .background(
+              RoundedRectangle(cornerRadius: 8, style: .continuous)
+                .fill(Color(nsColor: .controlBackgroundColor))
+                .overlay(
+                  RoundedRectangle(cornerRadius: 8, style: .continuous)
+                    .stroke(Color(nsColor: .separatorColor).opacity(0.45), lineWidth: 0.75)
+                )
+            )
+          }
+        }
+      }
     }
   }
 
@@ -2423,7 +2591,7 @@ struct SitePanel: View {
                 .font(.callout.weight(.medium))
                 .lineLimit(2)
               Text(
-                [item.isVideo ? "视频" : "图文", item.author]
+                [item.contentLabel, item.author]
                   .filter { !$0.isEmpty }
                   .joined(separator: " · ")
               )

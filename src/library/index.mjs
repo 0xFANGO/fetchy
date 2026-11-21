@@ -610,7 +610,10 @@ async function saveItem(ctx, input, old, options) {
 	if (item.attachments.some((a) => !a.path)) missing.push('attachments');
 	item.missing = unique(missing);
 	item.status = missing.length ? 'partial' : 'complete';
-	if (options.outputDir && item.attachments.some((a) => a.path)) {
+	if (
+		options.outputDir &&
+		(item.attachments.some((a) => a.path) || (typeof item.body === 'string' && item.body.trim()))
+	) {
 		const published = await publishLibraryMedia(ctx.root, item, options.outputDir);
 		if (published.savedFiles.length) {
 			item.savedFiles = published.savedFiles;

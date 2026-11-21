@@ -540,7 +540,7 @@ struct DownloadsHomePane: View {
       ForEach(entries) { entry in
         let isSelected = selection.contains(entry.id)
         HStack(spacing: 12) {
-          Image(systemName: entry.kind == "video" ? "film" : (entry.kind == "audio" ? "waveform" : "doc.richtext"))
+          Image(systemName: entry.kind == "video" ? "film" : (entry.kind == "audio" ? "waveform" : (entry.mediaCount == 0 ? "doc.text" : "photo.on.rectangle")))
             .font(.callout)
             .foregroundStyle(.secondary)
             .frame(width: 28, height: 28)

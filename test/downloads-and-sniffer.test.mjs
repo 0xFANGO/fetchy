@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict';
 import http from 'node:http';
-import {mkdtemp, readdir, realpath, rm, stat} from 'node:fs/promises';
+import {mkdtemp, readdir, readFile, realpath, rm, stat} from 'node:fs/promises';
 import os from 'node:os';
 import path from 'node:path';
 import test from 'node:test';
@@ -877,4 +877,134 @@ test('installMediaSniffer deduplicates X/HLS sub-playlists, enriches X tweet tit
 	} finally {
 		Object.assign(globalThis, prev);
 	}
+});
+
+test('captureArchivePage returns only viewport-visible tweets on X timeline with clean authors and content types', () => {
+	const makeTweet = (id, author, body, rect, {hasVideo = false, hasImage = false} = {}) => ({
+		getBoundingClientRect: () => rect,
+		querySelector(sel) {
+			if (sel === 'time') return {closest: () => ({href: `https://x.com/u/status/${id}`})};
+			if (sel === '[data-testid="tweetText"]') return {innerText: body, textContent: body};
+			if (sel === '[data-testid="User-Name"]') return {innerText: author, textContent: author};
+			if (sel === 'video') return hasVideo ? {getAttribute: () => null, closest: () => null} : null;
+			return null;
+		},
+		querySelectorAll(sel) {
+			if (sel === 'video') return hasVideo ? [{closest: () => null}] : [];
+			if (sel.includes('tweetPhoto'))
+				return hasImage
+					? [
+							{
+								tagName: 'IMG',
+								currentSrc: 'https://pbs.twimg.com/media/abc.jpg',
+								src: 'https://pbs.twimg.com/media/abc.jpg',
+								getAttribute: () => '',
+								closest: () => null,
+							},
+						]
+					: [];
+			return [];
+		},
+	});
+	const visibleText = makeTweet(
+		'1111111111111111111',
+		'宝玉\n@dotey · 3h',
+		'Sean Goedecke 在个人博客发文说',
+		{top: 80, bottom: 420, height: 340},
+	);
+	const visibleImg = makeTweet(
+		'2222222222222222222',
+		'Alice\n@alice',
+		'Photos from today',
+		{top: 440, bottom: 780, height: 340},
+		{hasImage: true},
+	);
+	const offscreenVideo = makeTweet(
+		'3333333333333333333',
+		'Bob\n@bob',
+		'Preloaded offscreen video',
+		{top: 1400, bottom: 1800, height: 400},
+		{hasVideo: true},
+	);
+	const primary = {
+		querySelector: () => null,
+		querySelectorAll: (sel) =>
+			sel === 'article[data-testid="tweet"]' ? [visibleText, visibleImg, offscreenVideo] : [],
+	};
+	const snap = vm.runInNewContext('(' + captureArchivePage.toString() + ')(false)', {
+		URL,
+		URLSearchParams,
+		location: {href: 'https://x.com/home'},
+		window: {innerWidth: 1200, innerHeight: 800},
+		document: {
+			querySelector: (sel) => (sel === '[data-testid="primaryColumn"]' ? primary : null),
+			querySelectorAll: () => [],
+		},
+	});
+	assert.equal(snap.type, 'feed');
+	assert.equal(snap.items.length, 2);
+	assert.equal(snap.items[0].id, '1111111111111111111');
+	assert.equal(snap.items[0].author, '宝玉 @dotey');
+	assert.equal(snap.items[0].mediaHint, 'text');
+	assert.equal(snap.items[1].id, '2222222222222222222');
+	assert.equal(snap.items[1].mediaHint, 'images');
+});
+
+test('X text and image+text posts publish Markdown files directly into outputDir', async (t) => {
+	const {dir, origin} = await fixture(t, (_req, res) => {
+		res.writeHead(200, {'content-type': 'image/gif'}).end(gif);
+	});
+	const outputDir = path.join(dir, 'Downloads', 'Fetchy');
+	const bridge = new LibraryBridge(dir, {
+		session: {cookieHeader: async () => '', withCookies: (_url, action) => action()},
+		getOutputDir: async () => outputDir,
+	});
+	bridge.options.localOrigin = origin;
+
+	const textPost = {
+		platform: 'x',
+		id: '9000000000000000001',
+		title: 'AI 会员不要年付',
+		author: 'Jackywine @Jackywine',
+		sourceUrl: 'https://x.com/Jackywine/status/9000000000000000001',
+		body: '因为模型迭代很快，建议按月订阅。',
+		bodyComplete: true,
+		attachments: [],
+	};
+	const imgPost = {
+		platform: 'x',
+		id: '9000000000000000002',
+		title: 'X Photo Thread',
+		author: 'Alice @alice',
+		sourceUrl: 'https://x.com/alice/status/9000000000000000002',
+		body: 'Look at these two shots.',
+		bodyComplete: true,
+		attachments: [
+			{kind: 'image', url: origin + '/p1.gif'},
+			{kind: 'image', url: origin + '/p2.gif'},
+		],
+	};
+
+	await bridge.request('libraryStart', {
+		manifest: {version: 1, items: [textPost, imgPost]},
+	});
+	await bridge.tail;
+
+	const realOut = await realpath(outputDir);
+	const mdPath = path.join(realOut, 'AI 会员不要年付.md');
+	const mdContent = await readFile(mdPath, 'utf8');
+	assert.match(mdContent, /# AI 会员不要年付/);
+	assert.match(mdContent, /Jackywine @Jackywine/);
+	assert.match(mdContent, /因为模型迭代很快/);
+
+	const threadDir = path.join(realOut, 'X Photo Thread');
+	const threadFiles = (await readdir(threadDir)).sort();
+	assert.deepEqual(threadFiles, ['01.gif', '02.gif', 'X Photo Thread.md']);
+	const threadMd = await readFile(path.join(threadDir, 'X Photo Thread.md'), 'utf8');
+	assert.match(threadMd, /!\[图片 1\]\(\.\/01\.gif\)/);
+	assert.match(threadMd, /!\[图片 2\]\(\.\/02\.gif\)/);
+
+	const listed = await bridge.request('librarySearch', {});
+	const rowText = listed.find((i) => i.key === 'x:9000000000000000001');
+	assert.equal(rowText.primaryFile, mdPath);
 });
