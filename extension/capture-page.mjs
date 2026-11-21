@@ -113,6 +113,15 @@ export function captureArchivePage(allowLoopback = false) {
 	function dedup(entries) {
 		return [...new Map(entries.map((v) => [v.platform + ':' + v.id, v])).values()];
 	}
+	function viewportBox(el) {
+		const vh = (typeof window !== 'undefined' && window.innerHeight) || 900;
+		const rect =
+			typeof el?.getBoundingClientRect === 'function' ? el.getBoundingClientRect() : null;
+		if (!rect) return {top: 0, left: 0, overlap: 200};
+		const top = Math.max(0, rect.top);
+		const bottom = Math.min(vh, rect.bottom);
+		return {top: rect.top, left: rect.left || 0, overlap: bottom - top};
+	}
 	function markdown(root) {
 		function line(n) {
 			if (n.nodeType === 3) return n.textContent || '';
@@ -372,21 +381,25 @@ export function captureArchivePage(allowLoopback = false) {
 		}
 		if (/^\/(?:explore|search_result)\/?$/i.test(url.pathname)) {
 			const scope = query(document, '#exploreFeeds, .feeds-container') || document;
-			const seen = noteCards(scope);
-			if (seen.length) {
-				const channel = txt(query(document, '.channel.active, .channel-item.active'));
-				const isSearch = url.pathname.startsWith('/search_result');
-				const label = isSearch ? '小红书搜索' : channel ? '小红书 · ' + channel : '小红书发现';
-				return folderResult(
-					{
+			const visibleItems = all(scope, '.note-item')
+				.map((el) => ({el, ...viewportBox(el)}))
+				.filter((r) => r.overlap > 40)
+				.sort((a, b) => Math.floor(a.top / 60) - Math.floor(b.top / 60) || a.left - b.left)
+				.flatMap((r) => noteCards({querySelectorAll: () => [r.el]}));
+			const channel = txt(query(document, '.channel.active, .channel-item.active'));
+			const isSearch = url.pathname.startsWith('/search_result');
+			const label = isSearch ? '小红书搜索' : channel ? '小红书 · ' + channel : '小红书发现';
+			if (visibleItems.length || query(document, '#exploreFeeds, .feeds-container')) {
+				return {
+					type: 'feed',
+					platform: 'xiaohongshu',
+					folder: {
 						platform: 'xiaohongshu',
 						id: isSearch ? 'search' : 'explore-' + (url.searchParams.get('channel_id') || 'home'),
 						name: label,
 					},
-					seen,
-					null,
-					scope,
-				);
+					items: dedup(visibleItems),
+				};
 			}
 		}
 		return unsupported('unsupported_page');
@@ -540,7 +553,37 @@ export function captureArchivePage(allowLoopback = false) {
 			};
 		return {type: 'folders', provider: 'bilibili', ownerId, folders: [], complete: false};
 	}
-	if (['www.youtube.com', 'youtube.com', 'm.youtube.com'].includes(url.hostname)) {
+	if (['www.bilibili.com', 'bilibili.com', 'm.bilibili.com'].includes(url.hostname)) {
+		const vid = /^\/video\/(BV[\w]{10}|av\d+)\/?$/.exec(url.pathname)?.[1];
+		if (vid) {
+			const rawPage = url.searchParams.get('p');
+			const parsedPage = rawPage === null ? 1 : Number(rawPage);
+			const page = Number.isSafeInteger(parsedPage) && parsedPage >= 1 ? parsedPage : 1;
+			const id = page > 1 ? vid + '_p' + page : vid;
+			const sourceUrl =
+				'https://www.bilibili.com/video/' + vid + '/' + (page > 1 ? '?p=' + page : '');
+			const title =
+				txt(query(document, 'h1.video-title, h1[title], .video-title, h1')) ||
+				String(document.title || '')
+					.replace(/_哔哩哔哩_bilibili$/i, '')
+					.trim() ||
+				vid;
+			const author =
+				txt(
+					query(document, '.up-name, a.up-name, .up-detail-top .up-name, .up-info--right .name'),
+				) ||
+				query(document, 'meta[name="author"]')?.content ||
+				'';
+			const entry = rawPost('bilibili', id, sourceUrl, title, author);
+			entry.kind = 'video';
+			entry.mediaHint = 'video';
+			entry.bodyComplete = true;
+			return {type: 'post', entry};
+		}
+	}
+	if (
+		['www.youtube.com', 'youtube.com', 'm.youtube.com', 'music.youtube.com'].includes(url.hostname)
+	) {
 		if (url.pathname === '/playlist' && /^[\w-]{2,128}$/.test(url.searchParams.get('list') || '')) {
 			const list = url.searchParams.get('list');
 			const items = [];
@@ -585,6 +628,211 @@ export function captureArchivePage(allowLoopback = false) {
 				.filter(Boolean);
 			return {type: 'folders', folders: dedup(dirs), complete: false};
 		}
+		const ytId =
+			url.pathname === '/watch'
+				? url.searchParams.get('v')
+				: /^\/(?:shorts|live|embed)\/([\w-]{11})(?:\/|$)/.exec(url.pathname)?.[1];
+		if (/^[\w-]{11}$/.test(ytId || '')) {
+			const isShorts = url.pathname.startsWith('/shorts/');
+			const rawTitle =
+				(isShorts
+					? txt(
+							query(
+								document,
+								'ytd-reel-video-renderer[is-active] h2, ytd-reel-player-header-renderer h2, #overlay h2',
+							),
+						)
+					: txt(
+							query(
+								document,
+								'ytd-watch-metadata h1 yt-formatted-string, ytd-watch-metadata h1, #title h1',
+							),
+						)) ||
+				String(document.title || '')
+					.replace(/^\(\d+\+?\)\s*/, '')
+					.replace(/\s*-\s*YouTube$/i, '')
+					.trim() ||
+				ytId;
+			const author =
+				(isShorts
+					? txt(
+							query(
+								document,
+								'ytd-reel-video-renderer[is-active] #channel-name a, ytd-reel-video-renderer[is-active] ytd-channel-name a',
+							),
+						)
+					: txt(
+							query(
+								document,
+								'ytd-watch-metadata #channel-name a, ytd-watch-metadata ytd-channel-name a, #owner #channel-name a',
+							),
+						)) || '';
+			const entry = rawPost(
+				'youtube',
+				ytId,
+				'https://www.youtube.com/watch?v=' + ytId,
+				rawTitle,
+				author,
+			);
+			entry.kind = 'video';
+			entry.mediaHint = 'video';
+			entry.bodyComplete = true;
+			return {type: 'post', entry};
+		}
+	}
+	if (
+		['www.douyin.com', 'douyin.com', 'www.iesdouyin.com', 'iesdouyin.com'].includes(url.hostname)
+	) {
+		const modalId = url.searchParams.get('modal_id') || '';
+		const singleId =
+			/^\/(?:share\/)?video\/(\d{10,25})\/?$/.exec(url.pathname)?.[1] ||
+			(/^\d{10,25}$/.test(modalId) ? modalId : '');
+		if (singleId) {
+			const title =
+				txt(query(document, '[data-e2e="video-desc"], [data-e2e="detail-video-info"] h1, h1')) ||
+				String(document.title || '')
+					.replace(/\s*[-–—]\s*抖音.*$/i, '')
+					.trim() ||
+				singleId;
+			const author = txt(
+				query(
+					document,
+					'[data-e2e="video-author-name"], [data-e2e="user-info-nickname"], [data-e2e="feed-video-nickname"], .account-name',
+				),
+			).replace(/^@/, '');
+			const entry = rawPost(
+				'douyin',
+				singleId,
+				'https://www.douyin.com/video/' + singleId,
+				title.slice(0, 140),
+				author,
+			);
+			entry.kind = 'video';
+			entry.mediaHint = 'video';
+			entry.bodyComplete = true;
+			return {type: 'post', entry};
+		}
+		if (/^\/(?:$|jingxuan|follow|friend|discover|hot|search|channel)/i.test(url.pathname)) {
+			const feedItems = [];
+			const candidates = all(
+				document,
+				'[data-e2e="feed-active-video"], .swiper-slide-active, [data-e2e-vid], li a[href*="/video/"]',
+			);
+			const ranked = candidates
+				.map((el) => ({el, ...viewportBox(el)}))
+				.filter((r) => r.overlap > 60)
+				.sort((a, b) => b.overlap - a.overlap || a.top - b.top);
+			for (const {el} of ranked) {
+				const card = el.tagName === 'A' ? el.closest('li, article, div') || el : el;
+				const attrId =
+					card.getAttribute?.('data-e2e-vid') || el.getAttribute?.('data-e2e-vid') || '';
+				const linkEl = el.tagName === 'A' ? el : query(card, 'a[href*="/video/"]');
+				const linkId = linkEl
+					? /\/video\/(\d{10,25})(?:\/?|\?|$)/.exec(
+							linkEl.getAttribute?.('href') || linkEl.href || '',
+						)?.[1]
+					: '';
+				const vid = /^\d{10,25}$/.test(attrId) ? attrId : linkId;
+				if (!vid) continue;
+				const title =
+					txt(query(card, '[data-e2e="video-desc"], .title, p')) ||
+					(query(card, 'img')?.getAttribute?.('alt') || '').trim() ||
+					vid;
+				const author = txt(
+					query(
+						card,
+						'[data-e2e="feed-video-nickname"], [data-e2e="video-author-name"], .account-name',
+					),
+				).replace(/^@/, '');
+				const entry = rawPost(
+					'douyin',
+					vid,
+					'https://www.douyin.com/video/' + vid,
+					title.slice(0, 140),
+					author,
+				);
+				entry.kind = 'video';
+				entry.mediaHint = 'video';
+				entry.bodyComplete = true;
+				feedItems.push(entry);
+			}
+			return {
+				type: 'feed',
+				platform: 'douyin',
+				folder: {platform: 'douyin', id: 'feed', name: '当前播放视频'},
+				items: dedup(feedItems),
+			};
+		}
+	}
+	if (['www.tiktok.com', 'tiktok.com'].includes(url.hostname)) {
+		const tkMatch = /^\/@([\w.-]+)\/video\/(\d+)\/?$/.exec(url.pathname);
+		if (tkMatch) {
+			const [, user, vid] = tkMatch;
+			const title =
+				txt(query(document, '[data-e2e="browse-video-desc"], [data-e2e="video-desc"], h1')) ||
+				String(document.title || '')
+					.replace(/\s*\|\s*TikTok$/i, '')
+					.trim() ||
+				vid;
+			const author =
+				txt(query(document, '[data-e2e="browse-username"], [data-e2e="video-author-uniqueid"]')) ||
+				'@' + user;
+			const entry = rawPost(
+				'tiktok',
+				vid,
+				'https://www.tiktok.com/@' + user + '/video/' + vid,
+				title.slice(0, 140),
+				author,
+			);
+			entry.kind = 'video';
+			entry.mediaHint = 'video';
+			entry.bodyComplete = true;
+			return {type: 'post', entry};
+		}
+		if (/^\/(?:foryou|following|explore)?\/?$/i.test(url.pathname)) {
+			const cards = all(
+				document,
+				'[data-e2e="recommend-list-item-container"], article, [data-e2e="explore-item"]',
+			);
+			const feedItems = [];
+			for (const {el} of cards
+				.map((el) => ({el, ...viewportBox(el)}))
+				.filter((r) => r.overlap > 60)
+				.sort((a, b) => a.top - b.top)) {
+				const link = query(el, 'a[href*="/video/"]');
+				const u = link && clean(link.href);
+				const m = u && /^\/@([\w.-]+)\/video\/(\d+)\/?$/.exec(u.pathname);
+				if (!m) continue;
+				const [, user, vid] = m;
+				const title =
+					txt(query(el, '[data-e2e="video-desc"], h1, h2')) ||
+					(query(el, 'img')?.getAttribute?.('alt') || '').trim() ||
+					vid;
+				const author =
+					txt(
+						query(el, '[data-e2e="video-author-uniqueid"], [data-e2e="video-author-nickname"]'),
+					) || '@' + user;
+				const entry = rawPost(
+					'tiktok',
+					vid,
+					'https://www.tiktok.com/@' + user + '/video/' + vid,
+					title.slice(0, 140),
+					author,
+				);
+				entry.kind = 'video';
+				entry.mediaHint = 'video';
+				entry.bodyComplete = true;
+				feedItems.push(entry);
+			}
+			if (feedItems.length || cards.length) {
+				return {
+					type: 'feed',
+					platform: 'tiktok',
+					folder: {platform: 'tiktok', id: 'feed', name: '当前屏幕视频'},
+					items: dedup(feedItems),
+				};
+			}
+		}
 	}
 	if (
 		zhihu &&
@@ -626,12 +874,142 @@ export function captureArchivePage(allowLoopback = false) {
 			document,
 		);
 	}
-	if (
-		['instagram.com', 'threads.com', 'threads.net', 'kuaishou.com'].includes(
-			url.hostname.replace(/^www\./, ''),
-		)
-	)
+	if (zhihu && /^\/question\/(\d+)\/?$/.test(url.pathname)) {
+		const qid = url.pathname.split('/')[2];
+		const qTitle =
+			txt(query(document, 'h1.QuestionHeader-title, h1')) ||
+			String(document.title || '')
+				.replace(/\s*[-–—]\s*知乎$/i, '')
+				.trim();
+		const rawAnswers = [
+			...new Set(all(document, '.AnswerItem, [itemprop="zhihu:answer"], .List-item .ContentItem')),
+		];
+		const visibleAnswers = rawAnswers
+			.map((el) => ({el, ...viewportBox(el)}))
+			.filter((r) => r.overlap > 60)
+			.sort((a, b) => a.top - b.top)
+			.map(({el}) => {
+				let aid = '';
+				const metaUrl = query(el, 'meta[itemprop="url"]')?.getAttribute?.('content') || '';
+				aid = /\/answer\/(\d+)/.exec(metaUrl)?.[1] || '';
+				if (!aid) {
+					const link = query(el, 'a[href*="/answer/"]');
+					aid = /\/answer\/(\d+)/.exec(link?.getAttribute?.('href') || link?.href || '')?.[1] || '';
+				}
+				if (!aid) {
+					try {
+						const zop = JSON.parse(el.getAttribute?.('data-zop') || '{}');
+						if (/^\d+$/.test(String(zop.itemId || ''))) aid = String(zop.itemId);
+					} catch {}
+				}
+				if (!aid) return null;
+				const author =
+					txt(query(el, '.AuthorInfo-name, [itemprop="author"] [itemprop="name"]')) ||
+					query(el, '[itemprop="author"] meta[itemprop="name"]')?.getAttribute?.('content') ||
+					'';
+				const rich = query(el, '.RichContent-inner .RichText, .RichContent-inner');
+				const body = rich ? markdown(rich) : '';
+				const attachments = rich
+					? collectDomMedia(rich, 'img,video', ['zhimg.com', 'zhihu.com'])
+					: [];
+				const hasVideo = attachments.some((a) => a.kind === 'video');
+				const hasImg = attachments.some((a) => a.kind === 'image');
+				const sourceUrl = 'https://www.zhihu.com/question/' + qid + '/answer/' + aid;
+				const title = author ? qTitle + ' - ' + author : qTitle || '知乎回答 ' + aid;
+				const entry = rawPost('zhihu', aid, sourceUrl, title.slice(0, 140), author);
+				entry.visitUrl = sourceUrl;
+				entry.body = body;
+				entry.bodyFormat = 'markdown';
+				entry.bodyComplete = Boolean(body) && !isTruncated(el);
+				entry.attachments = attachments;
+				entry.mediaHint = hasVideo ? 'video' : hasImg ? 'images' : 'text';
+				return entry;
+			})
+			.filter(Boolean);
+		if (visibleAnswers.length || rawAnswers.length) {
+			return {
+				type: 'feed',
+				platform: 'zhihu',
+				folder: {platform: 'zhihu', id: 'question-' + qid, name: qTitle || '当前屏幕回答'},
+				items: dedup(visibleAnswers),
+			};
+		}
+	}
+	const bareHost = url.hostname.replace(/^www\./, '');
+	if (['threads.com', 'threads.net'].includes(bareHost)) {
+		if (/^\/@[\w.]+\/post\/[\w-]+\/?$/.test(url.pathname)) return unsupported('unsupported_page');
+		const cards = all(document, 'article,[role="article"],[data-pressable-container="true"]');
+		const topCards = cards.filter(
+			(c) => !cards.some((parent) => parent !== c && parent.contains?.(c)),
+		);
+		const feedItems = topCards
+			.map((el) => ({el, ...viewportBox(el)}))
+			.filter((r) => r.overlap > 60)
+			.sort((a, b) => a.top - b.top)
+			.map(({el}) => {
+				const links = all(el, 'a[href]');
+				const ownLinks = links.filter((a) => {
+					const hostCard = a.closest?.(
+						'article,[role="article"],[data-pressable-container="true"]',
+					);
+					return !hostCard || hostCard === el;
+				});
+				const matchPost = (a) => {
+					const u = clean(a.href);
+					return u && /^\/@([\w.]+)\/post\/([\w-]+)\/?$/.exec(u.pathname);
+				};
+				const timeLink = ownLinks.find((a) => query(a, 'time') && matchPost(a));
+				const link = timeLink || ownLinks.find(matchPost);
+				const m = link && matchPost(link);
+				if (!m) return null;
+				const [, user, pid] = m;
+				const sourceUrl = url.origin + '/@' + user + '/post/' + pid;
+				const textNode = query(el, '[data-testid="post-text"]');
+				let body = textNode ? txt(textNode) : '';
+				if (!body) {
+					body = all(el, 'span[dir="auto"]')
+						.filter(
+							(s) => !s.closest?.('header,footer,button,time,a[href^="/@"]') && txt(s).length >= 3,
+						)
+						.map(txt)
+						.join('\n')
+						.trim();
+				}
+				const rawAttachments = collectDomMedia(el, 'img,video', [
+					'cdninstagram.com',
+					'fbcdn.net',
+					'instagram.com',
+					'threads.com',
+				]).filter(
+					(a) =>
+						!(a.kind === 'image' && /(?:profile (?:picture|photo)|avatar|头像)/i.test(a.alt || '')),
+				);
+				const hasVideo =
+					rawAttachments.some((a) => a.kind === 'video') || Boolean(query(el, 'video'));
+				const hasImg = rawAttachments.some((a) => a.kind === 'image');
+				const firstLine = body.split('\n').find((l) => l.trim()) || '';
+				const title = (firstLine || '@' + user + ' 的串文').slice(0, 120);
+				const entry = rawPost('threads', pid, sourceUrl, title, '@' + user);
+				entry.visitUrl = sourceUrl;
+				entry.body = body;
+				entry.bodyComplete = Boolean(body) && !isTruncated(el);
+				entry.attachments = rawAttachments;
+				entry.mediaHint = hasVideo ? 'video' : hasImg ? 'images' : 'text';
+				if (hasVideo && !body) entry.kind = 'video';
+				return entry;
+			})
+			.filter(Boolean);
+		if (feedItems.length || topCards.length) {
+			return {
+				type: 'feed',
+				platform: 'threads',
+				folder: {platform: 'threads', id: 'feed', name: '当前屏幕串文'},
+				items: dedup(feedItems),
+			};
+		}
 		return unsupported('unsupported_page');
+	}
+	if (['instagram.com', 'kuaishou.com'].includes(bareHost)) return unsupported('unsupported_page');
 	const article = zhihu
 		? query(
 				document,

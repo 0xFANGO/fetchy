@@ -27,7 +27,9 @@ export function isCollectionRoute(url) {
 	if (['threads.com', 'threads.net'].includes(host)) return /^\/saved\/?$/.test(url.pathname);
 	if (host === 'tiktok.com') return /^\/@[\w.]+(?:\/collection\/[^/]+)?\/?$/.test(url.pathname);
 	return (
-		host === 'douyin.com' && /^\/(?:user\/self|(?:collection|mix)\/\d+)\/?$/.test(url.pathname)
+		host === 'douyin.com' &&
+		!url.searchParams.has('modal_id') &&
+		/^\/(?:user\/self|(?:collection|mix)\/\d+)\/?$/.test(url.pathname)
 	);
 }
 export async function capture(tabId, attempts = 10) {

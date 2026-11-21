@@ -151,8 +151,7 @@ export function captureSocialPost() {
 		!root ||
 		root.querySelector(
 			'[aria-label="Next"],[aria-label="下一张"],[aria-roledescription="carousel"]',
-		) ||
-		attachments.some((a) => a.kind === 'image')
+		)
 	)
 		missing.push('original attachment count and quality unconfirmed');
 	if (!body && !attachments.length) return unavailable('source_not_ready');

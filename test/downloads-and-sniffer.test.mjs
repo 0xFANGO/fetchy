@@ -5,7 +5,9 @@ import os from 'node:os';
 import path from 'node:path';
 import test from 'node:test';
 import vm from 'node:vm';
+import {isCollectionRoute} from '../extension/archive-source.mjs';
 import {advanceArchivePage, captureArchivePage} from '../extension/capture-page.mjs';
+import {captureSocialPost} from '../extension/social-post.mjs';
 import {LibraryBridge} from '../native/library-bridge.mjs';
 import {installBrowserCompat} from '../src/browser-compat.mjs';
 import {installMediaSniffer} from '../src/browser-sniffer.mjs';
@@ -49,7 +51,7 @@ test('direct outputDir publishes single file as <title>.<ext> and multi-file as 
 		id: 'single1',
 		title: 'Single Photo',
 		sourceUrl: 'https://www.xiaohongshu.com/explore/single1',
-		body: 'one image',
+		body: '',
 		bodyComplete: true,
 		attachments: [{kind: 'image', url: origin + '/a.gif'}],
 	};
@@ -83,7 +85,9 @@ test('direct outputDir publishes single file as <title>.<ext> and multi-file as 
 	assert.ok(topEntries.includes('Gallery Post'), `expected Gallery Post dir in ${topEntries}`);
 
 	const galleryEntries = (await readdir(path.join(outputDir, 'Gallery Post'))).sort();
-	assert.deepEqual(galleryEntries, ['01.gif', '02.gif']);
+	assert.deepEqual(galleryEntries, ['01.gif', '02.gif', 'Gallery Post.md']);
+	const galleryMd = await readFile(path.join(outputDir, 'Gallery Post', 'Gallery Post.md'), 'utf8');
+	assert.match(galleryMd, /two images/);
 
 	// Search exposes published primaryFile & files in outputDir
 	const listed = await bridge.request('librarySearch', {});
@@ -92,7 +96,7 @@ test('direct outputDir publishes single file as <title>.<ext> and multi-file as 
 	assert.equal(rowSingle.primaryFile, path.join(realOut, 'Single Photo.gif'));
 	assert.deepEqual(rowSingle.files, [path.join(realOut, 'Single Photo.gif')]);
 	assert.equal(rowMulti.primaryFile, path.join(realOut, 'Gallery Post'));
-	assert.equal(rowMulti.files.length, 2);
+	assert.equal(rowMulti.files.length, 3);
 
 	// Rename updates published file in outputDir
 	await renameLibraryWork('xiaohongshu:single1', 'Renamed Photo', bridge.options);
@@ -1007,4 +1011,334 @@ test('X text and image+text posts publish Markdown files directly into outputDir
 	const listed = await bridge.request('librarySearch', {});
 	const rowText = listed.find((i) => i.key === 'x:9000000000000000001');
 	assert.equal(rowText.primaryFile, mdPath);
+});
+
+test('captureArchivePage recognizes single video pages for Bilibili, YouTube, Douyin and TikTok', () => {
+	// Bilibili multi-part video
+	const biliSnap = vm.runInNewContext('(' + captureArchivePage.toString() + ')(false)', {
+		URL,
+		URLSearchParams,
+		location: {href: 'https://www.bilibili.com/video/BV1xx411c7mD/?p=2'},
+		window: {innerHeight: 900},
+		document: {
+			title: '深入理解浏览器架构_哔哩哔哩_bilibili',
+			querySelector: (sel) => {
+				if (sel.includes('h1.video-title')) return {innerText: '深入理解浏览器架构'};
+				if (sel.includes('.up-name')) return {innerText: '技术UP主'};
+				return null;
+			},
+			querySelectorAll: () => [],
+		},
+	});
+	assert.equal(biliSnap.type, 'post');
+	assert.equal(biliSnap.entry.platform, 'bilibili');
+	assert.equal(biliSnap.entry.id, 'BV1xx411c7mD_p2');
+	assert.equal(biliSnap.entry.kind, 'video');
+	assert.equal(biliSnap.entry.sourceUrl, 'https://www.bilibili.com/video/BV1xx411c7mD/?p=2');
+	assert.equal(biliSnap.entry.title, '深入理解浏览器架构');
+	assert.equal(biliSnap.entry.author, '技术UP主');
+
+	// YouTube watch & shorts
+	const ytSnap = vm.runInNewContext('(' + captureArchivePage.toString() + ')(false)', {
+		URL,
+		URLSearchParams,
+		location: {href: 'https://www.youtube.com/shorts/dQw4w9WgXcQ'},
+		window: {innerHeight: 900},
+		document: {
+			title: '(2) Short Clip - YouTube',
+			querySelector: (sel) => {
+				if (sel.includes('ytd-reel-video-renderer[is-active] h2')) return {innerText: 'Short Clip'};
+				if (sel.includes('#channel-name')) return {innerText: 'Creator'};
+				return null;
+			},
+			querySelectorAll: () => [],
+		},
+	});
+	assert.equal(ytSnap.type, 'post');
+	assert.equal(ytSnap.entry.platform, 'youtube');
+	assert.equal(ytSnap.entry.id, 'dQw4w9WgXcQ');
+	assert.equal(ytSnap.entry.kind, 'video');
+	assert.equal(ytSnap.entry.sourceUrl, 'https://www.youtube.com/watch?v=dQw4w9WgXcQ');
+
+	// Douyin modal_id is excluded from collection route and captured as single video
+	assert.equal(
+		isCollectionRoute(new URL('https://www.douyin.com/user/self?modal_id=7345678901234567890')),
+		false,
+	);
+	assert.equal(isCollectionRoute(new URL('https://www.douyin.com/user/self')), true);
+	const dySnap = vm.runInNewContext('(' + captureArchivePage.toString() + ')(false)', {
+		URL,
+		URLSearchParams,
+		location: {href: 'https://www.douyin.com/user/self?modal_id=7345678901234567890'},
+		window: {innerHeight: 900},
+		document: {
+			title: '周末露营vlog - 抖音',
+			querySelector: (sel) => {
+				if (sel.includes('video-desc')) return {innerText: '周末露营vlog'};
+				if (sel.includes('video-author-name')) return {innerText: '@阿明'};
+				return null;
+			},
+			querySelectorAll: () => [],
+		},
+	});
+	assert.equal(dySnap.type, 'post');
+	assert.equal(dySnap.entry.platform, 'douyin');
+	assert.equal(dySnap.entry.id, '7345678901234567890');
+	assert.equal(dySnap.entry.kind, 'video');
+	assert.equal(dySnap.entry.author, '阿明');
+
+	// TikTok single video
+	const tkSnap = vm.runInNewContext('(' + captureArchivePage.toString() + ')(false)', {
+		URL,
+		URLSearchParams,
+		location: {href: 'https://www.tiktok.com/@chef/video/7345678901234567891'},
+		window: {innerHeight: 900},
+		document: {
+			title: 'Quick ramen | TikTok',
+			querySelector: (sel) => {
+				if (sel.includes('browse-video-desc')) return {innerText: 'Quick ramen recipe'};
+				return null;
+			},
+			querySelectorAll: () => [],
+		},
+	});
+	assert.equal(tkSnap.type, 'post');
+	assert.equal(tkSnap.entry.platform, 'tiktok');
+	assert.equal(tkSnap.entry.id, '7345678901234567891');
+	assert.equal(tkSnap.entry.kind, 'video');
+	assert.equal(tkSnap.entry.author, '@chef');
+});
+
+test('captureArchivePage returns viewport-synced feed for Xiaohongshu explore, Douyin home, Threads feed and Zhihu question', () => {
+	// Xiaohongshu /explore -> feed (viewport visible only, not collection)
+	const mkXhsCard = (id, title, top, bottom) => ({
+		getBoundingClientRect: () => ({top, bottom, left: 20, right: 240}),
+		querySelectorAll: (sel) =>
+			sel === 'a[href]' ? [{href: `https://www.xiaohongshu.com/explore/${id}?xsec_token=TOK`}] : [],
+		querySelector: (sel) => {
+			if (sel.includes('a.cover[href]'))
+				return {href: `https://www.xiaohongshu.com/explore/${id}?xsec_token=TOK`};
+			if (sel.includes('.title')) return {innerText: title};
+			if (sel.includes('.name')) return {innerText: '作者A'};
+			return null;
+		},
+	});
+	const xhsVis = mkXhsCard('111111111111111111111111', '可见笔记', 120, 420);
+	const xhsOff = mkXhsCard('222222222222222222222222', '屏外笔记', 1200, 1500);
+	const xhsScope = {
+		querySelectorAll: (sel) => (sel === '.note-item' ? [xhsVis, xhsOff] : []),
+	};
+	const xhsSnap = vm.runInNewContext('(' + captureArchivePage.toString() + ')(false)', {
+		URL,
+		URLSearchParams,
+		location: {href: 'https://www.xiaohongshu.com/explore'},
+		window: {innerHeight: 800},
+		document: {
+			title: '小红书 - 你的生活兴趣社区',
+			querySelector: (sel) => {
+				if (sel.includes('#exploreFeeds')) return xhsScope;
+				return null;
+			},
+			querySelectorAll: () => [],
+		},
+	});
+	assert.equal(xhsSnap.type, 'feed');
+	assert.equal(xhsSnap.platform, 'xiaohongshu');
+	assert.deepEqual(
+		[...xhsSnap.items].map((i) => i.id),
+		['111111111111111111111111'],
+	);
+
+	// Douyin home feed -> only viewport-active video, ignoring offscreen preloaded slides
+	const dyActive = {
+		tagName: 'DIV',
+		getBoundingClientRect: () => ({top: 0, bottom: 800, left: 0, right: 1200}),
+		getAttribute: (k) => (k === 'data-e2e-vid' ? '7345678901234567899' : null),
+		querySelector: (sel) => {
+			if (sel.includes('video-desc')) return {innerText: '当前正在看的抖音'};
+			if (sel.includes('feed-video-nickname')) return {innerText: '@创作者'};
+			return null;
+		},
+	};
+	const dyOff = {
+		tagName: 'DIV',
+		getBoundingClientRect: () => ({top: 900, bottom: 1700, left: 0, right: 1200}),
+		getAttribute: (k) => (k === 'data-e2e-vid' ? '7345678901234567800' : null),
+		querySelector: () => null,
+	};
+	const dyFeedSnap = vm.runInNewContext('(' + captureArchivePage.toString() + ')(false)', {
+		URL,
+		URLSearchParams,
+		location: {href: 'https://www.douyin.com/'},
+		window: {innerHeight: 800},
+		document: {
+			title: '抖音',
+			querySelector: () => null,
+			querySelectorAll: (sel) => (sel.includes('feed-active-video') ? [dyActive, dyOff] : []),
+		},
+	});
+	assert.equal(dyFeedSnap.type, 'feed');
+	assert.equal(dyFeedSnap.platform, 'douyin');
+	assert.deepEqual(
+		[...dyFeedSnap.items].map((i) => i.id),
+		['7345678901234567899'],
+	);
+
+	// Threads home feed -> viewport-synced feed
+	const thCard = {
+		contains: () => false,
+		getBoundingClientRect: () => ({top: 80, bottom: 380, left: 0, right: 600}),
+		querySelector: (sel) => {
+			if (sel === '[data-testid="post-text"]') return {innerText: 'Threads 上的纯文字思考'};
+			return null;
+		},
+		querySelectorAll: (sel) => {
+			if (sel === 'a[href]')
+				return [
+					{
+						href: 'https://www.threads.com/@builder/post/C9abc123',
+						closest: () => thCard,
+						querySelector: (s) => (s === 'time' ? {} : null),
+					},
+				];
+			return [];
+		},
+	};
+	const thSnap = vm.runInNewContext('(' + captureArchivePage.toString() + ')(false)', {
+		URL,
+		URLSearchParams,
+		location: {href: 'https://www.threads.com/'},
+		window: {innerHeight: 800},
+		document: {
+			title: 'Threads',
+			querySelector: () => null,
+			querySelectorAll: (sel) => (sel.includes('data-pressable-container') ? [thCard] : []),
+		},
+	});
+	assert.equal(thSnap.type, 'feed');
+	assert.equal(thSnap.platform, 'threads');
+	assert.equal(thSnap.items.length, 1);
+	assert.equal(thSnap.items[0].id, 'C9abc123');
+	assert.equal(thSnap.items[0].mediaHint, 'text');
+
+	// Zhihu question page -> viewport-synced answers
+	const richNode = {
+		childNodes: [{nodeType: 3, textContent: '这是一段完整的知乎回答内容。'}],
+		querySelectorAll: () => [],
+	};
+	const zhCard = {
+		getBoundingClientRect: () => ({top: 100, bottom: 500, left: 0, right: 700}),
+		getAttribute: () => null,
+		querySelector: (sel) => {
+			if (sel === 'meta[itemprop="url"]')
+				return {getAttribute: () => 'https://www.zhihu.com/question/555/answer/999'};
+			if (sel.includes('.AuthorInfo-name')) return {innerText: '答主甲'};
+			if (sel.includes('.RichContent-inner')) return richNode;
+			return null;
+		},
+		querySelectorAll: () => [],
+	};
+	const zhSnap = vm.runInNewContext('(' + captureArchivePage.toString() + ')(false)', {
+		URL,
+		URLSearchParams,
+		location: {href: 'https://www.zhihu.com/question/555'},
+		window: {innerHeight: 800},
+		document: {
+			title: '如何评价某技术 - 知乎',
+			querySelector: (sel) =>
+				sel.includes('QuestionHeader-title') ? {innerText: '如何评价某技术'} : null,
+			querySelectorAll: (sel) => (sel.includes('.AnswerItem') ? [zhCard] : []),
+		},
+	});
+	assert.equal(zhSnap.type, 'feed');
+	assert.equal(zhSnap.platform, 'zhihu');
+	assert.equal(zhSnap.items.length, 1);
+	assert.equal(zhSnap.items[0].id, '999');
+	assert.equal(zhSnap.items[0].sourceUrl, 'https://www.zhihu.com/question/555/answer/999');
+	assert.equal(zhSnap.items[0].bodyComplete, true);
+});
+
+test('media sniffer ignores batch-preloaded Douyin home feed JSON APIs', async () => {
+	const mockWindow = {
+		top: null,
+		location: {href: 'https://www.douyin.com/', hostname: 'www.douyin.com'},
+		addEventListener: () => {},
+		fetch: async () => ({
+			ok: true,
+			url: 'https://www.douyin.com/aweme/v1/web/tab/feed/',
+			headers: {
+				get: (k) => (k.toLowerCase() === 'content-type' ? 'application/json' : ''),
+			},
+			clone() {
+				return {
+					text: async () =>
+						JSON.stringify({
+							aweme_list: [
+								{
+									desc: '未看过的预加载视频',
+									video: {play_addr: {url_list: ['https://v26.douyinvod.com/preloaded/video.mp4']}},
+								},
+							],
+						}),
+				};
+			},
+		}),
+	};
+	mockWindow.top = mockWindow;
+	vm.runInNewContext('(' + installMediaSniffer.toString() + ')()', {
+		window: mockWindow,
+		location: mockWindow.location,
+		document: {title: '抖音', querySelectorAll: () => [], addEventListener: () => {}},
+		performance: {getEntriesByType: () => []},
+		URL,
+		setInterval: () => 0,
+	});
+	await mockWindow.fetch('https://www.douyin.com/aweme/v1/web/tab/feed/');
+	await new Promise((r) => setTimeout(r, 20));
+	assert.equal(mockWindow.__fetchySniffer.list().length, 0);
+});
+
+test('captureSocialPost does not flag non-carousel single-image posts as missing attachments', () => {
+	const makeImg = () => ({
+		tagName: 'IMG',
+		currentSrc: 'https://scontent.cdninstagram.com/v/single.jpg',
+		alt: 'Photo caption',
+		naturalWidth: 1080,
+		closest: () => null,
+		getBoundingClientRect: () => ({x: 0, y: 0, width: 600, height: 600}),
+		getAttribute: () => null,
+	});
+	const runWith = (hasCarousel) => {
+		const postEl = {
+			matches: () => true,
+			querySelector: (sel) => {
+				if (sel.includes('post-text')) return {innerText: 'Single photo post'};
+				if (sel.includes('carousel') && hasCarousel) return {};
+				return null;
+			},
+			querySelectorAll: (sel) => {
+				if (sel === 'a[href]') return [{href: 'https://www.instagram.com/p/ABC123/'}];
+				if (sel === 'img,video') return [makeImg()];
+				return [];
+			},
+		};
+		return vm.runInNewContext('(' + captureSocialPost.toString() + ')()', {
+			URL,
+			location: new URL('https://www.instagram.com/p/ABC123/'),
+			document: {
+				querySelector: (sel) => {
+					if (sel === 'link[rel=canonical]') return {href: 'https://www.instagram.com/p/ABC123/'};
+					if (sel === 'meta[property="og:description"]') return {content: 'Single photo post'};
+					return null;
+				},
+				querySelectorAll: (sel) => (sel.includes('article') ? [postEl] : []),
+			},
+		});
+	};
+	const single = runWith(false);
+	assert.equal(single.type, 'post');
+	assert.equal(single.entry.missing.length, 0);
+	const carousel = runWith(true);
+	assert.equal(carousel.type, 'post');
+	assert.ok(carousel.entry.missing.includes('original attachment count and quality unconfirmed'));
 });

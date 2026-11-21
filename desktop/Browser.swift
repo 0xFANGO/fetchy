@@ -1758,6 +1758,7 @@ private func normalizedPostReadUrl(_ raw: String) -> String {
   @Published var postTitle = ""
   @Published var postMeta = ""
   @Published var postPreview = ""
+  @Published var postIsVideo = false
   @Published var folderName = ""
   @Published var items: [PanelItem] = []
   @Published var selected: Set<String> = []
@@ -1848,23 +1849,31 @@ private func normalizedPostReadUrl(_ raw: String) -> String {
       let videos = attachments.filter { $0["kind"] as? String == "video" }.count
       let isVideoPost = (entry["kind"] as? String == "video") || videos > 0
       let isArticle = (entry["kind"] as? String == "article") || (entry["bodyFormat"] as? String == "markdown")
+      let bodyText = (entry["body"] as? String ?? "").trimmingCharacters(in: .whitespacesAndNewlines)
+      postIsVideo = isVideoPost
       let formatTag: String
       if isVideoPost {
         formatTag = videos > 1 ? "\(videos) 个视频 · MP4" : "视频 · MP4"
       } else if isArticle {
         formatTag = images > 0 ? "长文 · Markdown + \(images) 图" : "长文 · Markdown"
       } else if images > 0 {
-        formatTag = (entry["platform"] as? String == "x") ? "图文 · Markdown + \(images) 图" : "\(images) 张图片"
+        formatTag = !bodyText.isEmpty ? "图文 · Markdown + \(images) 图" : "\(images) 张图片"
       } else {
         formatTag = "文字 · Markdown"
       }
       postTitle =
         (entry["title"] as? String).flatMap { $0.isEmpty ? nil : $0 }
         ?? (entry["id"] as? String ?? "")
+      let completenessTag: String
+      if isVideoPost {
+        completenessTag = bodyText.isEmpty ? "高清合流" : ""
+      } else {
+        completenessTag = entry["bodyComplete"] as? Bool == true ? "正文完整" : "保存时自动补全正文"
+      }
       postMeta = [
         entry["author"] as? String ?? "",
         formatTag,
-        entry["bodyComplete"] as? Bool == true ? "正文完整" : "保存时自动补全正文",
+        completenessTag,
       ].filter { !$0.isEmpty }.joined(separator: " · ")
       postPreview = String((entry["body"] as? String ?? "").prefix(280))
       browser?.syncSidePanelVisibility(for: "post")
@@ -2106,8 +2115,15 @@ private func normalizedPostReadUrl(_ raw: String) -> String {
           }
         } else if snapType == "folders" && self.kind != "folders" {
           self.applySnapshot(page, mine: mine)
-        } else if snapType == "post" && self.kind != "post" {
-          self.applySnapshot(page, mine: mine)
+        } else if snapType == "post" {
+          let nextEntry = page["entry"] as? [String: Any]
+          let nextKey = nextEntry.flatMap { self.key($0) }
+          let nextTitle = (nextEntry?["title"] as? String) ?? ""
+          if self.kind != "post" || nextKey != self.post.flatMap(self.key)
+            || (!nextTitle.isEmpty && nextTitle != self.postTitle)
+          {
+            self.applySnapshot(page, mine: mine)
+          }
         }
       }
     }
@@ -2448,7 +2464,7 @@ struct SitePanel: View {
       if !panel.postPreview.isEmpty {
         Text(panel.postPreview).font(.callout).lineLimit(5).foregroundStyle(.secondary)
       }
-      Button(panel.submitting ? "正在加入队列…" : "保存这篇帖子") {
+      Button(panel.submitting ? "正在加入队列…" : (panel.postIsVideo ? "下载这个视频" : "保存这篇帖子")) {
         Task { await panel.savePost() }
       }
       .buttonStyle(.borderedProminent)
@@ -2463,12 +2479,12 @@ struct SitePanel: View {
           Text("当前屏幕可见 (\(panel.items.count))").font(.headline)
           Spacer()
         }
-        Text("仅同步当前窗口里正在浏览的帖子；点进单帖或书签页可批量保存。")
+        Text("仅同步当前屏幕可见内容，点击右侧即可单独保存；进入收藏夹可批量下载。")
           .font(.caption).foregroundStyle(.secondary)
       }
 
       if panel.items.isEmpty {
-        Text("继续滚动即可识别当前屏幕上的帖子。")
+        Text("继续浏览或滚动即可识别当前屏幕上的内容。")
           .font(.caption).foregroundStyle(.secondary)
           .padding(.vertical, 6)
       } else {
@@ -2501,7 +2517,7 @@ struct SitePanel: View {
                   .font(.caption2)
                   .foregroundStyle(.secondary)
               } else {
-                Button("保存") {
+                Button(item.isVideo ? "下载" : "保存") {
                   Task { await panel.saveSingleItem(item) }
                 }
                 .controlSize(.small)

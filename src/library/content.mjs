@@ -507,9 +507,9 @@ export function renderPostMarkdown(item, attachmentRelNames = []) {
  * Materialize verified media attachments and text/article posts directly into the user's
  * downloads folder with readable filenames:
  * - Pure text/article posts (e.g. X text/article) -> `<outputDir>/<title>.md`
- * - X/Threads/Zhihu image+text posts -> `<outputDir>/<title>/<title>.md` + `01.<ext>...`
- * - Single-media items (video/audio/photo) -> `<outputDir>/<title>.<ext>`
- * - Multi-media galleries (e.g. Xiaohongshu) -> `<outputDir>/<title>/01.<ext>, 02.<ext>...`
+ * - Image+text posts (X/Threads/Zhihu/Xiaohongshu/Instagram) -> `<outputDir>/<title>/<title>.md` + `01.<ext>...`
+ * - Single-media items (video/audio/bodyless photo) -> `<outputDir>/<title>.<ext>`
+ * - Multi-media galleries without text -> `<outputDir>/<title>/01.<ext>, 02.<ext>...`
  */
 export async function publishLibraryMedia(root, item, outputDir) {
 	if (!outputDir) return {savedFiles: [], savedDir: null};
@@ -537,7 +537,7 @@ export async function publishLibraryMedia(root, item, outputDir) {
 	}
 
 	const includeMarkdown =
-		['x', 'threads', 'zhihu'].includes(item.platform) &&
+		['x', 'threads', 'zhihu', 'xiaohongshu', 'instagram'].includes(item.platform) &&
 		hasBody &&
 		ready.every((a) => a.kind === 'image');
 
@@ -637,9 +637,24 @@ export async function renamePublishedMedia(item) {
 					await rename(item.savedDir, target);
 					const prevPrefix = item.savedDir + path.sep;
 					item.savedDir = target;
-					item.savedFiles = (item.savedFiles ?? []).map((f) =>
-						f.startsWith(prevPrefix) ? path.join(target, f.slice(prevPrefix.length)) : f,
-					);
+					const nextFiles = [];
+					for (const f of item.savedFiles ?? []) {
+						const moved = f.startsWith(prevPrefix)
+							? path.join(target, f.slice(prevPrefix.length))
+							: f;
+						if (moved.endsWith('.md') && path.dirname(moved) === target) {
+							const nextMd = path.join(target, stem + '.md');
+							if (nextMd !== moved) {
+								try {
+									await rename(moved, nextMd);
+									nextFiles.push(nextMd);
+									continue;
+								} catch {}
+							}
+						}
+						nextFiles.push(moved);
+					}
+					item.savedFiles = nextFiles;
 					for (const a of item.attachments ?? []) {
 						if (a.savedPath?.startsWith(prevPrefix))
 							a.savedPath = path.join(target, a.savedPath.slice(prevPrefix.length));

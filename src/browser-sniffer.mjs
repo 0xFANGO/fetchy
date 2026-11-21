@@ -336,13 +336,32 @@ export function installMediaSniffer() {
 		'text/xml',
 	]);
 
+	const FEED_NOISE_API_RE =
+		/\/(?:related|recommend|homefeed|tab\/feed|web\/tab\/feed|aweme\/post)(?:\/|$)/i;
+
 	function isWhitelistedJsonVideoApi(rawUrl) {
 		const pageHost = String(location?.hostname || '').replace(/^www\./, '');
 		if (!JSON_VIDEO_HOST_RE.test(pageHost)) return false;
 		try {
+			const pageUrl = new URL(location.href);
+			const pagePath = pageUrl.pathname || '/';
+			if (/(?:^|\.)(?:douyin\.com|iesdouyin\.com)$/i.test(pageHost)) {
+				const onSingleVideo =
+					/^\/(?:share\/)?video\/\d+/i.test(pagePath) ||
+					/^\d{10,25}$/.test(pageUrl.searchParams.get('modal_id') || '');
+				if (!onSingleVideo) return false;
+			}
+			if (/(?:^|\.)(?:xiaohongshu\.com|rednote\.com)$/i.test(pageHost)) {
+				const onSingleNote =
+					/^\/(?:explore|discovery\/item|user\/profile\/[a-f\d]+|board\/[\w-]+)\/[a-f\d]{24}/i.test(
+						pagePath,
+					);
+				if (!onSingleNote) return false;
+			}
 			const u = new URL(rawUrl, location.href);
 			if (!JSON_VIDEO_HOST_RE.test(u.hostname)) return false;
 			if (AUTH_PATH_RE.test(u.pathname)) return false;
+			if (FEED_NOISE_API_RE.test(u.pathname)) return false;
 			return JSON_VIDEO_PATH_RE.test(u.pathname);
 		} catch {
 			return false;
