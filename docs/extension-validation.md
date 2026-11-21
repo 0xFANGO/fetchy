@@ -1,8 +1,31 @@
 # 扩展实现与验收记录
 
-日期：2026-10-25（Asia/Shanghai）。本文件区分模拟/离线证据与真实插件证据，持续记录实际完成的验证。
+本页按日期记录真实浏览器、扩展弹窗、本机组件与离线测试的验证结果。
 
-## 当前状态
+## 2026-11-18 当前页正文和附件
+
+在正常浏览器打开两篇已获许可的 Threads 帖子，以扩展的当前页提取器定位原帖，按顺序保存正文和六份附件，再从本地资料库逐份比对字节和解码。两篇正文均与页面显示完全一致。其中一篇轮播未能确认原始总数，资料库保留为部分保存。Instagram Reel 当前页提取只取得部分正文。快手页面可见播放器，但提取器没有取得该播放器的可保存地址。下方历史工具栏结果记录了另一条视频下载路径。[本次当前页验收和样例](platform-validation.md#current-page-capture) · [各站能力与缺项](platforms.md)
+
+同批次重开[此前验证的抖音作品](https://www.douyin.com/jingxuan?modal_id=7695202760953793827)，从实际浏览器页用扩展的 `extractPageMedia` 取得 11 个属于目标作品的候选。把本页媒体交给公开核心 API 后，保存了 576×1024 H.264 + AAC，2,082.066667 秒、173,315,309 字节的 MP4。独立 ffprobe 检查和 FFmpeg 全片解码均通过。此次覆盖页面提取和浏览器下载引擎，历史工具栏点击链路单独记录在下方。
+
+## 2026-11-18 Chrome 工具栏实测：X 和 Instagram
+
+macOS arm64，Google Chrome for Testing 157.0.8103.50（headless），独立的浏览器配置、Native Messaging 注册和输出目录，使用项目锁定的 yt-dlp，未登录平台。通过 `chrome.action.openPopup()` 打开工具栏弹窗，在输入框粘贴公开链接并点击下载。任务开始解析后关闭并重新打开弹窗，四次都恢复了原任务 ID，随后显示完成。
+
+| 弹窗输入                                                                               | 重新打开后恢复的任务 ID                |
+| -------------------------------------------------------------------------------------- | -------------------------------------- |
+| [X · Mauna Loa](https://x.com/USGSVolcanoes/status/1600252502217211904)                | `759b49c5-c7f7-4167-845d-8d90b6ae74a0` |
+| [X · Kīlauea](https://x.com/USGSVolcanoes/status/1666492380332056607)                  | `556525e5-9cfe-4e93-906f-b2634367b861` |
+| [Instagram · NASA 行星防御纪录片预告](https://www.instagram.com/reel/Dd1gQBsCWE8/)     | `71e5b68e-0c95-4b95-bb82-e5c9278c94b7` |
+| [Instagram · NASA Johnson 空间站出舱任务](https://www.instagram.com/reel/DfF3eqGSKKc/) | `a9ee7fe9-4700-474c-ba1f-caa02d919277` |
+
+四份文件都在测试浏览器断网后从本地播放成功。独立 ffprobe 核对的尺寸、音视频编码、时长和字节数，分别与同一帖子在 [CLI 实测表](validation.md) 中的数值一致。分别运行 `ffmpeg -nostdin -v error -xerror -protocol_whitelist file,pipe -i <文件> -map 0:v -map '0:a?' -f null -` 均退出 0。本轮覆盖两站的单视频链接和弹窗任务恢复。其余内容类型和收藏支持见[逐站能力表](platforms.md)。
+
+另在 [NASA 的 Reel 作者路径](https://www.instagram.com/nasa/reel/Dd1gQBsCWE8/) 打开工具栏，扩展通过当前标签页自动识别作品。把 [NASA Johnson 的复数路径](https://www.instagram.com/reels/DfF3eqGSKKc/) 粘贴到弹窗也能保存。两次均在下载开始后关闭、重开弹窗，恢复同一个任务；成品可离线播放并通过全片解码，SHA-256 分别与对应规范链接的成品一致。
+
+同一条 Mauna Loa 链接在 v0.3.1 和本次源码构建中的工具栏识别结果（360 × 580）。[v0.3.1 弹窗](assets/validation/x-post-before.png) · [新增 X 适配后的弹窗](assets/validation/x-post-ready.png)
+
+## 2026-10-25 验收状态
 
 Manifest V3 弹窗、后台任务控制、本地 Native Messaging 桥接、目录选择/校验/持久化、Finder 定位、统一封面字段及按视频标题命名已实现。已构建可加载目录 `dist/extension`，并在本机注册 Ego Lite host；安装检测 Node、yt-dlp、FFmpeg、ffprobe、ego-browser 均可用。
 
@@ -91,6 +114,8 @@ Manifest V3 弹窗、后台任务控制、本地 Native Messaging 桥接、目�
 不带参数的历史链接未返回目标视频。随后用户提供的完整链接 `6adcbe7100000000330356ba` 能识别标题与 213.3 秒时长，但插件下载返回 `output_invalid`，未显示已保存，失败任务文件被清理。
 
 对该链接进行一次独立核心诊断（仅用于查错，不计作插件成功样例），ffprobe 返回 video=true、audio=false、duration=213.3、expectedDuration=213.3、exitCode=0。即当次所选媒体有完整时长的视频轨，却没有音频轨；不能把它推断为原视频本来无声。保持音频校验要求，没有用放宽校验让失败样例显示成功。该样例的媒体候选/分离音轨兼容性仍是后续边界。
+
+2026-11-18 又用该作品的公开裸链接在普通浏览器复测。页面没有播放器，也没有为目标作品提供可匹配的播放信息，核心返回 `browser_state_missing`。同一链接走匿名 CLI 返回 `no_formats`。因此 213.3 秒是早期文件的实测时长，本次没有取得可供再次检查的文件。离线回归另用 FFmpeg 生成时长符合要求的无音轨 MP4，确认浏览器引擎仍返回 `output_invalid`、清理本次暂存文件并保留已有文件。
 
 用户另换 `6adb498d000000003300e468` 后，真实插件任务 `481b4568-2bed-44d5-87aa-7693831ef97f` 为 completed，字节数与实际文件一致，并检出视频和音频。成功输出与上表对应。原始分享访问参数没有写入本记录或版本库。
 

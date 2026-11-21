@@ -1,10 +1,21 @@
-import {copyFile, chmod, mkdir, mkdtemp, readFile, realpath, rm, stat} from 'node:fs/promises';
+import {siteForPlatform} from './sites/index.mjs';
+import {
+	copyFile,
+	chmod,
+	mkdir,
+	mkdtemp,
+	readFile,
+	realpath,
+	rm,
+	stat,
+	writeFile,
+} from 'node:fs/promises';
 import {tmpdir} from 'node:os';
 import path from 'node:path';
 import {EngineError, fileWriteError, runProcess} from './process.mjs';
 import {ensureCompatibleMp4} from './mp4.mjs';
 import {pickPublicThumbnail} from './thumbnails.mjs';
-import {publishVideoFile} from './filenames.mjs';
+import {publishAudioFile, publishVideoFile} from './filenames.mjs';
 
 export {EngineError} from './process.mjs';
 
@@ -12,6 +23,8 @@ const COMMON_ARGS = [
 	'--ignore-config',
 	'--no-plugin-dirs',
 	'--no-playlist',
+	'--playlist-end',
+	'2',
 	'--no-progress',
 	'--no-warnings',
 	'--retries',
@@ -45,15 +58,15 @@ export function classifyEngineError(text = '') {
 	if (storageError) return storageError;
 	if (/DRM|digital rights management/i.test(text))
 		return new EngineError('drm', '该内容包含 DRM 保护，无法通过此方法下载。');
+	if (/no suitable extractor|unsupported url/i.test(text))
+		return new EngineError('unsupported_content', '此链接未提供本站可保存的媒体。');
 	if (/fresh cookies/i.test(text))
 		return new EngineError('session_required', '平台需要有效浏览器会话，请使用 browser 引擎。');
 	if (/captcha|verify you|verification|not a bot|sign in to confirm|验证码|验证/i.test(text))
 		return new EngineError('verification_required', '平台要求验证，请在浏览器完成验证后重试。');
-	if (
-		/login|log in|sign in|authentication|cookies|members.only|premium|purchase|会员|登录/i.test(
-			text,
-		)
-	)
+	if (/members.only|premium|purchase|会员/i.test(text))
+		return new EngineError('premium_required', '该内容需要会员或购买。');
+	if (/login|log in|sign in|authentication|access restricted|cookies|登录/i.test(text))
 		return new EngineError('auth_required', '该内容需要有效的登录或访问权限。');
 	if (
 		/ffmpeg.*not (?:installed|found)|ffprobe.*not (?:installed|found)|no supported javascript runtime|EJS.*not|No such file or directory/i.test(
@@ -61,10 +74,14 @@ export function classifyEngineError(text = '') {
 		)
 	)
 		return new EngineError('dependency_missing', '缺少下载所需的本地依赖。');
-	if (/requested format is not available|no video formats|no formats|only images/i.test(text))
+	if (
+		/requested format is not available|no video (?:formats|could be found)|no formats|only images|is not a video/i.test(
+			text,
+		)
+	)
 		return new EngineError('no_formats', '没有符合要求的视频格式。');
 	if (
-		/not available|unavailable|deleted|removed|private video|not found|404|geo.?restrict|not support|直播/i.test(
+		/not available|unavailable|does not exist|deleted|removed|private video|not found|404|geo.?restrict|not support|直播/i.test(
 			text,
 		)
 	)
@@ -126,8 +143,20 @@ function formatSelector(options, compatible = false) {
 	return `bv*${height}${protocol}${avc}${compatibleAudio}+ba${protocol}${aac}/b${height}${protocol}${avc}${aac}/bv${height}${protocol}${avc}+ba${protocol}/b${height}${protocol}${avc}/${source}`;
 }
 
-function argsFor(options, compatible = false) {
-	const args = [...COMMON_ARGS, '--format', formatSelector(options, compatible)];
+function argsFor(target, options, compatible = false, kind = 'video') {
+	const site = siteForPlatform(target.platform);
+	const fallback = !compatible && site?.kind === 'mixed' ? '/ba' : '';
+	// options.audioFromVideo: the caller asked for the sound of a video; a muxed format will do.
+	const selector =
+		kind === 'audio'
+			? options.audioFromVideo
+				? 'ba/b'
+				: 'ba/b[vcodec=none]'
+			: formatSelector(options, compatible) + fallback;
+	const args = [...COMMON_ARGS, '--format', selector];
+	const extractor = target.extractor ?? site?.extractor;
+	if (extractor)
+		args.push('--use-extractors', target.extractorName ?? site?.extractorName ?? extractor);
 	// This project already requires Node >= 22; make it available for YouTube's JS challenges.
 	args.push('--js-runtimes', `node:${process.execPath}`);
 	if (options.ffmpegLocation) args.push('--ffmpeg-location', options.ffmpegLocation);
@@ -194,27 +223,54 @@ function selectedFormats(info) {
 	return [info];
 }
 
-function assertIdentity(target, info) {
-	const id = String(info.id ?? '');
-	let matches = id === target.id;
-	if (target.platform === 'bilibili') {
-		const page = target.page ?? 1;
-		if (/^BV[\w]{10}$/.test(target.id)) {
-			matches = (id === target.id && page === 1) || id === target.id + '_p' + page;
-		} else if (/^av\d+$/.test(target.id)) {
-			// Upstream maps AV IDs to BV IDs and retains the original aid/part archive alias.
-			const aliases = Array.isArray(info._old_archive_ids) ? info._old_archive_ids : [];
-			matches = aliases.includes('bilibili ' + target.id.slice(2) + '_part' + page);
-		}
-	}
-	if (!matches)
+function assertIdentity(target, info, expectedSourceId) {
+	const site = siteForPlatform(target.platform);
+	const extractor = target.extractor ?? site?.extractor;
+	const sourceMatches = site?.matchesSource
+		? site.matchesSource(target, info)
+		: String(info.id ?? '') === target.id;
+	if (
+		!sourceMatches ||
+		(extractor && info.extractor_key !== extractor) ||
+		(expectedSourceId !== undefined && String(info.id) !== String(expectedSourceId))
+	) {
 		throw new EngineError('wrong_video', '解析结果与目标视频或分 P 不一致，已停止下载。');
+	}
 }
 
-async function metadata(target, options) {
+function withoutCookies(value) {
+	if (Array.isArray(value)) return value.map(withoutCookies);
+	if (!value || typeof value !== 'object') return value;
+	return Object.fromEntries(
+		Object.entries(value)
+			.filter(([key]) => key !== 'cookies')
+			.map(([key, inner]) => [
+				key,
+				key === 'http_headers' && inner && typeof inner === 'object'
+					? Object.fromEntries(
+							Object.entries(inner).filter(([name]) => name.toLowerCase() !== 'cookie'),
+						)
+					: withoutCookies(inner),
+			]),
+	);
+}
+
+async function metadata(target, options, kind) {
+	const site = siteForPlatform(target.platform);
+	if (
+		(site?.kind === 'audio' && kind !== 'audio') ||
+		(kind === 'audio' && !['audio', 'mixed'].includes(site?.kind) && !options.audioFromVideo)
+	)
+		throw new EngineError('unsupported_content', '该链接不属于此命令支持的媒体类型。');
 	const result = await runProcess(
 		options.ytDlpPath ?? 'yt-dlp',
-		[...argsFor(options), '--dump-single-json', '--skip-download', '--', target.url],
+		[
+			...argsFor(target, options, false, kind),
+			'--dump-single-json',
+			'--skip-download',
+			'--',
+			target.url,
+		],
 		{
 			signal: options.signal,
 			timeoutMs: Math.min(options.timeoutMs ?? 60_000, 60_000),
@@ -223,7 +279,7 @@ async function metadata(target, options) {
 	if (result.code !== 0) throw classifyEngineError(result.stderr);
 	const info = parseObject(result.stdout);
 	if (info._type === 'playlist' || Array.isArray(info.entries))
-		throw new EngineError('unavailable', '当前方法只接受单个视频，不下载整个合集。');
+		throw new EngineError('unavailable', '请提供单个作品的链接。');
 	if (info.is_live || ['is_live', 'is_upcoming', 'post_live'].includes(info.live_status))
 		throw new EngineError('unavailable', '当前版本不下载直播或尚未完成处理的视频。');
 	assertIdentity(target, info);
@@ -234,14 +290,25 @@ async function metadata(target, options) {
 	)
 		throw new EngineError('drm', '该内容包含 DRM 保护。');
 	if (
+		kind === 'video' &&
+		site?.kind === 'mixed' &&
+		formats.length &&
+		formats.every((item) => item.vcodec === 'none') &&
+		formats.some((item) => item.acodec && item.acodec !== 'none')
+	)
+		throw new EngineError('no_video', '该作品只含音频。');
+	if (
 		!formats.some(
 			(item) =>
-				codecPresent(item.vcodec) !== false &&
+				(kind === 'audio'
+					? (item.vcodec === 'none' || options.audioFromVideo) &&
+						codecPresent(item.acodec) !== false
+					: codecPresent(item.vcodec) !== false) &&
 				item.has_drm !== true &&
 				(item.url || item.format_id),
 		)
 	) {
-		throw new EngineError('no_formats', '没有可下载的视频格式。');
+		throw new EngineError('no_formats', '没有可下载的媒体格式。');
 	}
 	return info;
 }
@@ -284,11 +351,11 @@ function publicMetadata(target, info) {
 	};
 }
 
-export async function resolveWithYtDlp(target, options = {}) {
+export async function resolveWithYtDlp(target, options = {}, kind = 'video') {
 	optionsChecked(options);
 	emit(options, 'resolving');
 	return withCookies(options, async (settings) =>
-		publicMetadata(target, await metadata(target, settings)),
+		publicMetadata(target, await metadata(target, settings, kind)),
 	);
 }
 
@@ -306,7 +373,7 @@ async function validateTaskFile(filepath, directory) {
 	return outputStat;
 }
 
-async function validateOutput(filepath, directory, info, options) {
+async function validateOutput(filepath, directory, info, options, kind) {
 	const outputStat = await validateTaskFile(filepath, directory);
 	const result = await runProcess(
 		options.ffprobePath ?? 'ffprobe',
@@ -335,20 +402,38 @@ async function validateOutput(filepath, directory, info, options) {
 	const expectAudio =
 		expected.some((value) => value === true) || expected.some((value) => value === null);
 	const durationSeconds = Number(probe.format?.duration);
-	if (
-		!videoStreams.length ||
-		(expectAudio && !audioStreams.length) ||
-		!Number.isFinite(durationSeconds) ||
-		durationSeconds <= 0
-	) {
-		throw new EngineError('output_invalid', '下载文件缺少视频、预期音频或有效时长。');
-	}
+	if (!Number.isFinite(durationSeconds) || durationSeconds <= 0)
+		throw new EngineError('output_invalid', '下载文件没有有效时长。');
 	if (
 		number(info.duration) > 0 &&
 		durationSeconds < info.duration - Math.max(3, info.duration * 0.01)
 	) {
 		throw new EngineError('output_invalid', '下载文件的时长明显短于源视频，可能不完整。');
 	}
+	if (kind === 'audio') {
+		if (
+			videoStreams.length ||
+			!audioStreams.length ||
+			audioStreams.some((stream) => stream.codec_name !== 'aac') ||
+			path.extname(filepath).toLowerCase() !== '.m4a' ||
+			!String(probe.format?.format_name).split(',').includes('mp4')
+		)
+			throw new EngineError('output_invalid', '下载文件缺少可用的 M4A 音频轨。');
+		return {
+			bytes: outputStat.size,
+			validation: {
+				video: false,
+				audio: true,
+				durationSeconds,
+				container: 'm4a',
+				audioCodec: 'aac',
+				method: 'ffprobe',
+				fullDecode: false,
+			},
+		};
+	}
+	if (!videoStreams.length || (expectAudio && !audioStreams.length))
+		throw new EngineError('output_invalid', '下载文件缺少视频或预期音频。');
 	const mp4Container =
 		path.extname(filepath).toLowerCase() === '.mp4' &&
 		String(probe.format?.format_name ?? '')
@@ -383,7 +468,7 @@ async function validateOutput(filepath, directory, info, options) {
 	};
 }
 
-export async function downloadWithYtDlp(target, options = {}) {
+export async function downloadWithYtDlp(target, options = {}, kind = 'video') {
 	optionsChecked(options);
 	const timeoutMs = options.timeoutMs ?? 30 * 60_000;
 	const startedAt = Date.now();
@@ -394,7 +479,7 @@ export async function downloadWithYtDlp(target, options = {}) {
 	};
 	return withCookies(options, async (settings) => {
 		emit(options, 'resolving');
-		const info = await metadata(target, {...settings, timeoutMs: remaining()});
+		const info = await metadata(target, {...settings, timeoutMs: remaining()}, kind);
 		const outputDir = path.resolve(settings.outputDir ?? 'downloads');
 		let directory;
 		try {
@@ -406,25 +491,45 @@ export async function downloadWithYtDlp(target, options = {}) {
 		let successful = false;
 		try {
 			const receipt = path.join(directory, 'result.json');
+			// Download from the extracted info instead of extracting the page a second time.
+			// It holds playback URLs, so it lives only in this private task directory. With a
+			// lent sign-in, yt-dlp copies its cookies in; they are dropped because --cookies
+			// supplies them again. Without one, the cookies the extractor set must stay.
+			const infoFile = path.join(directory, 'info.json');
+			await writeFile(
+				infoFile,
+				JSON.stringify(settings._cookiesFile ? withoutCookies(info) : info),
+				{mode: 0o600},
+			);
+			const identityFields = siteForPlatform(target.platform)?.receiptFields ?? [];
+			const fields = [
+				'filepath',
+				'id',
+				'display_id',
+				'extractor_key',
+				'_old_archive_ids',
+				...identityFields,
+			];
 			emit(options, 'downloading');
 			const result = await runProcess(
 				settings.ytDlpPath ?? 'yt-dlp',
 				[
-					...argsFor(settings, true),
+					...argsFor(target, settings, true, kind),
 					'--no-simulate',
 					'--no-overwrites',
-					'--merge-output-format',
-					'mkv',
+					...(kind === 'audio'
+						? ['--extract-audio', '--audio-format', 'm4a']
+						: ['--merge-output-format', 'mkv']),
 					'--match-filters',
 					'!is_live',
 					'--output',
 					path.join(directory.replaceAll('%', '%%'), 'media.%(ext)s'),
 					// Serialize the projected object once: optional missing fields otherwise render bare NA.
 					'--print-to-file',
-					'after_move:%(.{filepath,id,_old_archive_ids})j',
+					`after_move:%(.{${fields.join(',')}})j`,
 					receipt.replaceAll('%', '%%'),
-					'--',
-					target.url,
+					'--load-info-json',
+					infoFile,
 				],
 				{signal: settings.signal, timeoutMs: remaining()},
 			);
@@ -440,23 +545,33 @@ export async function downloadWithYtDlp(target, options = {}) {
 			} catch {
 				throw new EngineError('output_invalid', '下载工具没有确认最终媒体文件。');
 			}
-			assertIdentity(target, record);
+			assertIdentity(target, record, info.id);
 			await validateTaskFile(filepath, directory);
 			const sourceFilepath = await realpath(filepath);
 			emit(options, 'postprocessing');
-			const conversion = await ensureCompatibleMp4(sourceFilepath, {
-				...settings,
-				timeoutMs: remaining(),
-			});
+			const conversion =
+				kind === 'audio'
+					? {filepath: sourceFilepath, mode: 'extract-audio'}
+					: await ensureCompatibleMp4(sourceFilepath, {
+							...settings,
+							timeoutMs: remaining(),
+						});
 			filepath = conversion.filepath;
 			emit(options, 'validating');
-			const validation = await validateOutput(filepath, directory, info, {
-				...settings,
-				timeoutMs: remaining(),
-			});
+			const validation = await validateOutput(
+				filepath,
+				directory,
+				info,
+				{
+					...settings,
+					timeoutMs: remaining(),
+				},
+				kind,
+			);
 			if (sourceFilepath !== filepath) await rm(sourceFilepath, {force: true});
 			await rm(receipt, {force: true});
-			filepath = await publishVideoFile(filepath, {
+			const publish = kind === 'audio' ? publishAudioFile : publishVideoFile;
+			filepath = await publish(filepath, {
 				title: info.title,
 				platform: target.platform,
 				id: target.id,
@@ -471,7 +586,7 @@ export async function downloadWithYtDlp(target, options = {}) {
 				engine: 'yt-dlp',
 				filepath,
 				transport: options.transport ?? 'auto',
-				selectionPolicy: 'prefer-native-h264-aac',
+				selectionPolicy: kind === 'audio' ? 'best-audio' : 'prefer-native-h264-aac',
 				conversion: conversion.mode,
 				...validation,
 			};

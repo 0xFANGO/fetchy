@@ -1,0 +1,452 @@
+import {constants, createReadStream} from 'node:fs';
+import {createHash} from 'node:crypto';
+import {copyFile, lstat, mkdir, mkdtemp, open, realpath, rm, stat} from 'node:fs/promises';
+import {tmpdir} from 'node:os';
+import path from 'node:path';
+import {parseArgs} from 'node:util';
+import {downloadVideo, resolveVideo, resolveTarget, EngineError} from '../src/index.mjs';
+import {resolveWithYtDlp, downloadWithYtDlp} from '../src/yt-dlp.mjs';
+import {ytDlpCommand} from '../src/dependencies.mjs';
+import {downloadAudio, resolveAudio} from '../src/audio.mjs';
+import {
+	downloadGeneric,
+	resolveGeneric,
+	readWebArticle,
+	webIdentity,
+} from '../src/generic-media.mjs';
+import {explicitLocalOrigin, webUrl} from '../src/public-http.mjs';
+import {siteForHost, siteForPlatform} from '../src/sites/index.mjs';
+import {browserPostTarget} from '../src/sites/page-posts.mjs';
+import {isRednoteHost} from '../src/sites/xiaohongshu.mjs';
+import {videoFilename} from '../src/filenames.mjs';
+import {importLibrary, libraryRoot, searchLibrary} from '../src/library/index.mjs';
+import {entryIdentity, publicUrl, renderWork} from '../src/library/content.mjs';
+import {hasSession, downloadWithSession, captureWithSession} from './desktop.mjs';
+import {siteCookieHeader, withSiteCookies} from './accounts.mjs';
+import {browserHeaders, fetchPostPage} from '../src/library/post-pages.mjs';
+
+const invalid = (message) => new EngineError('invalid_arguments', message);
+async function targetFor(input, options) {
+	const u = webUrl(input);
+	const post = browserPostTarget(u);
+	if (post) return post;
+	if (siteForHost(u.hostname) && !u.port) return resolveTarget(input, options);
+	return {platform: 'web', id: webIdentity(u), url: u.href};
+}
+async function media(action, target, input, options) {
+	const downloading = action === 'get';
+	if (options.audio && (target.platform === 'web' || target.pageOnly))
+		throw invalid('--audio 只支持已适配平台的链接。');
+	if (target.pageOnly && target.platform === 'instagram' && !(await hasSession(input))) {
+		try {
+			return await (downloading ? downloadWithYtDlp : resolveWithYtDlp)(target, {
+				...options,
+				ytDlpPath: ytDlpCommand(options),
+			});
+		} catch (error) {
+			if (
+				![
+					'not_video',
+					'no_video',
+					'no_formats',
+					'auth_required',
+					'session_required',
+					'unavailable',
+					'network_error',
+					'verification_required',
+				].includes(error.code)
+			)
+				throw error;
+		}
+	}
+	if (target.pageOnly)
+		throw new EngineError('no_formats', '请在扩展或 Fetchy 专属浏览器打开此帖以读取图文。');
+	const category = siteForPlatform(target.platform)?.kind;
+	const signedIn = !options.publicOnly && !options.cookiesFile;
+	if (target.platform === 'web') {
+		// A generic site signed in through Fetchy is read by WebKit with its own storage.
+		if (downloading && signedIn && (await hasSession(input))) {
+			try {
+				return await downloadWithSession(input, options);
+			} catch (error) {
+				if (!['no_formats', 'network_error', 'unavailable'].includes(error.code)) throw error;
+				// An explicitly opened loopback site may also be a signed-in article.
+				if (explicitLocalOrigin(input, true) && !options.localOrigin && error.code === 'no_formats')
+					throw error;
+			}
+		}
+		try {
+			return await (downloading ? downloadGeneric : resolveGeneric)(input, options);
+		} catch (e) {
+			if (e.code === 'auth_required')
+				throw new EngineError(e.code, '该页面要求登录。运行 fetchy login <原链接> 登录后重试。');
+			throw e;
+		}
+	}
+	const run = (cookiesFile) => {
+		const settings = cookiesFile ? {...options, cookiesFile} : options;
+		const asAudio = () =>
+			(downloading ? downloadAudio : resolveAudio)(target.url, {
+				...settings,
+				audioFromVideo: !['audio', 'mixed'].includes(category),
+			});
+		if (category === 'audio' || options.audio) return asAudio();
+		return (downloading ? downloadVideo : resolveVideo)(target.url, settings).catch((e) => {
+			if (category === 'mixed' && e.code === 'no_video') return asAudio();
+			throw e;
+		});
+	};
+	// A site signed in through Fetchy lends its cookies to the downloader for this request only.
+	if (!signedIn) return run(options.cookiesFile);
+	try {
+		return await withSiteCookies(input, run);
+	} catch (error) {
+		if (
+			!downloading ||
+			(options.audio &&
+				target.platform === 'xiaohongshu' &&
+				isRednoteHost(new URL(target.url).hostname)) ||
+			!['no_formats', 'network_error', 'unavailable'].includes(error.code) ||
+			!(await hasSession(input))
+		)
+			throw error;
+		return downloadWithSession(input, options);
+	}
+}
+
+const cloneFile = (from, to) =>
+	copyFile(from, to, constants.COPYFILE_EXCL | constants.COPYFILE_FICLONE);
+async function copyResult(source, dir, record, ext) {
+	await mkdir(dir, {recursive: true});
+	const name = videoFilename(record.title, record).slice(0, -4);
+	const size = (await stat(source)).size;
+	for (let n = 1; n <= 1000; n++) {
+		const file = path.resolve(dir, name + (n === 1 ? '' : ' (' + n + ')') + ext);
+		try {
+			await cloneFile(source, file);
+			return file;
+		} catch (e) {
+			if (e.code !== 'EEXIST') throw e;
+		}
+		const existing = await lstat(file);
+		if (existing.isFile() && existing.size === size) {
+			const digest = createHash('sha256');
+			for await (const bytes of createReadStream(file)) digest.update(bytes);
+			if (digest.digest('hex') === path.basename(source, path.extname(source))) return file;
+		}
+	}
+	throw new EngineError('output_exists', '保存目录有过多同名文件。');
+}
+
+async function exportPost(record, root, destination) {
+	const output = path.resolve(destination);
+	await mkdir(output, {recursive: true});
+	const title = videoFilename(record.title, record).slice(0, -4);
+	const dir = await mkdtemp(path.join(output, title + '-'));
+	try {
+		const files = new Set(record.attachments.map((a) => a.path).filter(Boolean));
+		if (files.size) await mkdir(path.join(dir, 'media'));
+		for (const relative of files) {
+			if (!/^media[/\\][a-f0-9]{64}\.[a-z0-9]+$/.test(relative))
+				throw new EngineError('invalid_attachment', '无效附件路径。');
+			const from = path.join(root, relative),
+				to = path.join(dir, relative);
+			await cloneFile(from, to);
+		}
+		return await renderWork(dir, record, path.join(dir, 'index.html'));
+	} catch (e) {
+		await rm(dir, {recursive: true, force: true});
+		throw e;
+	}
+}
+async function postFor(target, input, settings, error, action) {
+	const regional = target.platform === 'xiaohongshu' && isRednoteHost(new URL(target.url).hostname);
+	if (!regional && action === 'info' && error.code !== 'no_formats') throw error;
+	let entry;
+	if (regional) {
+		if (
+			settings.audio ||
+			settings.publicOnly ||
+			settings.cookiesFile ||
+			!['unsupported_content', 'no_formats', 'no_video', 'not_video'].includes(error.code)
+		)
+			throw error;
+		// yt-dlp's Xiaohongshu extractor only handles the domestic website.
+		try {
+			entry = await fetchPostPage(
+				{...target, sourceUrl: target.url},
+				{
+					cookieHeader: siteCookieHeader,
+					signal: settings.signal,
+					timeoutMs: settings.timeoutMs,
+				},
+			);
+		} catch (pageError) {
+			if (pageError.code === 'source_unavailable' || [404, 410].includes(pageError.httpStatus))
+				throw new EngineError('unavailable', '该页面未提供这篇笔记。');
+			throw pageError;
+		}
+	} else if (
+		!settings.publicOnly &&
+		!settings.cookiesFile &&
+		((await hasSession(input)) || target.pageOnly)
+	) {
+		const page = await captureWithSession(input, settings);
+		if (page?.type === 'post') entry = page.entry;
+	} else if (target.platform === 'web' && error.code === 'no_formats') {
+		entry = await readWebArticle(input, {
+			...settings,
+			signal: AbortSignal.any([
+				AbortSignal.timeout(settings.timeoutMs || 30000),
+				...(settings.signal ? [settings.signal] : []),
+			]),
+		});
+	}
+	if (!entry || (!entry.body && !entry.attachments?.length)) throw error;
+	if (target.platform !== 'web' && (entry.platform !== target.platform || entry.id !== target.id))
+		throw new EngineError('identity_mismatch', '页面与所请求的作品不符。');
+	return entry;
+}
+
+/** The durable archive owns one copy. A user-selected output directory gets a named file. */
+export async function getOne(action, input, options = {}) {
+	const localOrigin = explicitLocalOrigin(input, options.allowLocal);
+	const target = await targetFor(input, options);
+	const source = target.platform === 'xiaohongshu' ? target.url : input;
+	const settings = {...options, localOrigin};
+	if (action === 'info') {
+		try {
+			return await media(action, target, source, settings);
+		} catch (error) {
+			const entry = await postFor(target, source, settings, error, action);
+
+			return {
+				platform: entry.platform,
+				id: entry.id,
+				title: entry.title,
+				kind: 'post',
+				bodyComplete: entry.bodyComplete,
+				attachments: entry.attachments.map((a) => ({kind: a.kind})),
+				formats: [],
+			};
+		}
+	}
+	const root = libraryRoot(options);
+	const tmp = await realpath(await mkdtemp(path.join(tmpdir(), 'fetchy-get-')));
+	try {
+		let result;
+		try {
+			result = await media(action, target, source, {...settings, outputDir: tmp});
+		} catch (error) {
+			if (
+				options.publicOnly ||
+				![
+					'no_formats',
+					'no_video',
+					'unsupported_content',
+					'not_video',
+					'session_required',
+					'auth_required',
+					'unavailable',
+					'verification_required',
+					'network_error',
+				].includes(error.code)
+			)
+				throw error;
+			const entry = await postFor(target, source, settings, error, action);
+			const {stageAttachments} = await import('../native/library-bridge.mjs');
+			// Media hosts often check that the request comes from the post's site.
+			await stageAttachments([entry], tmp, null, {
+				...settings,
+				headers: {
+					'user-agent': browserHeaders()['user-agent'],
+					referer: new URL(entry.sourceUrl || input).origin + '/',
+				},
+			});
+			const task = await importLibrary(
+				{version: 1, items: [entry]},
+				{
+					root,
+					sourceDir: tmp,
+					signal: options.signal,
+					outputDir: options.directFiles ? options.outputDir : undefined,
+				},
+			);
+			if (!task.items[0]?.filepath) throw new EngineError('output_invalid', '无法写入离线正文。');
+			const [record] = await searchLibrary({key: task.items[0].key}, {root});
+			const filepath = options.directFiles
+				? record.savedFiles?.[0] || record.savedDir || record.filepath
+				: options.outputDir
+					? await exportPost(record, root, options.outputDir)
+					: record.filepath;
+			return {
+				platform: entry.platform,
+				id: entry.id,
+				title: entry.title,
+				kind: 'post',
+				engine: 'article',
+				filepath,
+				offlinePage: task.items[0].filepath,
+				taskId: task.id,
+				status: task.items[0].status,
+			};
+		}
+		if (
+			target.platform !== 'web' &&
+			(result.platform !== target.platform || result.id !== target.id)
+		)
+			throw new EngineError('identity_mismatch', '媒体与所请求的作品不符。');
+		const isAudio = result.kind === 'audio',
+			kind = isAudio ? 'audio' : 'video';
+		const entry = {
+			platform: target.platform,
+			id: target.id,
+			sourceUrl: target.url,
+			title:
+				options.title ||
+				result.title ||
+				path.basename(result.filepath, path.extname(result.filepath)),
+			kind,
+			body: '',
+			bodyComplete: true,
+			attachments: [
+				{
+					kind,
+					mimeType: isAudio ? 'audio/mp4' : 'video/mp4',
+					name: path.basename(result.filepath),
+					path: path.relative(tmp, result.filepath),
+				},
+			],
+		};
+		const task = await importLibrary(
+			{version: 1, items: [entry]},
+			{
+				root,
+				sourceDir: tmp,
+				signal: options.signal,
+				outputDir: options.directFiles ? options.outputDir : undefined,
+			},
+		);
+		const {key} = entryIdentity(entry);
+		const [record] = await searchLibrary({key}, {root});
+		const saved = record?.attachments.find((a) => a.kind === kind && a.path);
+		if (!saved) throw new EngineError('output_invalid', '媒体未能写入资料库。');
+		const archivePath = path.join(root, saved.path);
+		const filepath = options.directFiles
+			? record.savedFiles?.[0] || archivePath
+			: options.outputDir
+				? await copyResult(archivePath, options.outputDir, record, isAudio ? '.m4a' : '.mp4')
+				: archivePath;
+		return {
+			...result,
+			platform: entry.platform,
+			id: record.id,
+			filepath,
+			taskId: task.id,
+			offlinePage: record.filepath,
+			status: task.items[0].status,
+		};
+	} finally {
+		await rm(tmp, {recursive: true, force: true});
+	}
+}
+
+async function readInputs(filename) {
+	const handle = filename === '-' ? null : await open(filename, 'r');
+	const stream = handle ? handle.createReadStream() : process.stdin;
+	let len = 0;
+	const chunks = [];
+	try {
+		for await (const chunk of stream) {
+			len += Buffer.byteLength(chunk);
+			if (len > 8 * 1024 ** 2) throw invalid('输入文件过大。');
+			chunks.push(Buffer.from(chunk));
+		}
+	} finally {
+		await handle?.close();
+	}
+	const s = Buffer.concat(chunks).toString('utf8').trim();
+	if (s.startsWith('[')) {
+		let a;
+		try {
+			a = JSON.parse(s);
+		} catch {
+			throw invalid('请输入 JSON URL 数组或每行一个链接。');
+		}
+		if (!Array.isArray(a) || !a.every((v) => typeof v === 'string'))
+			throw invalid('需要 URL 字符串数组。');
+		return a;
+	}
+	return s
+		.split(/\r?\n/)
+		.map((v) => v.trim())
+		.filter(Boolean);
+}
+
+export async function runGetCommand(action, args) {
+	const {values, positionals} = parseArgs({
+		args,
+		allowPositionals: true,
+		options: {
+			input: {type: 'string', short: 'i'},
+			output: {type: 'string', short: 'o'},
+			audio: {type: 'boolean'},
+			'allow-local': {type: 'boolean'},
+			'max-height': {type: 'string'},
+			'cookies-file': {type: 'string'},
+			'timeout-ms': {type: 'string'},
+			transport: {type: 'string'},
+			json: {type: 'boolean'},
+		},
+	});
+	const inputs = [...positionals, ...(values.input ? await readInputs(values.input) : [])];
+	if (!inputs.length || inputs.length > 10000 || (action === 'info' && inputs.length !== 1))
+		throw invalid('需要有效的链接或 -i 输入文件。');
+	const controller = new AbortController();
+	const cancel = () => controller.abort();
+	process.once('SIGINT', cancel);
+	try {
+		for (const [i, input] of inputs.entries()) {
+			try {
+				const opt = {
+					outputDir: values.output,
+					audio: values.audio,
+					allowLocal: values['allow-local'],
+					cookiesFile: values['cookies-file'],
+					transport: values.transport,
+					signal: controller.signal,
+				};
+				for (const [name, key] of [
+					['timeout-ms', 'timeoutMs'],
+					['max-height', 'maxHeight'],
+				])
+					if (values[name] !== undefined) {
+						const n = Number(values[name]);
+						if (!Number.isSafeInteger(n) || n < 1 || n > 2147483647)
+							throw invalid('超时和高度必须为正整数。');
+						opt[key] = n;
+					}
+				const result = await getOne(action === 'info' ? 'info' : 'get', input, opt);
+				console.log(JSON.stringify(result));
+				if (result.status === 'partial') process.exitCode = 1;
+			} catch (e) {
+				const known = e instanceof EngineError || /^[a-z][a-z_]+$/.test(e?.code);
+				const error = {
+					code: known ? e.code : 'engine_error',
+					message: known ? e.message : '无法完成此任务。',
+				};
+				// One link on the command line fails as a command; a list (-i) reports each line.
+				if (inputs.length === 1 && !values.input && action !== 'batch')
+					throw new EngineError(error.code, error.message);
+				console.log(JSON.stringify({index: i, sourceUrl: publicUrl(input), error}));
+				process.exitCode = 1;
+			}
+			if (controller.signal.aborted) {
+				process.exitCode = 130;
+				break;
+			}
+		}
+	} finally {
+		process.removeListener('SIGINT', cancel);
+	}
+}

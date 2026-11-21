@@ -1,3 +1,4 @@
+import {sites} from '../src/sites/index.mjs';
 import {deriveView, displayPath, taskIsVisible, withPendingDraft} from './view-model.mjs';
 
 const byId = (id) => document.getElementById(id);
@@ -38,7 +39,7 @@ function connect() {
 		return;
 	}
 	try {
-		port = chrome.runtime.connect({name: 'popup'});
+		port = chrome.runtime.connect({name: 'panel'});
 		port.onMessage.addListener((message) => {
 			if (message?.type !== 'state') return;
 			connectionAttempts = 0;
@@ -75,6 +76,7 @@ function render(state = {}) {
 	latestState = state;
 	const presented = withPendingDraft(state, pendingDraft);
 	const view = deriveView(presented);
+	document.body.dataset.settings = String(view.isSettings);
 	show('main-view', !view.isSettings);
 	show('settings-view', view.isSettings);
 	show('back-button', view.isSettings);
@@ -134,7 +136,10 @@ function render(state = {}) {
 	show('actions', Boolean(view.primary || view.secondary.length));
 	show('primary-button', Boolean(view.primary));
 	if (view.primary) {
-		setText('primary-label', view.primary.label);
+		// Beside a post the full save is the main action; the video alone is secondary.
+		const onPost = document.body.dataset.page === 'post' && view.primary.action === 'start';
+		setText('primary-label', onPost ? '只下载视频' : view.primary.label);
+		byId('primary-button').classList.toggle('is-secondary', onPost);
 		byId('primary-icon').setAttribute('href', `#i-${view.primary.icon || 'download'}`);
 		byId('primary-button').disabled = Boolean(view.primary.disabled || actionBusy);
 	}
@@ -176,7 +181,7 @@ function render(state = {}) {
 	setText(
 		'settings-hint',
 		view.choosingDirectory
-			? '请在系统窗口中选择；关闭弹窗也会保留选择结果。'
+			? '请在系统窗口中选择；关闭右侧栏也会保留选择结果。'
 			: view.active
 				? '当前下载仍使用原目录，更改只影响后续任务。'
 				: '选择文件夹后，点击保存。',
@@ -248,5 +253,16 @@ byId('settings-reconnect').addEventListener('click', () => {
 	}
 });
 
+for (const site of sites) {
+	const label = document.createElement('span');
+	label.textContent = site.label;
+	byId('supported-platforms').append(label);
+}
+
+// The page kind comes from library-panel.mjs after the panel reads the tab.
+new MutationObserver(() => render(latestState)).observe(document.body, {
+	attributes: true,
+	attributeFilter: ['data-page'],
+});
 render();
 connect();

@@ -35,9 +35,9 @@ npm run native:install -- --browser chrome</pre>
 			</ol>
 			<h2>浏览器与登录状态</h2>
 			<p>
-				YouTube / B站使用本地 yt-dlp 匿名解析。小红书 /
+				YouTube、B站、X 和 Instagram Reel 使用本地 yt-dlp 解析公开链接。小红书 /
 				抖音直接读取你当前浏览器里视频页面的播放信息：已经打开的视频页会被直接使用，否则插件会在后台打开一个标签页并在读取后关闭。不会导出你的
-				Cookie。遇到登录或验证提示，请在浏览器里完成后返回插件重试。
+				Cookie。小红书和抖音遇到登录或验证提示时，请在浏览器里完成后返回插件重试。
 			</p>
 			<h2>保存位置与恢复</h2>
 			<p>
@@ -46,7 +46,7 @@ npm run native:install -- --browser chrome</pre>
 			</p>
 			<p>
 				电脑或本地进程重启后不提供断点续传；无法恢复的任务会标为中断。首次支持环境为
-				macOS；四个平台的可用性取决于具体内容、网络与会话。
+				macOS；各平台的可用性取决于具体内容、网络与会话。
 			</p>
 			<p class="foot">
 				项目安装与实测范围详见仓库的 docs/extension-install.md 与 docs/extension-validation.md。

@@ -28,15 +28,51 @@ npm test               # offline contract tests; needs FFmpeg for the MP4 suite
 npm run extension:build
 ```
 
-Tests never hit a real platform or launch a real browser. Tests that need the
+The default test suite runs locally. Desktop and extension end-to-end checks use separate opt-in commands. Tests that need the
 project yt-dlp are skipped when `.venv` is missing. Manual end-to-end checks
-against real sites are recorded in `docs/extension-validation.md`.
+against real sites are recorded in the [CLI validation log](docs/validation.md)
+and the [extension validation log](docs/extension-validation.md).
 
 PRs and pushes to `main` run CI on Node 22 and 24 with the pinned yt-dlp,
 Python 3.12 and FFmpeg. CI verifies media-test dependencies before running
 formatting, lint, tests and extension packaging. Keep `requirements.txt` as
 the shared yt-dlp version source; after updating it, rerun `npm run deps:install`
 and the tests.
+
+## Adding a video platform
+
+The [Instagram Reel adapter](src/sites/instagram.mjs) shows how to add a site
+that works with the existing yt-dlp engine.
+
+1. Check two public posts you have permission to save with the project’s
+   pinned yt-dlp. Inspect the extractor key and media ID. Verify that a
+   format choice is a rendition of the same video and that the input
+   resolves to one video.
+2. Add a module in `src/sites/` and register it in
+   [the site list](src/sites/index.mjs). Supply an `id`, `label`, exact
+   `hosts`, the yt-dlp `extractor` key and a `parse(url)` function. Instagram
+   recognizes Reel permalinks and preserves the case of the shortcode
+   and returns its canonical URL. Use `invalidUrl()` for unsupported paths.
+   Fetchy checks the requested ID and extractor at resolve time and again on
+   the downloaded file’s receipt. If yt-dlp uses separate IDs for a post
+   and its media, implement `matchesSource(target, info)` as in the
+   [X adapter](src/sites/x.mjs).
+3. Exercise accepted URLs, tracking parameters, unsupported paths and
+   lookalike hosts through `normalizeUrl`. See the
+   [Instagram tests](test/instagram.test.mjs). Add a regression test for any
+   special identity rule. Run `npm run check`, `npm test` and
+   `npm run extension:build`.
+4. Run `node bin/fetchy.mjs resolve <url>` and
+   `node bin/fetchy.mjs download <url> --output .local/validation`.
+   Load the built extension, start a download from the side panel and open the
+   saved file. Match the saved result to the post and check the duration,
+   dimensions and tracks with ffprobe. Decode the entire file with
+   `ffmpeg -nostdin -v error -xerror -i <file> -f null -`.
+   Record the public source, engine and observed results in the appropriate
+   validation log. Reflect the verified content types and surfaces in the
+   [capability table](docs/platforms.md), the READMEs and `CHANGELOG.md`.
+
+For an audio or mixed-media adapter, also verify the AAC audio-only receipt and output with `get`. A page adapter should match the requested post identity and verify attachment order, local readability and partial results on a truncated page. An accessible folder should report its declared total, independent member count and last-page evidence. Use synthetic fixtures in version control. Account-level checks belong in a private local profile. [Library format](docs/library.md) · [Desktop session tests](docs/desktop.md)
 
 ## Code style
 
@@ -49,7 +85,7 @@ npm run lint:fix
 Formatting is enforced by [oxfmt](https://oxc.rs) (tabs, single quotes) and
 linting by [oxlint](https://oxc.rs). Run the relevant checks locally before
 requesting review. The Release workflow also checks formatting and lint before
-packing the extension.
+building the release archives.
 
 ## Commit messages
 
@@ -130,17 +166,18 @@ git switch main
 git pull --ff-only
 git tag -a vX.Y.Z MERGED_RELEASE_SHA -m 'Release vX.Y.Z'
 git push origin refs/tags/vX.Y.Z
-gh release create vX.Y.Z --verify-tag --title 'Fetchy vX.Y.Z' --notes-file .local/release-notes.md
 ```
 
 Replace `MERGED_RELEASE_SHA` with the release PR's squash commit on `main`,
 even if newer commits have since landed. Confirm it contains the expected
-version before tagging. Write the short release notes to
-`.local/release-notes.md` first. Publishing the GitHub Release triggers the
-workflow to check and pack the matching version,
-then attach `fetchy-extension-X.Y.Z.zip`; pushing a tag alone does not trigger
-it. Verify the workflow succeeds and the asset appears. Preserve published
-tags; ship corrections in a new version.
+version before tagging. Pushing the tag starts the Release workflow. It checks
+the package and extension versions, builds both archives on Apple Silicon, and
+publishes the GitHub Release with the dated notes from `CHANGELOG.md`. If the
+job fails, rerun it from Actions. It can finish an interrupted draft. Ship
+corrections to published builds in a new version.
+
+To try a pull request, open its Release workflow run in Actions. The artifact
+named for the PR number and commit contains the extension and macOS ZIPs.
 
 ## Pull requests
 

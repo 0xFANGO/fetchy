@@ -1,3 +1,4 @@
+import {usesPageMedia} from '../src/sites/index.mjs';
 import {EventEmitter} from 'node:events';
 import {realpath, stat} from 'node:fs/promises';
 import path from 'node:path';
@@ -91,6 +92,11 @@ export class NativeController extends EventEmitter {
 		this.core = options.core ?? {resolveVideo, downloadVideo};
 		this.execute = options.runProcess ?? runProcess;
 		this.engineOptions = options.engineOptions ?? {};
+		// The desktop sign-in for a site, lent to yt-dlp for that site's download only.
+		this.withSiteCookies =
+			options.withSiteCookies ??
+			(async (input, action) =>
+				(await import('../bin/accounts.mjs')).withSiteCookies(input, action));
 		this.settings = {outputDir: this.defaultDirectory};
 		this.task = null;
 		// Signed media URLs extracted by the extension live here only; they are
@@ -100,6 +106,8 @@ export class NativeController extends EventEmitter {
 		this.pendingDirectory = null;
 		this.choosingDirectory = false;
 		this.resolvers = new Map();
+		this.library = null;
+		this.webSaves = 0;
 		this.resolved = new Map();
 		this.recentTaskIds = [];
 		this.persistence = Promise.resolve();
@@ -192,14 +200,47 @@ export class NativeController extends EventEmitter {
 	async request(method, params = {}) {
 		if (!params || typeof params !== 'object' || Array.isArray(params))
 			throw bridgeError('invalid_request');
+		if (typeof method === 'string' && method.startsWith('library')) {
+			const {LibraryBridge} = await import('./library-bridge.mjs');
+			this.library ??= new LibraryBridge(this.directory, {
+				getOutputDir: () =>
+					validateDirectory(this.settings.outputDir, {
+						createDefault: true,
+						defaultDirectory: this.defaultDirectory,
+					}),
+			});
+			return this.library.request(method, params);
+		}
 		switch (method) {
 			case 'hello':
 				return {
 					version: '0.1.0',
 					protocolVersion: 1,
-					dependencies: await this.dependencies(),
+					// Probing yt-dlp and FFmpeg takes seconds; clients ask separately.
+					capabilities: {archive: true, dependencies: true},
 					state: this.snapshot(),
 				};
+			case 'dependencies':
+				return this.dependencies();
+			case 'webSave': {
+				const {getOne} = await import('../bin/get.mjs');
+				const url = checkedInput(params.url);
+				const outputDir = await validateDirectory(this.settings.outputDir, {
+					createDefault: true,
+					defaultDirectory: this.defaultDirectory,
+				});
+				this.webSaves++;
+				try {
+					const result = await getOne('get', url, {
+						outputDir,
+						root: process.env.FETCHY_LIBRARY_DIR || path.join(this.directory, 'library'),
+						publicOnly: true,
+					});
+					return {filepath: result.filepath, id: result.id, taskId: result.taskId};
+				} finally {
+					this.webSaves--;
+				}
+			}
 			case 'getState':
 				return this.snapshot();
 			case 'getSettings':
@@ -241,12 +282,18 @@ export class NativeController extends EventEmitter {
 		const controller = new AbortController();
 		this.resolvers.set(requestId, controller);
 		try {
-			const metadata = publicMetadata(
-				await this.core.resolveVideo(input, {
+			// Identifying a video may need the sign-in too; page media brings the browser's own.
+			const run = (cookiesFile) =>
+				this.core.resolveVideo(input, {
 					...this.engineOptions,
+					...(cookiesFile ? {cookiesFile} : {}),
 					pageMedia,
 					signal: controller.signal,
-				}),
+				});
+			const metadata = publicMetadata(
+				await (pageMedia || this.engineOptions.cookiesFile
+					? run()
+					: this.withSiteCookies(input, run)),
 			);
 			if (controller.signal.aborted) throw bridgeError('cancelled');
 			this.resolved.set(input, metadata);
@@ -298,8 +345,7 @@ export class NativeController extends EventEmitter {
 		this.downloadPromise = this.download(
 			task,
 			controller,
-			refreshOnValidationFailure === true &&
-				['xiaohongshu', 'douyin'].includes(pageMedia?.media?.platform),
+			refreshOnValidationFailure === true && usesPageMedia(pageMedia?.media?.platform),
 		);
 		return this.snapshot();
 	}
@@ -343,9 +389,10 @@ export class NativeController extends EventEmitter {
 	}
 	async download(task, controller, refreshOnValidationFailure = false) {
 		try {
-			const attempt = () =>
+			const run = (cookiesFile) =>
 				this.core.downloadVideo(task.input, {
 					...this.engineOptions,
+					...(cookiesFile ? {cookiesFile} : {}),
 					pageMedia: this.taskPageMedia ?? undefined,
 					outputDir: task.outputDir,
 					signal: controller.signal,
@@ -370,6 +417,11 @@ export class NativeController extends EventEmitter {
 						this.broadcast();
 					},
 				});
+			// Page media is read in the browser's own session; only yt-dlp downloads take cookies.
+			const attempt = () =>
+				this.taskPageMedia || this.engineOptions.cookiesFile
+					? run()
+					: this.withSiteCookies(task.input, run);
 			let result;
 			try {
 				result = await attempt();

@@ -4,19 +4,9 @@
 ![Node >= 22](docs/assets/badges/node.svg)
 ![Platform: macOS](docs/assets/badges/platform.svg)
 
-Save a single video from **YouTube, Bilibili, Xiaohongshu or Douyin** to a folder on your Mac.
-One toolbar button, one command, or one function call. Everything runs locally.
+Save videos, audio and readable posts to a local library from the CLI, browser extension or macOS app.
 
 [中文文档](README.zh-CN.md)
-
-<table align="center">
-  <tr>
-    <td align="center" width="150"><img src="docs/assets/platforms/youtube.svg" width="48" height="48" alt=""><br><b>YouTube</b><br><sub>Video download</sub></td>
-    <td align="center" width="150"><img src="docs/assets/platforms/bilibili.svg" width="48" height="48" alt=""><br><b>Bilibili</b><br><sub>Video download</sub></td>
-    <td align="center" width="150"><img src="docs/assets/platforms/xiaohongshu.svg" width="48" height="48" alt=""><br><b>Xiaohongshu</b><br><sub>Video download</sub></td>
-    <td align="center" width="150"><img src="docs/assets/platforms/douyin.svg" width="48" height="48" alt=""><br><b>Douyin</b><br><sub>Video download</sub></td>
-  </tr>
-</table>
 
 ## Demo
 
@@ -26,32 +16,49 @@ https://github.com/user-attachments/assets/e5ebb617-7dd1-4369-b044-b7e8900cb662
 
 ## Features
 
-- **Four platforms, one workflow.** Paste a link or open a video page, click once. Share text with a short link works too.
-- **Local first.** Downloads run on your machine through a native host. No cloud service, no account, no cookie export.
-- **Validated MP4 files.** ffprobe checks every output. YouTube and Bilibili use H.264 / yuv420p / AAC; browser downloads retain the source codec, including HEVC. Files use the video title and never overwrite existing files.
-- **Keeps going.** Close the popup and the download continues; reopen it to see progress, cancel or reveal the file in Finder.
+- **Start from a page or a link.** Click the toolbar icon and Fetchy opens beside the page you are reading, or paste a link. On sites that support short links, you can also paste share text containing a single link.
+- **Downloads run locally.** The extension sends downloads to a native host on your machine. Fetchy works without a Fetchy account.
+- **Validated MP4 files.** ffprobe checks every output. The yt-dlp engine produces H.264 / yuv420p video with AAC when audio is present. The browser engine retains the source codec, including HEVC. Files use the video title and never overwrite existing files.
+- **Keeps going.** Close the side panel or the browser and saving continues; each entry of a batch records its own result and can be retried.
 - **Same core everywhere.** The extension, the CLI and the Node API share one `resolveVideo` / `downloadVideo` contract with stable error codes.
 
 ## Supported platforms
 
-| Platform    | Accepted input                                                       | Engine              | Notes                                                                              |
-| ----------- | -------------------------------------------------------------------- | ------------------- | ---------------------------------------------------------------------------------- |
-| YouTube     | `youtube.com/watch`, `youtu.be`, Shorts                              | yt-dlp              | Prefers native H.264/AAC, falls back to HLS on network errors                      |
-| Bilibili    | `bilibili.com/video/BV…`, `av…`, multi-part `?p=`                    | yt-dlp              | DASH video and audio merged into MP4                                               |
-| Xiaohongshu | Full share link with `xsec_token`, or share text containing one link | In-page (extension) | Media is read from the note page in your own browser; the CLI falls back to yt-dlp |
-| Douyin      | `v.douyin.com` short links, `modal_id` links, detail pages           | In-page (extension) | Short links are expanded first; the CLI falls back to yt-dlp                       |
+| Platform    | Accepted input                                                            | Engine              | Notes                                                                              |
+| ----------- | ------------------------------------------------------------------------- | ------------------- | ---------------------------------------------------------------------------------- |
+| YouTube     | `youtube.com/watch`, `youtu.be`, Shorts                                   | yt-dlp              | Prefers native H.264/AAC, falls back to HLS on network errors                      |
+| Bilibili    | `bilibili.com/video/BV…`, `av…`, multi-part `?p=`                         | yt-dlp              | DASH video and audio merged into MP4                                               |
+| Xiaohongshu | Full share link with `xsec_token`, or share text containing one link      | In-page (extension) | Media is read from the note page in your own browser; the CLI falls back to yt-dlp |
+| Douyin      | `v.douyin.com` short links, `modal_id` links, detail pages                | In-page (extension) | Short links are expanded first; the CLI falls back to yt-dlp                       |
+| X (Twitter) | `x.com/<handle>/status/<post-id>`, `twitter.com`, or `/i/web/status/<id>` | yt-dlp              | Public posts with one extractable video                                            |
+| Instagram   | `instagram.com/reel/<shortcode>/`                                         | yt-dlp              | Public Reels, including profile and `/reels/<shortcode>/` links                    |
 
-Single, finished videos only. Playlists, live streams, image notes, DRM content and watermark removal are out of scope.
-See [docs/limitations.md](docs/limitations.md) for the full list.
+The registry also includes single-link adapters for Facebook, TikTok, Bluesky, Reddit, Pinterest, Weibo, video hosts and audio services. Each site has separate evidence for media files, posts and collection history. [Full platform table](docs/platforms.md)
+
+## Desktop and local library
+
+Build a double-clickable Fetchy.app with `npm run desktop:build` on macOS 14 or later. It is one window with three areas: the library as a cover grid or list where you can select, rename, reveal in Finder or delete works, a built-in browser with the same side column as the extension, and accounts. Sign in to a site once under accounts; the extension, the CLI and the app then use that sign-in for downloads. The library requires Node 22.13 or later. [Desktop setup](docs/desktop.md) · [Archive format and commands](docs/library.md)
+
+```sh
+fetchy '<URL>'                       # save to the library (same as fetchy get)
+fetchy get '<URL>' -o ./downloads    # also copy the file to a folder; --audio for sound only
+fetchy get -i links.txt              # one link per line, one JSON result per line
+fetchy info '<URL>'
+fetchy login bilibili                # sign in inside the desktop app; also logout, accounts
+fetchy folders bilibili              # list folders; fetchy sync <folder link> saves one
+fetchy list                          # also search <keyword> and retry [task ID]
+```
+
+From a source checkout, run `node bin/fetchy.mjs` in place of `fetchy`. `fetchy help all` lists the older `resolve`, `download`, `browse`, `batch` and `library …` commands, which keep working. `get` prints a JSON result with its task ID and local path. Partial archives and failed downloads make its exit status nonzero. To save posts with your browser's own session, open the extension on the original post or collection. Archive pages preserve available text and ordered attachments, including a record of missing content. [Web media and validation](docs/web-media.md)
 
 ## Requirements
 
-| Tool                    | Needed for                                   | macOS install          |
-| ----------------------- | -------------------------------------------- | ---------------------- |
-| Node.js 22+             | everything                                   | `brew install node`    |
-| FFmpeg + ffprobe        | merging, remuxing, validation                | `brew install ffmpeg`  |
-| Python 3.10+            | running the pinned yt-dlp version            | `brew install python`  |
-| yt-dlp (pinned version) | YouTube, Bilibili; every platform on the CLI | `npm run deps:install` |
+| Tool                    | Needed for                                       | macOS install          |
+| ----------------------- | ------------------------------------------------ | ---------------------- |
+| Node.js 22.13+          | all features                                     | `brew install node`    |
+| FFmpeg + ffprobe        | merging, remuxing, validation                    | `brew install ffmpeg`  |
+| Python 3.10+            | running the pinned yt-dlp version                | `brew install python`  |
+| yt-dlp (pinned version) | all CLI downloads and yt-dlp extension downloads | `npm run deps:install` |
 
 Run `npm run doctor` at any time to see what is found and what is missing.
 
@@ -81,25 +88,28 @@ The CLI prints a JSON result with the absolute file path, size and validation de
 
 ## Browser extension
 
-Every [release](https://github.com/0xFANGO/fetchy/releases) ships a ready-to-load `fetchy-extension-<version>.zip`. Download it, unzip it, and skip the build step below. The native host still comes from this repository, so clone it either way.
+Download the extension ZIP and register the matching local component. If the release includes a macOS ZIP, the app contains the installer. Older releases ship the installer in the source archive. [Latest release](https://github.com/0xFANGO/fetchy/releases/latest) · [Install or update](docs/extension-install.md)
+
+To build the extension from source:
 
 ```sh
-npm run extension:build                 # writes dist/extension (skip if you downloaded the release zip)
+npm run extension:build                 # builds the current source into dist/extension
 npm run native:install -- --browser chrome # registers the native host (--browser ego for Ego Lite)
 ```
 
 1. Open `chrome://extensions/`, enable Developer mode, click **Load unpacked** and pick `dist/extension` (or the unzipped `extension` folder from the release).
 2. Pin the extension to the toolbar.
-3. Open a video page and click the icon, or paste a link into the popup.
+3. Click the icon on any page. Fetchy opens in Chrome's side panel next to that page.
 
-Downloads go to `~/Downloads/Fetchy` by default. Click the folder at the bottom of the popup to change it; your selection is saved automatically. Folder changes are disabled while a task is displayed.
+On a post, the panel shows its title, author, whether the text is complete and how many images and videos it has. **保存这篇帖子** saves all of it; **只下载视频** saves the video file alone. On a saved collection, **再读一屏** and **自动读到底** scroll or page your tab in front of you, and the list also grows while you scroll yourself. Tick entries and click **保存所选**. The native component takes the list at once and downloads every file itself, so closing the panel or the browser does not stop it.
 
-For Xiaohongshu and Douyin the extension reads the video's playback data from the page itself: an open tab on that video is used directly, otherwise a background tab is opened and closed again. Your logged-in session is used in place, nothing is exported. Permissions requested: `activeTab`, `storage`, `nativeMessaging`, `scripting`, plus host access to `xiaohongshu.com`, `douyin.com` and `iesdouyin.com`.
+Video-only downloads go to `~/Downloads/Fetchy` by default. Click the folder at the bottom of the panel to change it.
 
-Verified so far on macOS with Ego Lite (a Chromium browser). Chrome registration is available but not yet verified end to end.
-Full installation notes, session requirements and troubleshooting: [docs/extension-install.md](docs/extension-install.md).
+Fetchy never opens tabs to read pages. For Xiaohongshu and Douyin videos it reads the playback data from the open video page; for a short link, open the page first. Your logged-in session is used in place. Permissions requested: `activeTab`, `storage`, `nativeMessaging`, `scripting`, `sidePanel`, plus host access to `xiaohongshu.com`, `rednote.com`, `douyin.com` and `iesdouyin.com`. Reading some collection sites can prompt for access to that site. [Archive controls](docs/extension-library.md)
 
-## CLI
+For results by browser and platform, see the [extension validation log](docs/extension-validation.md). For native host registration, sessions and troubleshooting, see the [installation guide](docs/extension-install.md).
+
+## Legacy video commands
 
 ```sh
 node bin/fetchy.mjs resolve  <url>   # inspect formats without downloading
@@ -144,12 +154,12 @@ Failures throw an `EngineError` with a stable `code` such as `invalid_url`, `uns
 ## How it works
 
 ```
-extension/   Manifest V3 popup + service worker   ─┐
+extension/   Manifest V3 side panel + worker      ─┐
 bin/         CLI                                   ├─▶ src/index.mjs ─▶ yt-dlp engine (yt-dlp + FFmpeg)
 native/      Native Messaging host + daemon       ─┘                  └─▶ browser engine (media read from the page by the extension)
 ```
 
-For Xiaohongshu and Douyin the service worker injects `src/page-extract.mjs` into the video page, which returns only the target video's title, cover and signed media URLs; the native host downloads from those URLs and validates the file. The popup is only a view. A native host hands each task to a standalone daemon that owns the download, so closing the popup, rebuilding the service worker or dropping the port never cancels a transfer. Persisted task records contain no raw inputs, tokens or signed URLs.
+For Xiaohongshu and Douyin the service worker injects `src/page-extract.mjs` into the video page, which returns only the target video's title, cover and signed media URLs; the native host downloads from those URLs and validates the file. The side panel is only a view. A native host hands each task to a standalone daemon that owns the download, so closing the panel, rebuilding the service worker or dropping the port never cancels a transfer. A saved batch starts from the list; post pages are parsed by `src/library/post-pages.mjs`, whether the extension read them from your tab or the daemon read them with the desktop sign-in, and the daemon downloads every media file. Persisted task records contain no raw inputs, tokens or signed URLs.
 
 ## Development
 

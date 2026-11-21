@@ -1,4 +1,5 @@
-import {normalizeUrl, resolveTarget} from './urls.mjs';
+import {siteForPlatform, usesPageMedia} from './sites/index.mjs';
+import {matchingTarget, normalizeUrl, resolveTarget} from './urls.mjs';
 import {resolveWithYtDlp, downloadWithYtDlp} from './yt-dlp.mjs';
 import {resolveWithBrowser, downloadWithBrowser} from './browser.mjs';
 import {EngineError} from './process.mjs';
@@ -19,7 +20,7 @@ async function inputTarget(input, options) {
 	const target = normalizeUrl(input);
 	if (
 		target.needsRedirect &&
-		['xiaohongshu', 'douyin'].includes(target.platform) &&
+		usesPageMedia(target.platform) &&
 		options.engine !== 'yt-dlp' &&
 		options.pageMedia?.resolvedUrl !== undefined
 	) {
@@ -32,6 +33,15 @@ async function inputTarget(input, options) {
 		)
 			throw new EngineError('identity_mismatch', '浏览器展开的页面与目标视频不一致。');
 		return resolved;
+	}
+	if (
+		target.platform === 'xiaohongshu' &&
+		!target.needsRedirect &&
+		options.engine !== 'yt-dlp' &&
+		options.pageMedia?.resolvedUrl
+	) {
+		// A logged-in tab may have followed the same note to the other regional domain.
+		return matchingTarget(options.pageMedia.resolvedUrl, target) ?? target;
 	}
 	return target.needsRedirect ? resolveTarget(input, options) : target;
 }
@@ -64,7 +74,7 @@ async function execute(action, input, options = {}) {
 		const engine =
 			options.engine && options.engine !== 'auto'
 				? options.engine
-				: options.pageMedia && ['xiaohongshu', 'douyin'].includes(target.platform)
+				: options.pageMedia && usesPageMedia(target.platform)
 					? 'browser'
 					: 'yt-dlp';
 		const fn =
@@ -80,7 +90,7 @@ async function execute(action, input, options = {}) {
 		} catch (error) {
 			if (
 				action === 'download' &&
-				target.platform === 'youtube' &&
+				siteForPlatform(target.platform)?.retryHls &&
 				engine === 'yt-dlp' &&
 				(options.transport ?? 'auto') === 'auto' &&
 				error.code === 'network_error'

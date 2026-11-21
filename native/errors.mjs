@@ -1,8 +1,15 @@
+import {unsupportedPlatformMessage} from '../src/sites/index.mjs';
 const messages = {
+	invalid_manifest: '请检查导入文件的版本及条目格式。',
+	invalid_entry: '收藏条目缺少必要的信息。',
+	not_found: '找不到相应的收藏任务。',
+	invalid_attachment: '无法验证此附件。',
+	unsupported_content: '当前媒体格式无法保存。',
+	size_limit: '媒体或清单超过大小限制。',
 	invalid_request: '本地组件收到无效请求，请重新打开插件。',
 	invalid_url: '请输入一个有效的视频链接。',
 	multiple_urls: '请只保留一个视频链接。',
-	unsupported_platform: '暂不支持此网站，请使用 YouTube、B站、小红书或抖音链接。',
+	unsupported_platform: unsupportedPlatformMessage,
 	unsupported_url: '请使用具体的视频或分享链接。',
 	redirect_required: '此分享短链需要在浏览器中打开，请复制打开后的具体视频链接。',
 	invalid_options: '本地下载配置无效，请重新选择保存目录或修复本地组件。',
@@ -11,10 +18,10 @@ const messages = {
 	unavailable: '该内容不可用或不在当前支持范围内。',
 	drm: '该视频受 DRM 保护，当前不支持下载。',
 	auth_required:
-		'该内容需要访问权限。小红书和抖音请在浏览器中登录后打开视频页重试；YouTube 和 B站当前使用匿名解析。',
+		'该内容需要访问权限。小红书和抖音请在浏览器中登录后打开视频页重试；其他平台由本地下载器解析公开链接。',
 	session_required: '平台需要有效会话。请在浏览器中登录后重新打开视频页，然后重试。',
 	verification_required:
-		'平台要求人工验证。小红书和抖音请在浏览器打开的视频页完成验证后重试；YouTube 和 B站匿名解析暂时不可用。',
+		'平台要求人工验证。小红书和抖音请在浏览器打开的视频页完成验证后重试；其他平台请稍后重试。',
 	browser_state_missing: '页面尚未加载出目标视频，请等视频可以播放后重试。',
 	browser_unavailable: '无法读取浏览器页面，请重新打开视频页后重试。',
 	dependency_missing: '缺少本地下载依赖，请按安装指引修复 Node.js、yt-dlp 或 FFmpeg。',
@@ -36,8 +43,10 @@ const messages = {
 	task_already_finished: '这个启动请求已经处理过，请使用重试按钮开始新任务。',
 	interrupted: '下载已中断，请重新下载。',
 	cancelled: '已取消下载。',
-	size_limit: '视频超过当前下载大小上限。',
 	engine_error: '本次识别或下载未能完成，请稍后重试或检查本地组件。',
+	login_expired: '该网站在 Fetchy 桌面端的登录已过期，请在「账号」重新登录后重试。',
+	premium_required: '该内容需要会员或购买，当前账号无法下载。',
+	open_page_required: '请先在浏览器打开这条视频的页面，再从右侧栏下载。',
 };
 export function bridgeError(code) {
 	return Object.assign(new Error(messages[code] ?? messages.engine_error), {

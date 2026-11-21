@@ -5,8 +5,9 @@
 		<meta name="viewport" content="width=device-width, initial-scale=1" />
 		<meta name="color-scheme" content="light" />
 		<title>Fetchy 视频下载</title>
-		<link rel="stylesheet" href="popup.css" />
-		<script src="popup.mjs" type="module"></script>
+		<link rel="stylesheet" href="panel.css" />
+		<script src="panel.mjs" type="module"></script>
+		<script src="library-panel.mjs" type="module"></script>
 	</head>
 	<body>
 		<svg class="icon-library" xmlns="http://www.w3.org/2000/svg" aria-hidden="true">
@@ -56,6 +57,57 @@
 				</button>
 			</aside>
 
+			<section id="page-view" class="page-view" aria-live="polite">
+				<section id="post-card" class="post-card" aria-label="当前帖子" hidden>
+					<h1 id="post-title"></h1>
+					<p id="post-meta" class="video-meta"></p>
+					<p id="post-preview" class="post-preview"></p>
+					<div class="actions">
+						<button id="save-post" class="primary-button" type="button">
+							<svg aria-hidden="true"><use href="#i-download" /></svg><span>保存这篇帖子</span>
+						</button>
+					</div>
+				</section>
+
+				<section id="collection-card" class="collection-card" aria-label="收藏夹" hidden>
+					<h1 id="collection-title"></h1>
+					<p id="collection-count" class="collection-count"></p>
+					<div class="row-actions">
+						<button id="read-more" class="outline-button" type="button">再读一屏</button>
+						<button id="read-all" class="outline-button" type="button">自动读到底</button>
+						<button id="read-stop" class="outline-button" type="button" hidden>停止</button>
+					</div>
+					<p class="hint">也可以直接在页面上往下翻，列表会同步增加。</p>
+					<div class="select-bar">
+						<label class="check"
+							><input id="select-all" type="checkbox" /><span>全选已读到的</span></label
+						>
+						<span id="selected-count"></span>
+					</div>
+					<ol id="collection-items" class="collection-items"></ol>
+					<div class="sticky-save">
+						<button id="save-selected" class="primary-button" type="button" disabled>
+							<svg aria-hidden="true"><use href="#i-download" /></svg
+							><span id="save-selected-label">保存所选</span>
+						</button>
+					</div>
+				</section>
+
+				<section id="folders-card" class="collection-card" aria-label="收藏夹列表" hidden>
+					<h1>选择一个收藏夹</h1>
+					<p class="hint">点开后在当前页读取它的条目。</p>
+					<ul id="folder-links" class="folder-links"></ul>
+				</section>
+
+				<p id="page-notice" class="notice" role="status" hidden></p>
+				<button id="grant-site" class="outline-button" type="button" hidden>允许读取此网站</button>
+
+				<section id="media-card" class="media-card" aria-label="页面上播放过的媒体" hidden>
+					<h2>页面上播放过的媒体</h2>
+					<ul id="media-items" class="media-items"></ul>
+				</section>
+			</section>
+
 			<main id="main-view">
 				<section id="empty-state" class="empty-state" hidden>
 					<h1 id="empty-title">当前页面未识别到支持的视频</h1>
@@ -90,13 +142,7 @@
 							aria-describedby="supported-platforms input-hint"
 						></textarea>
 						<div class="field-footer">
-							<p
-								id="supported-platforms"
-								class="platforms"
-								aria-label="支持 YouTube、B站、小红书和抖音"
-							>
-								<span>YouTube</span><span>B站</span><span>小红书</span><span>抖音</span>
-							</p>
+							<p id="supported-platforms" class="platforms" aria-label="支持的平台"></p>
 							<span class="enter-hint" aria-hidden="true"><kbd>Enter</kbd> 识别</span>
 						</div>
 					</div>
@@ -120,7 +166,7 @@
 					>
 						<span id="progress-fill"></span>
 					</div>
-					<p id="background-hint" class="background-hint" hidden>关闭弹窗后，下载仍会继续。</p>
+					<p id="background-hint" class="background-hint" hidden>关闭右侧栏后，下载仍会继续。</p>
 				</section>
 
 				<div id="saved-file" class="saved-file" hidden>
@@ -147,6 +193,16 @@
 					</button>
 				</footer>
 			</main>
+
+			<section id="task-card" class="task-card" aria-label="保存进度" hidden>
+				<div class="task-head">
+					<h2 id="task-title">保存进度</h2>
+					<button id="task-retry" class="text-button" type="button" hidden>重试失败项</button>
+				</div>
+				<p id="task-counts" class="task-counts"></p>
+				<p class="hint">保存在本机后台进行，关掉右侧栏或浏览器都会继续。</p>
+				<ul id="task-items" class="task-items"></ul>
+			</section>
 
 			<main id="settings-view" hidden>
 				<h1 class="settings-title">把视频存在哪里？</h1>

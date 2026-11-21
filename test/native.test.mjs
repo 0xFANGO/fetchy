@@ -52,6 +52,8 @@ async function fixture(t, options = {}) {
 			...options.core,
 		},
 		runProcess: options.runProcess ?? (async () => ({code: 0, stdout: ''})),
+		// No desktop app here: downloads run signed out, without extra async steps.
+		withSiteCookies: options.withSiteCookies ?? ((_input, action) => action()),
 	}).initialize();
 	t.after(async () => {
 		await controller.close();
@@ -864,4 +866,68 @@ test('automatic refresh is opt-in, limited to browser media and never repeats a 
 		assert.equal(attempts, 1);
 		assert.equal(controller.mediaRefresh, null);
 	}
+});
+
+test('the handshake answers without probing tools; dependencies are a separate request', async (t) => {
+	const runs = [];
+	const {controller} = await fixture(t, {
+		runProcess: async (command) => {
+			runs.push(command);
+			return {code: 0, stdout: ''};
+		},
+	});
+	const hello = await controller.request('hello');
+	assert.equal(hello.dependencies, undefined);
+	assert.equal(hello.capabilities.dependencies, true);
+	assert.equal(runs.length, 0);
+	const dependencies = await controller.request('dependencies');
+	assert.equal(dependencies.ffmpeg.available, true);
+	assert.equal(runs.length, 3);
+});
+
+test('a video download borrows the site sign-in only when the page did not supply the media', async (t) => {
+	const seen = [];
+	const lent = [];
+	const {controller} = await fixture(t, {
+		withSiteCookies: (input, action) => {
+			lent.push(input);
+			return action('/tmp/lent-cookies.txt');
+		},
+		core: {
+			downloadVideo: async (_input, settings) => {
+				seen.push(settings.cookiesFile);
+				return output(settings.outputDir);
+			},
+		},
+	});
+	await controller.request('start', {
+		input: 'https://youtu.be/test-video',
+		taskId: 'job-c',
+		metadata,
+	});
+	await controller.downloadPromise;
+	assert.deepEqual(lent, ['https://youtu.be/test-video']);
+	assert.deepEqual(seen, ['/tmp/lent-cookies.txt']);
+});
+
+test('identifying a video borrows the sign-in, and its sign-in errors reach the panel intact', async (t) => {
+	const lent = [];
+	const {controller} = await fixture(t, {
+		withSiteCookies: (input, action) => {
+			lent.push(input);
+			return action('/tmp/lent-cookies.txt');
+		},
+		core: {
+			resolveVideo: async (_input, settings) => {
+				assert.equal(settings.cookiesFile, '/tmp/lent-cookies.txt');
+				throw Object.assign(new Error('raw'), {code: 'login_expired'});
+			},
+		},
+	});
+	await assert.rejects(
+		controller.request('resolve', {input: 'https://youtu.be/test-video', requestId: 'r1'}),
+		(error) => publicError(error).code === 'login_expired',
+	);
+	assert.deepEqual(lent, ['https://youtu.be/test-video']);
+	assert.equal(publicError({code: 'premium_required'}).code, 'premium_required');
 });

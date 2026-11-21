@@ -39,6 +39,10 @@ export function extractPageMedia({platform, expectedId, snapshot} = {}) {
 	}
 	function permittedUrls(values) {
 		const suffix = platform === 'xiaohongshu' ? '.xhscdn.com' : '.douyinvod.com';
+		const mirrors =
+			platform === 'xiaohongshu'
+				? ['sns-v8.rednotecdn.com', 'sns-v8-ae.rednotecdn.com']
+				: ['v5-dy-ov-experiment.zjcdn.com', 'v3-dy-o.zjcdn.com'];
 		const found = [];
 		for (const value of values) {
 			if (typeof value !== 'string') continue;
@@ -46,8 +50,7 @@ export function extractPageMedia({platform, expectedId, snapshot} = {}) {
 				const url = new URL(value);
 				const permittedHost =
 					(url.hostname.endsWith(suffix) && url.hostname.length > suffix.length) ||
-					(platform === 'douyin' &&
-						['v5-dy-ov-experiment.zjcdn.com', 'v3-dy-o.zjcdn.com'].includes(url.hostname));
+					mirrors.includes(url.hostname);
 				if (value !== value.trim() || url.username || url.password || url.port || !permittedHost)
 					continue;
 				// XHS SSR can publish HTTP addresses for CDN resources observed over HTTPS.
@@ -107,12 +110,37 @@ export function extractPageMedia({platform, expectedId, snapshot} = {}) {
 
 	let selected;
 	if (platform === 'xiaohongshu') {
-		selected =
-			snapshot !== undefined
-				? snapshot.note
-				: typeof window !== 'undefined'
-					? window.__INITIAL_STATE__?.note?.noteDetailMap?.[expectedId]?.note
-					: null;
+		if (snapshot !== undefined) selected = snapshot.note;
+		else {
+			if (globalThis.location?.href) {
+				const url = new URL(globalThis.location.href);
+				const hosts = ['xiaohongshu.com', 'www.xiaohongshu.com', 'rednote.com', 'www.rednote.com'];
+				const id =
+					/^\/(?:explore|discovery\/item|board\/[\w-]+|user\/profile\/[a-f\d]+)\/([a-f\d]{24})\/?$/i.exec(
+						url.pathname,
+					)?.[1];
+				if (
+					url.protocol !== 'https:' ||
+					url.port ||
+					url.username ||
+					url.password ||
+					!hosts.includes(url.hostname) ||
+					id !== expectedId
+				)
+					fail('identity_mismatch', '当前页面与请求的笔记不一致。');
+			}
+			const doc = globalThis.document;
+			const app =
+				doc?.querySelector?.('[data-v-app]')?.__vue_app__ ??
+				doc?.querySelector?.('#app')?.__vue_app__;
+			const unwrap = (value) => (value?.__v_isRef === true ? value.value : value);
+			const read = (store) => {
+				const map = unwrap(unwrap(store)?.noteDetailMap);
+				return unwrap(unwrap(map?.[expectedId])?.note);
+			};
+			const live = app?.config?.globalProperties?.$pinia?.state?.value?.note;
+			selected = read(live) ?? read(globalThis.window?.__INITIAL_STATE__?.note);
+		}
 	} else if (snapshot !== undefined) {
 		selected = snapshot.detail;
 	} else {

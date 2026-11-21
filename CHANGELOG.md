@@ -4,6 +4,32 @@ Notable changes for users, following [Keep a Changelog](https://keepachangelog.c
 
 ## [Unreleased]
 
+### Added
+
+- Save public videos and audio from additional social and media sites. The platform table records file-level checks and access requirements.
+- Inspect links with `info`, save with `get`, and process a file or stdin with `batch`. The generic downloader accepts direct videos, declared media, finite HLS and static DASH.
+- Install the Apple Silicon macOS app and matching browser extension from the two ZIPs on GitHub Releases.
+- Archive text and ordered attachments from supported posts and collections. Search the offline library, keep original folder memberships, and resume, retry or export shared tasks.
+- Open the extension in Chrome's side panel beside the current page to save a post, read a collection one screen at a time or to the end, and save the selected entries.
+- Saving selected collection entries starts at once from the list and keeps going after the panel or browser closes. The local component downloads every file, with no combined size limit, and each entry records its result and reason and can be retried on its own.
+- The macOS app is one window with a cover-grid library, a built-in browser with the same side column, and an accounts list showing whether each site is signed in, expired or signed out.
+- Select works in the desktop library one by one, by range or all at once, and open them, show their files in Finder, rename them or move them to the Trash. A list view sits beside the cover grid.
+- The desktop sidebar counts works by type, platform and original folder. Save tasks split into in progress, with progress bars, and needs attention, where failed and partial entries are grouped by reason with the next step and a retry for the group.
+- Sign in once in the desktop app; the CLI, the extension's saves and the app pass that site's cookies to the downloader only for that site's downloads. New commands `login`, `logout`, `accounts`, `folders`, `sync`, `list`, `search` and `retry`; `get` accepts `-o` and `--audio`, and a bare link saves like `get`.
+
+### Changed
+
+- The extension no longer opens tabs to read pages. Xiaohongshu and Douyin videos are read from the open video page; open a short link in the browser first.
+- `fetchy --help` lists the new commands; `resolve`, `download`, `browse`, `batch` and `library …` keep working and are listed under `fetchy help all`.
+- Downloads reuse yt-dlp's first extraction instead of reading the page twice, and the extension connects without waiting for the tool check.
+
+### Fixed
+
+- Fetchy recognizes Xiaohongshu notes on `rednote.com` and keeps the same desktop account when the site redirects there after sign-in. Visiting the login page as a guest no longer counts as signing in.
+- The desktop app's built-in browser identifies as Safari 18.5, shares a single persistent session store across sites (with host-scoped cookie export and single-site logout), opens real auxiliary windows for OAuth popups, disables unavailable embedded Passkey prompts so Google and X sign-in fall back cleanly, supports JS dialogs, file pickers, HTTP redirects, load-error banners, web downloads, zoom, and imports cookies from Chrome, Safari, Edge, Firefox, or Brave.
+- The built-in browser toolbar adds a Home button, address-bar clear button, keyword search, loading progress bar, copy-link and open-in-default-browser actions, a collapsible side panel with media-count badge, a persistent bookmarks bar for all 9 supported platforms, standard macOS shortcuts, close-window protection during active downloads, and bare-domain link detection in the Downloads bar.
+- Media downloads work behind fake-IP proxies that resolve names into 198.18.0.0/15.
+
 ## [0.3.1] - 2026-11-02
 
 ### Fixed

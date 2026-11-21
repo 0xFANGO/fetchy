@@ -2,12 +2,14 @@
 	"manifest_version": 3,
 	"name": "Fetchy 视频下载",
 	"version": "0.3.1",
-	"description": "识别并下载 YouTube、B站、小红书和抖音的单个视频，保存到你的文件夹。",
+	"description": "识别当前页面或粘贴的社媒视频链接，把视频保存到本地文件夹。",
 	"minimum_chrome_version": "120",
 	"key": "MIIBIjANBgkqhkiG9w0BAQEFAAOCAQ8AMIIBCgKCAQEAjkFShM5BQjXYUQU3O/YeUevcRN/fRufblp6ZIndm4XEvOf8iDpaxRqwftmyBkaeN29h/iFqx4YJVHTWHBQNgQSCu2hW8tNJIFHsSa6PkX+87tmpwYbtEx7RvdAXWtQYSYOtpvjcRENqxKsJJsIB5zp2i8+eqtA5oqX/txqRkMi5ZShegWnl8k+SuxBTDNXu3U/GAWaMDE5HC1qSS5V2RhIAUvDyREBBCBbMHtjR8PLb7p/MsHX8gi6X3eoboGNTkOEb2FNTY6gfXPcyM1M9P7cHBC5UgPZ5JmurLReJPgjpUmDztQ4t/Uu7GFiPCNeGxUMrGVHFbjkWmRxfnYfU0vQIDAQAB",
-	"permissions": ["activeTab", "storage", "nativeMessaging", "scripting"],
+	"permissions": ["activeTab", "storage", "nativeMessaging", "scripting", "sidePanel"],
 	"host_permissions": [
 		"https://*.xiaohongshu.com/*",
+		"https://rednote.com/*",
+		"https://www.rednote.com/*",
 		"https://*.douyin.com/*",
 		"https://*.iesdouyin.com/*"
 	],
@@ -17,11 +19,13 @@
 	},
 	"action": {
 		"default_title": "Fetchy 视频下载",
-		"default_popup": "popup.html",
 		"default_icon": {
 			"16": "icons/icon16.png",
 			"32": "icons/icon32.png"
 		}
+	},
+	"side_panel": {
+		"default_path": "panel.html"
 	},
 	"icons": {
 		"16": "icons/icon16.png",
@@ -30,5 +34,26 @@
 	},
 	"content_security_policy": {
 		"extension_pages": "script-src 'self'; object-src 'none'; img-src 'self' https: data:; style-src 'self'"
-	}
+	},
+	"optional_host_permissions": [
+		"https://x.com/*",
+		"https://www.x.com/*",
+		"https://twitter.com/*",
+		"https://www.twitter.com/*",
+		"https://www.zhihu.com/*",
+		"https://zhuanlan.zhihu.com/*",
+		"https://space.bilibili.com/*",
+		"https://www.youtube.com/*",
+		"https://m.youtube.com/*",
+		"https://instagram.com/*",
+		"https://www.instagram.com/*",
+		"https://threads.net/*",
+		"https://www.threads.net/*",
+		"https://threads.com/*",
+		"https://www.threads.com/*",
+		"https://kuaishou.com/*",
+		"https://www.kuaishou.com/*",
+		"https://tiktok.com/*",
+		"https://www.tiktok.com/*"
+	]
 }

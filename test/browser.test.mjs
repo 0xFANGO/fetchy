@@ -23,7 +23,7 @@ const canEncode = (...names) =>
 	probeCheck?.code === 0 &&
 	names.every((name) => encoderCheck.stdout.includes(name));
 
-async function syntheticMedia(root, {extension, vcodec, acodec}) {
+async function syntheticMedia(root, {extension, vcodec, acodec, silent}) {
 	const filepath = path.join(root, `source.${extension}`);
 	const args = [
 		'-hide_banner',
@@ -47,6 +47,7 @@ async function syntheticMedia(root, {extension, vcodec, acodec}) {
 		'-c:a',
 		acodec,
 	];
+	if (silent) args.push('-an');
 	if (vcodec === 'libvpx-vp9') args.push('-deadline', 'realtime', '-cpu-used', '8');
 	if (vcodec === 'libx265') args.push('-x265-params', 'log-level=error:pools=none:frame-threads=1');
 	args.push(filepath);
@@ -168,6 +169,22 @@ test('media URL validation preserves signatures but rejects cross-platform and d
 	assert.throws(() => validateMediaUrl(url, 'youtube'), {code: 'invalid_media_url'});
 });
 
+test('only known rednote video mirrors can serve Xiaohongshu video', () => {
+	for (const host of ['sns-v8.rednotecdn.com', 'sns-v8-ae.rednotecdn.com']) {
+		const url = 'https://' + host + '/video.mp4';
+		assert.equal(validateMediaUrl(url, 'xiaohongshu'), url);
+		assert.throws(() => validateMediaUrl(url, 'douyin'), {code: 'invalid_media_url'});
+	}
+	for (const host of [
+		'unknown.rednotecdn.com',
+		'other.sns-v8.rednotecdn.com',
+		'sns-v8.rednotecdn.com.example',
+	])
+		assert.throws(() => validateMediaUrl('https://' + host + '/v', 'xiaohongshu'), {
+			code: 'invalid_media_url',
+		});
+});
+
 test('media URL validation allows only verified Douyin zjcdn hosts', () => {
 	for (const host of ['v5-dy-ov-experiment.zjcdn.com', 'v3-dy-o.zjcdn.com']) {
 		const url = `https://${host}/media.mp4?sign=example%2B123`;
@@ -265,7 +282,10 @@ test('browser engines publish the resolved video title only after media validati
 		const target = {
 			platform,
 			id,
-			url: `https://www.${platform}.com/${platform === 'xiaohongshu' ? 'explore' : 'video'}/${id}`,
+			url:
+				platform === 'xiaohongshu'
+					? `https://www.rednote.com/explore/${id}?xsec_token=secret`
+					: `https://www.douyin.com/video/${id}`,
 		};
 		const title = '中文视频 第 1 集';
 		const url =
@@ -295,14 +315,12 @@ test('browser engines publish the resolved video title only after media validati
 				');\n',
 		);
 		await chmod(ffprobePath, 0o755);
-		const fetchMock = t.mock.method(
-			globalThis,
-			'fetch',
-			async () =>
-				new Response('test-media-data', {
-					headers: {'content-type': 'video/mp4', 'content-length': '15'},
-				}),
-		);
+		const fetchMock = t.mock.method(globalThis, 'fetch', async (_url, {headers}) => {
+			assert.equal(headers.referer, new URL(target.url).origin + '/');
+			return new Response('test-media-data', {
+				headers: {'content-type': 'video/mp4', 'content-length': '15'},
+			});
+		});
 		const outputDir = path.join(root, platform);
 		const options = {
 			pageMedia: {media, userAgent: 'test'},
@@ -344,9 +362,10 @@ for (const fixture of [
 	{extension: 'webm', vcodec: 'libvpx-vp9', acodec: 'libopus', accepted: false},
 	{extension: 'mp4', vcodec: 'libx264', acodec: 'aac', accepted: true, expectedCodec: 'h264'},
 	{extension: 'mp4', vcodec: 'libx265', acodec: 'aac', accepted: true, expectedCodec: 'hevc'},
+	{extension: 'mp4', vcodec: 'libx264', acodec: 'aac', accepted: false, silent: true},
 ]) {
 	test(
-		`browser validates the actual container of ${fixture.vcodec}/${fixture.extension} media before publishing`,
+		`browser validates ${fixture.silent ? 'a silent' : 'a'} ${fixture.vcodec}/${fixture.extension} file before publishing`,
 		{
 			skip: canEncode(fixture.vcodec, fixture.acodec)
 				? false
@@ -392,7 +411,17 @@ for (const fixture of [
 			} else {
 				await assert.rejects(download, {
 					code: 'output_invalid',
-					message: '下载文件不是支持的 MP4 容器。',
+					...(fixture.silent
+						? {
+								details: {
+									video: true,
+									audio: false,
+									durationSeconds: 0.6,
+									expectedDurationSeconds: 0.6,
+									probeExitCode: 0,
+								},
+							}
+						: {message: '下载文件不是支持的 MP4 容器。'}),
 				});
 				assert.deepEqual(await readdir(outputDir), ['视频.mp4']);
 				assert.equal(stages.includes('complete'), false);

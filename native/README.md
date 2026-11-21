@@ -2,9 +2,11 @@
 
 扩展通过 Native Messaging 连接 `com.fetchy.video_downloader`，本地组件使用仓库现有 Node API 下载。当前实现支持 macOS；Ego Lite 与 Chrome 的安装目录已提供，其他浏览器和操作系统未验证。
 
+资料库使用 Node 22.13 及以上版本自带的 SQLite。浏览器提交收藏后即可获得任务 ID，本机服务继续取得可用附件。三端均可查到新增、跳过、部分保存和失败项。服务重启后，已保存的正文与文件可以离线打开。缺少临时地址的附件可从原帖重新采集。[资料库格式与命令](../docs/library.md) · [浏览器采集](../docs/extension-library.md)
+
 ## 安装
 
-先按照项目 README 安装 Node.js 22+、Python 3.10+ 和 FFmpeg/ffprobe，运行 `npm run deps:install` 安装项目 `.venv` 中的 yt-dlp。然后在仓库根目录运行：
+先按照项目 README 安装 Node.js 22.13+、Python 3.10+ 和 FFmpeg/ffprobe，运行 `npm run deps:install` 安装项目 `.venv` 中的 yt-dlp。然后在仓库根目录运行：
 
 ```sh
 npm run extension:build

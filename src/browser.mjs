@@ -1,3 +1,5 @@
+import {usesPageMedia} from './sites/index.mjs';
+import {matchingTarget} from './urls.mjs';
 import {mkdir, mkdtemp, rm, stat} from 'node:fs/promises';
 import {publishVideoFile} from './filenames.mjs';
 import {createWriteStream} from 'node:fs';
@@ -114,7 +116,6 @@ export function selectBrowserFormat(formats, {maxHeight} = {}) {
 	return selected[0];
 }
 
-const PAGE_PLATFORMS = ['xiaohongshu', 'douyin'];
 const positive = (value) =>
 	typeof value === 'number' && Number.isFinite(value) && value > 0 ? value : null;
 const bounded = (value, max) => (typeof value === 'string' && value ? value.slice(0, max) : null);
@@ -177,7 +178,7 @@ export function checkPageMedia(pageMedia, target) {
 
 function pageMediaFor(target, options) {
 	check(options);
-	if (!PAGE_PLATFORMS.includes(target.platform))
+	if (!usesPageMedia(target.platform))
 		throw new EngineError('unsupported_platform', '浏览器引擎当前仅支持小红书和抖音。');
 	emit(options, 'resolving');
 	return checkPageMedia(options.pageMedia, target);
@@ -196,10 +197,11 @@ export function validateMediaUrl(raw, platform) {
 	}
 	const suffix =
 		platform === 'xiaohongshu' ? '.xhscdn.com' : platform === 'douyin' ? '.douyinvod.com' : null;
-	const permittedHost =
-		(suffix && url.hostname.endsWith(suffix)) ||
-		(platform === 'douyin' &&
-			['v5-dy-ov-experiment.zjcdn.com', 'v3-dy-o.zjcdn.com'].includes(url.hostname));
+	const mirrors =
+		platform === 'xiaohongshu'
+			? ['sns-v8.rednotecdn.com', 'sns-v8-ae.rednotecdn.com']
+			: ['v5-dy-ov-experiment.zjcdn.com', 'v3-dy-o.zjcdn.com'];
+	const permittedHost = (suffix && url.hostname.endsWith(suffix)) || mirrors.includes(url.hostname);
 	if (
 		!suffix ||
 		url.protocol !== 'https:' ||
@@ -253,9 +255,10 @@ export async function downloadWithBrowser(target, options = {}) {
 		await mkdir(outputRoot, {recursive: true});
 		directory = await mkdtemp(path.join(outputRoot, '.fetchy-'));
 		const temporary = path.join(directory, 'media.part');
+		const page = matchingTarget(target.url, target);
 		const headers = {
 			...(userAgent ? {'user-agent': userAgent} : {}),
-			referer: `https://www.${target.platform === 'douyin' ? 'douyin' : 'xiaohongshu'}.com/`,
+			referer: page ? new URL(page.url).origin + '/' : `https://www.${target.platform}.com/`,
 		};
 		let bytes = 0,
 			lastError;

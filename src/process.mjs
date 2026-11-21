@@ -40,7 +40,7 @@ export function fileWriteError(value) {
 export function runProcess(
 	command,
 	args,
-	{signal, timeoutMs = 60_000, maxOutputBytes = 16 * 1024 * 1024} = {},
+	{signal, input, timeoutMs = 60_000, maxOutputBytes = 16 * 1024 * 1024} = {},
 ) {
 	if (signal?.aborted) return Promise.reject(new EngineError('cancelled', '任务已取消。'));
 	return new Promise((resolve, reject) => {
@@ -78,7 +78,7 @@ export function runProcess(
 			child = spawn(command, args, {
 				shell: false,
 				detached,
-				stdio: ['ignore', 'pipe', 'pipe'],
+				stdio: [input === undefined ? 'ignore' : 'pipe', 'pipe', 'pipe'],
 				windowsHide: true,
 			});
 		} catch {
@@ -89,6 +89,10 @@ export function runProcess(
 			cleanup();
 			reject(new EngineError('dependency_missing', '无法启动下载或媒体校验工具，请检查依赖路径。'));
 		});
+		if (child.stdin) {
+			child.stdin.on('error', () => {});
+			child.stdin.end(input);
+		}
 		child.stdout.on('data', (data) => {
 			stdoutBytes += data.length;
 			if (stdoutBytes + stderrBytes > maxOutputBytes)

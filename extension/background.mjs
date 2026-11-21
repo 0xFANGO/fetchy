@@ -1,10 +1,14 @@
+import {sites, usesPageMedia} from '../src/sites/index.mjs';
 import {Controller, activeTask} from './controller.mjs';
-import {normalizeUrl} from '../src/urls.mjs';
+import {matchingTarget, normalizeUrl} from '../src/urls.mjs';
+// A service worker cannot load modules at run time; everything it runs is imported here.
+import {readPostPageInTab} from './archive-source.mjs';
 
 const HOST = 'com.fetchy.video_downloader';
-const popups = new Set(),
+const panels = new Set(),
 	requests = new Map();
 let nativePort,
+	archiveAvailable = false,
 	connectionPromise,
 	reconnectTimer,
 	reconnectAttempt = 0;
@@ -14,11 +18,11 @@ const controller = new Controller({
 	readActiveTab: async () => (await chrome.tabs.query({active: true, lastFocusedWindow: true}))[0],
 	saveSession: (session) => chrome.storage.session.set({session}),
 	emit: (state) => {
-		for (const port of popups) {
+		for (const port of panels) {
 			try {
 				port.postMessage({type: 'state', state});
 			} catch {
-				popups.delete(port);
+				panels.delete(port);
 			}
 		}
 		chrome.action
@@ -34,8 +38,12 @@ const controller = new Controller({
 			.catch(() => {});
 		chrome.action.setBadgeBackgroundColor({color: '#c9573b'}).catch(() => {});
 	},
+	// The help page is the only tab Fetchy opens, and only when the user asks.
 	openHelp: () => chrome.tabs.create({url: chrome.runtime.getURL('help.html')}),
 });
+
+// The toolbar button opens Fetchy beside the current page instead of a popup.
+chrome.sidePanel?.setPanelBehavior({openPanelOnActionClick: true}).catch(() => {});
 
 const loaded = chrome.storage.session
 	.get('session')
@@ -124,9 +132,16 @@ async function connect() {
 			}
 			throw error;
 		}
+		archiveAvailable = hello.capabilities?.archive === true;
 		controller.receiveNative(hello.state, {authoritative: true});
 		controller.setConnection({status: 'connected', dependencies: hello.dependencies});
 		reconnectAttempt = 0;
+		if (hello.capabilities?.dependencies)
+			send('dependencies', {}, 20000)
+				.then((dependencies) => {
+					if (nativePort === port) controller.setConnection({status: 'connected', dependencies});
+				})
+				.catch(() => {});
 	})();
 	try {
 		await connectionPromise;
@@ -136,36 +151,23 @@ async function connect() {
 }
 async function rpc(method, params, timeoutMs) {
 	await connect();
+	if (!archiveAvailable && (method.startsWith('library') || method === 'webSave'))
+		throw {code: 'archive_update_required'};
 	return send(method, params, timeoutMs);
 }
 
-// Xiaohongshu and Douyin media is read from a page in the user's own browser
-// session instead of a separate automation browser. An open tab on the exact
-// video is used when there is one; otherwise a background tab is opened and
-// closed again. Only the extractor's narrow result crosses into the native host.
-const PAGE_PLATFORMS = ['xiaohongshu', 'douyin'];
-const PAGE_HOSTS = ['https://*.xiaohongshu.com/*', 'https://*.douyin.com/*'];
+// Xiaohongshu and Douyin media is read from the page the user has open, in
+// their own browser session. Fetchy never opens a tab for this: without an
+// open page for the exact video it asks the user to open one. Only the
+// extractor's narrow result crosses into the native host.
+const PAGE_HOSTS = sites
+	.filter((site) => site.pageMedia)
+	.flatMap((site) => site.hosts.map((host) => `https://${host}/*`));
 const RETRYABLE = ['browser_state_missing', 'browser_unavailable'];
 const delay = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
 function checkCancelled(signal) {
 	if (signal?.aborted) throw {code: 'cancelled'};
 }
-// Prefer the modal's SSR detail when a temporary page is needed. Existing
-// /video tabs can also supply detail through their hydrated player state.
-const pageUrl = (target) =>
-	target.platform === 'douyin'
-		? `https://www.douyin.com/jingxuan?modal_id=${target.id}`
-		: target.url;
-function targetOf(url) {
-	try {
-		const target = normalizeUrl(url);
-		return target.needsRedirect ? null : target;
-	} catch {
-		return null;
-	}
-}
-const sameTarget = (a, b) => Boolean(a && b && a.platform === b.platform && a.id === b.id);
-
 async function extractOnce(tabId, target) {
 	const args = {platform: target.platform, expectedId: target.id};
 	await chrome.scripting.executeScript({
@@ -199,25 +201,6 @@ async function extractFromTab(tabId, target, attempts, signal) {
 	}
 	throw {code: typeof last.code === 'string' ? last.code : 'browser_state_missing'};
 }
-async function waitForTarget(tabId, expected, timeoutMs, signal) {
-	const deadline = Date.now() + timeoutMs;
-	while (Date.now() < deadline) {
-		checkCancelled(signal);
-		const tab = await chrome.tabs.get(tabId).catch(() => null);
-		checkCancelled(signal);
-		if (!tab) throw {code: 'browser_unavailable'};
-		const url = tab.url || tab.pendingUrl || '';
-		const target = targetOf(url);
-		if (
-			tab.status === 'complete' &&
-			target?.platform === expected.platform &&
-			(!expected.id || target.id === expected.id)
-		)
-			return {target, url};
-		await delay(250);
-	}
-	throw {code: 'timeout'};
-}
 async function collectPageMedia(input, {fresh = false, signal} = {}) {
 	checkCancelled(signal);
 	let expected;
@@ -226,40 +209,131 @@ async function collectPageMedia(input, {fresh = false, signal} = {}) {
 	} catch {
 		return undefined;
 	}
-	if (!PAGE_PLATFORMS.includes(expected.platform)) return undefined;
-	if (!fresh && !expected.needsRedirect) {
-		const tabs = await chrome.tabs.query({url: PAGE_HOSTS}).catch(() => []);
-		for (const tab of tabs) {
-			if (!sameTarget(targetOf(tab.url), expected)) continue;
-			try {
-				return await extractFromTab(tab.id, expected, 3, signal);
-			} catch (error) {
-				if (!RETRYABLE.includes(error.code)) throw error;
-			}
+	if (!usesPageMedia(expected.platform)) return undefined;
+	if (expected.needsRedirect) throw {code: 'open_page_required'};
+	const tabs = await chrome.tabs.query({url: PAGE_HOSTS}).catch(() => []);
+	let last = {code: 'open_page_required'};
+	for (const tab of tabs) {
+		const page = matchingTarget(tab.url, expected);
+		if (!page) continue;
+		try {
+			// Preserve an explicit input's query only on its original site.
+			const sameOrigin = new URL(expected.url).origin === new URL(page.url).origin;
+			const target = sameOrigin ? expected : {...page, url: page.url.split('?')[0]};
+			return await extractFromTab(tab.id, target, fresh ? 20 : 6, signal);
+		} catch (error) {
+			if (!RETRYABLE.includes(error.code)) throw error;
+			last = error;
 		}
 	}
-	checkCancelled(signal);
-	const tab = await chrome.tabs.create({
-		url: expected.needsRedirect ? expected.url : pageUrl(expected),
-		active: false,
-	});
+	throw last;
+}
+
+// After "保存所选" the native worker owns the task. This worker only reads each
+// selected post page from the user's tab with a same-site request and hands it
+// over; it keeps going when the side panel closes. If the tab goes away, the
+// rest is left to the native worker, which reads with the desktop sign-in.
+const feeding = new Map();
+async function feedTask({taskId, tabId, origin, items}) {
+	if (typeof taskId !== 'string' || !Number.isInteger(tabId) || !Array.isArray(items)) return;
+	if (feeding.has(taskId)) return;
+	const skip = (key) => rpc('libraryPage', {id: taskId, key, skip: true}).catch(() => {});
 	try {
-		let {target, url} = await waitForTarget(tab.id, expected, 20000, signal);
-		if (target.platform === 'douyin' && !url.includes('modal_id=')) {
-			await chrome.tabs.update(tab.id, {url: pageUrl(target)});
-			await delay(250);
-			({target, url} = await waitForTarget(tab.id, target, 20000, signal));
+		feeding.set(taskId, true);
+		for (const {key, url, platform} of items) {
+			let tab;
+			try {
+				tab = await chrome.tabs.get(tabId);
+			} catch {
+				tab = null;
+			}
+			// Only same-origin pages: a page-context request elsewhere needs CORS the site does not send.
+			let sameOrigin = false;
+			try {
+				sameOrigin =
+					Boolean(tab?.url) &&
+					new URL(tab.url).origin === origin &&
+					new URL(url).origin === origin &&
+					typeof platform === 'string';
+			} catch {}
+			if (!sameOrigin) {
+				await skip(key);
+				continue;
+			}
+			let page;
+			try {
+				page = await readPostPageInTab(tabId, url);
+			} catch {
+				page = {error: 'page_access'};
+			}
+			if (page.error) {
+				await skip(key);
+				continue;
+			}
+			for (let attempt = 0; attempt < 30; attempt++) {
+				try {
+					await rpc('libraryPage', {id: taskId, key, ...page});
+					break;
+				} catch (error) {
+					if (error.code !== 'busy') break;
+					await delay(2000);
+				}
+			}
 		}
-		return await extractFromTab(tab.id, target, 40, signal);
 	} finally {
-		chrome.tabs.remove(tab.id).catch(() => {});
+		feeding.delete(taskId);
+		await rpc('libraryFeed', {id: taskId, active: false}).catch(() => {});
 	}
 }
 
 chrome.runtime.onConnect.addListener((port) => {
-	if (port.name !== 'popup') return;
-	popups.add(port);
-	port.onDisconnect.addListener(() => popups.delete(port));
+	if (port.name === 'library') {
+		if (port.sender?.url?.split('?')[0] !== chrome.runtime.getURL('panel.html')) return;
+		const methods = new Set([
+			'libraryTasks',
+			'libraryTask',
+			'librarySearch',
+			'libraryStart',
+			'libraryRetry',
+			'libraryResume',
+			'libraryOpen',
+			'webSave',
+			'libraryUploadStart',
+			'libraryUploadPart',
+			'libraryUploadFinish',
+		]);
+		port.onMessage.addListener(async (message) => {
+			if (message?.method === 'feed') {
+				feedTask(message.params).catch(() => {});
+				return;
+			}
+			if (typeof message?.id !== 'string' || !methods.has(message.method)) return;
+			let response;
+			try {
+				const long = ['libraryStart', 'libraryUploadFinish', 'webSave'].includes(message.method);
+				response = {
+					id: message.id,
+					ok: true,
+					result: await rpc(message.method, message.params || {}, long ? 660000 : 30000),
+				};
+			} catch (e) {
+				response = {
+					id: message.id,
+					ok: false,
+					code: typeof e.code === 'string' ? e.code : 'unavailable',
+				};
+			}
+			try {
+				port.postMessage(response);
+			} catch {
+				/* The native worker owns accepted tasks. */
+			}
+		});
+		return;
+	}
+	if (port.name !== 'panel') return;
+	panels.add(port);
+	port.onDisconnect.addListener(() => panels.delete(port));
 	port.onMessage.addListener(async (message) => {
 		await loaded;
 		if (message.type !== 'action') return;
@@ -279,12 +353,12 @@ chrome.tabs.onUpdated.addListener((tabId, change) => {
 		loaded.then(() =>
 			controller.navigation(tabId, change.url, {loading: change.status === 'loading'}),
 		);
-	else if (change.status === 'complete' && popups.size && tabId === controller.tabId)
+	else if (change.status === 'complete' && panels.size && tabId === controller.tabId)
 		loaded.then(() => controller.detectCurrentPage());
 });
 chrome.tabs.onActivated.addListener(() => {
 	loaded.then(() => {
-		if (popups.size) controller.detectCurrentPage();
+		if (panels.size) controller.detectCurrentPage();
 	});
 });
 chrome.runtime.onStartup.addListener(() => {

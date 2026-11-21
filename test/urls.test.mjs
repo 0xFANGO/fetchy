@@ -23,12 +23,73 @@ test('sample identities and timestamps survive normalization without tracking', 
 	assert.equal(new URL(note.url).searchParams.get('xsec_token'), 'a+b=');
 	assert.equal(new URL(note.url).searchParams.has('tracking'), false);
 });
+test('rednote shares and collection cards retain their serving host and note identity', async () => {
+	const id = '6adb92b90000000031037a66';
+	for (const host of ['rednote.com', 'www.rednote.com']) {
+		for (const prefix of ['explore', 'discovery/item', 'board/saved', 'user/profile/ab12']) {
+			const target = normalizeUrl(`https://${host}/${prefix}/${id}?xsec_token=a%2Bb&tracking=1`);
+			assert.equal(target.platform, 'xiaohongshu');
+			assert.equal(target.id, id);
+			assert.equal(target.url, `https://${host}/explore/${id}?xsec_token=a%2Bb`);
+		}
+	}
+	const resolved = await resolveTarget('https://xhslink.com/example', {
+		fetchImpl: async () =>
+			new Response(null, {
+				status: 302,
+				headers: {location: `https://www.rednote.com/explore/${id}`},
+			}),
+	});
+	assert.equal(resolved.url, `https://www.rednote.com/explore/${id}`);
+	for (const host of ['evilrednote.com', 'rednote.com.evil.test', 'other.rednote.com'])
+		assert.throws(() => normalizeUrl(`https://${host}/explore/${id}`), {
+			code: 'unsupported_platform',
+		});
+});
 test('share prose, short YouTube URL, and long timestamp', () => {
 	assert.equal(
 		normalizeUrl('来看看 https://youtu.be/EWvNQjAaOHw?t=1h15m38s 复制打开').startTimeSeconds,
 		4538,
 	);
 });
+
+test('X and Twitter post links preserve the exact post ID and discard tracking', () => {
+	const id = '1600252502217211904';
+	const canonical = `https://x.com/i/web/status/${id}`;
+	for (const input of [
+		`https://x.com/USGSVolcanoes/status/${id}`,
+		`https://twitter.com/USGSVolcanoes/status/${id}/?s=20&t=tracking`,
+		`https://www.twitter.com/i/web/status/${id}#fragment`,
+		`https://www.x.com/example_1/status/${id}`,
+		canonical,
+	]) {
+		assert.deepEqual(normalizeUrl(input), {
+			platform: 'x',
+			id,
+			url: canonical,
+			startTimeSeconds: null,
+		});
+	}
+});
+
+test('X requires a single post URL on an exact site host', () => {
+	for (const pathname of [
+		'/USGSVolcanoes',
+		'/i/bookmarks',
+		'/i/lists/123',
+		'/USGSVolcanoes/status/abc',
+		'/USGSVolcanoes/status/123/video/1',
+		'/USGSVolcanoes/status/123/photo/2',
+	]) {
+		assert.throws(() => normalizeUrl(`https://x.com${pathname}`), {code: 'invalid_url'});
+	}
+	for (const host of ['x.com.example.org', 'not-twitter.com']) {
+		assert.throws(() => normalizeUrl(`https://${host}/example/status/123`), {
+			code: 'unsupported_platform',
+		});
+	}
+});
+
 test('reject unrelated hosts, ambiguous content, credentials and invalid page', () => {
 	for (const url of [
 		'https://youtube.com.evil.test/watch?v=EWvNQjAaOHw',

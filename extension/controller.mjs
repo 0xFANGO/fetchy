@@ -1,12 +1,12 @@
+import {unsupportedPlatformMessage, usesPageMedia} from '../src/sites/index.mjs';
 import {normalizeUrl} from '../src/urls.mjs';
 
 export const activeTask = (task) => ['running', 'cancelling'].includes(task?.status);
-const PAGE_PLATFORMS = ['xiaohongshu', 'douyin'];
 // Only Xiaohongshu and Douyin need media read from a page; other platforms must
 // not pay an extra async hop, which would reorder in-flight resolve requests.
 export function pageMediaNeeded(input) {
 	try {
-		return PAGE_PLATFORMS.includes(normalizeUrl(input).platform);
+		return usesPageMedia(normalizeUrl(input).platform);
 	} catch {
 		return false;
 	}
@@ -27,7 +27,7 @@ export const initialState = () => ({
 
 const messages = {
 	invalid_url: '请输入一个有效的视频链接，或只含一个链接的分享文案。',
-	unsupported_platform: '暂不支持此网站。支持 YouTube、B站、小红书和抖音。',
+	unsupported_platform: unsupportedPlatformMessage,
 	disconnected: '本地组件连接中断。重连后会查询原任务，请勿重复启动。',
 	native_unavailable: '无法连接本地组件，请按安装指引完成安装后重试。',
 	timeout: '识别或下载超时，请重试。',
@@ -36,6 +36,9 @@ const messages = {
 	browser_unavailable: '无法读取视频页面，请重新打开视频页后重试。',
 	identity_mismatch: '页面内容与链接不一致，请重新打开目标视频。',
 	no_formats: '页面没有提供可下载的视频，请确认这是单个视频内容。',
+	open_page_required: '请先在浏览器打开这条视频的页面，再从右侧栏下载。',
+	login_expired: '该网站在 Fetchy 桌面端的登录已过期，请在「账号」重新登录后重试。',
+	premium_required: '该内容需要会员或购买，当前账号无法下载。',
 };
 export function displayError(error) {
 	const code = typeof error?.code === 'string' ? error.code : 'unknown_error';

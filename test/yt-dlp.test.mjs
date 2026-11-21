@@ -6,6 +6,8 @@ import {chmod, mkdir, mkdtemp, readFile, readdir, realpath, rm, writeFile} from 
 import path from 'node:path';
 import {tmpdir} from 'node:os';
 import {fileURLToPath} from 'node:url';
+import {downloadAudio, resolveAudio} from '../src/audio.mjs';
+import {downloadVideo, resolveVideo} from '../src/index.mjs';
 import {classifyEngineError, downloadWithYtDlp, resolveWithYtDlp} from '../src/yt-dlp.mjs';
 import {runProcess} from '../src/process.mjs';
 
@@ -43,6 +45,14 @@ const metadata = {
 		{vcodec: 'none', acodec: 'aac'},
 	],
 };
+const xInfo = {
+	...metadata,
+	extractor_key: 'Twitter',
+	thumbnail: 'https://pbs.twimg.com/ext_tw_video_thumb/test.jpg?name=large',
+	display_id: '1600252502217211904',
+	id: '1600251292424757252',
+};
+const xPost = `https://x.com/i/web/status/${xInfo.display_id}`;
 const validProbe = {
 	streams: [
 		{
@@ -62,6 +72,7 @@ async function fixture(
 	t,
 	{
 		info = metadata,
+		receiptInfo = info,
 		probe = validProbe,
 		failure = '',
 		noReceipt = false,
@@ -79,6 +90,7 @@ async function fixture(
 	const ytDlpPath = path.join(root, 'yt-dlp.mjs');
 	const ffprobePath = path.join(root, 'ffprobe.mjs');
 	const trace = path.join(root, 'trace.jsonl');
+	const {id, display_id, extractor_key, _old_archive_ids, webpage_url} = receiptInfo;
 	await writeFile(
 		ytDlpPath,
 		[
@@ -109,12 +121,7 @@ async function fixture(
 				') await copyFile(' +
 				JSON.stringify(mediaSource) +
 				', filepath); else await writeFile(filepath, Buffer.from("test-media-data"));',
-			'const record = {filepath, id: ' +
-				JSON.stringify(info.id) +
-				', _old_archive_ids: ' +
-				JSON.stringify(info._old_archive_ids ?? null) +
-				'};',
-			'if(record._old_archive_ids===null)delete record._old_archive_ids;',
+			`const record = {filepath, ...${JSON.stringify({id, display_id, extractor_key, _old_archive_ids, webpage_url})}};`,
 			'let receiptText = JSON.stringify(record);',
 			'if (' + JSON.stringify(templatePython) + ') {',
 			'  const rendered = spawnSync(' +
@@ -141,6 +148,63 @@ async function fixture(
 		options: {ytDlpPath, ffprobePath: realProbe ? 'ffprobe' : ffprobePath, outputDir},
 	};
 }
+
+const bandcampUrl = 'https://artist.bandcamp.com/track/example';
+const audioTrack = {
+	id: '124',
+	title: 'Example song',
+	duration: 12,
+	extractor_key: 'Bandcamp',
+	webpage_url: bandcampUrl,
+	formats: [metadata.formats[1]],
+};
+const audioProbe = {...validProbe, streams: [validProbe.streams[1]]};
+
+test('audio API binds a track to both extraction passes and publishes an AAC M4A', async (t) => {
+	const {options, trace} = await fixture(t, {info: audioTrack, mediaExt: 'm4a', probe: audioProbe});
+	const resolved = await resolveAudio(bandcampUrl, options);
+	assert.equal(resolved.kind, 'audio');
+	assert.equal(resolved.sourceId, '124');
+	const result = await downloadAudio(bandcampUrl, options);
+	assert.equal(result.sourceId, resolved.sourceId);
+	assert.equal(result.kind, 'audio');
+	assert.equal(result.validation.container, 'm4a');
+	assert.equal(result.validation.audioCodec, 'aac');
+	assert.equal(result.validation.video, false);
+	assert.deepEqual(await readdir(options.outputDir), ['Example song.m4a']);
+	const calls = (await readFile(trace, 'utf8')).trim().split('\n').map(JSON.parse);
+	assert(calls.every((args) => args[args.indexOf('--use-extractors') + 1] === 'Bandcamp'));
+	assert(calls.at(-1).includes('--extract-audio'));
+});
+
+test('audio receipt drift and invalid output tracks leave the destination empty', async (t) => {
+	for (const [overrides, code] of [
+		[{receiptInfo: {...audioTrack, id: '125'}}, 'wrong_video'],
+		[{receiptInfo: {...audioTrack, webpage_url: bandcampUrl + '-alternate'}}, 'wrong_video'],
+		[{probe: validProbe}, 'output_invalid'],
+		[{probe: {...audioProbe, format: {...validProbe.format, duration: '2'}}}, 'output_invalid'],
+	]) {
+		const {options} = await fixture(t, {
+			info: audioTrack,
+			probe: audioProbe,
+			mediaExt: 'm4a',
+			...overrides,
+		});
+		await assert.rejects(downloadAudio(bandcampUrl, options), {code});
+		assert.deepEqual(await readdir(options.outputDir), []);
+	}
+});
+
+test('a mixed-platform audio post identifies its kind before starting a video download', async (t) => {
+	const url = 'https://odysee.com/@example:1/episode:a';
+	const {options, trace} = await fixture(t, {
+		info: {...audioTrack, id: 'a'.repeat(40), webpage_url: url, extractor_key: 'LBRY'},
+	});
+	await assert.rejects(downloadVideo(url, options), {code: 'no_video'});
+	assert((await readFile(trace, 'utf8')).includes('--skip-download'));
+	assert(!(await readFile(trace, 'utf8')).includes('--no-simulate'));
+	assert.equal((await resolveAudio(url, options)).kind, 'audio');
+});
 
 test('resolve returns format metadata without signed URLs or unrelated private metadata', async (t) => {
 	const {options} = await fixture(t);
@@ -209,7 +273,12 @@ test('download verifies actual tracks and records stages only after success', as
 		assert(args.includes('--ignore-config'));
 		assert(args.includes('--no-cookies-from-browser'));
 		assert(args.includes('--abort-on-unavailable-fragments'));
-		assert.equal(args.at(-1), target.url);
+		// Only the metadata call reads the page; the download reuses its extracted info.
+		if (args.includes('--dump-single-json')) assert.equal(args.at(-1), target.url);
+		else {
+			assert.equal(args.at(-2), '--load-info-json');
+			assert(!args.includes(target.url));
+		}
 		const selection = args[args.indexOf('--format') + 1];
 		if (args.includes('--dump-single-json')) {
 			assert.equal(
@@ -383,6 +452,13 @@ test('unbounded process output is stopped instead of accumulating in memory', as
 
 test('format and stale-session errors keep their specific meaning', () => {
 	assert.equal(classifyEngineError('Requested format is not available').code, 'no_formats');
+	assert.equal(classifyEngineError('No video could be found in this tweet').code, 'no_formats');
+	assert.equal(classifyEngineError('A recording with this ID does not exist').code, 'unavailable');
+	assert.equal(
+		classifyEngineError('This item is not a video or animated image').code,
+		'no_formats',
+	);
+	assert.equal(classifyEngineError('Access restricted').code, 'auth_required');
 	assert.equal(classifyEngineError('Fresh cookies are needed').code, 'session_required');
 });
 
@@ -445,6 +521,52 @@ test('AV aliases must identify the requested part', async (t) => {
 	});
 });
 
+test('the public API resolves and saves X posts with separate post and media identities', async (t) => {
+	const {options, trace} = await fixture(t, {info: xInfo});
+	const link = `https://twitter.com/USGSVolcanoes/status/${xInfo.display_id}?s=20`;
+	const info = await resolveVideo(link, options);
+	const saved = await downloadVideo(link, options);
+	assert.equal(info.thumbnailUrl, 'https://pbs.twimg.com/ext_tw_video_thumb/test.jpg');
+	for (const result of [info, saved]) {
+		assert.equal(result.platform, 'x');
+		assert.equal(result.id, xInfo.display_id);
+		assert.equal(result.sourceId, xInfo.id);
+		assert.equal(result.engine, 'yt-dlp');
+	}
+	assert.equal(saved.validation.video, true);
+	assert.equal(await readFile(saved.filepath, 'utf8'), 'test-media-data');
+	const calls = (await readFile(trace, 'utf8')).trim().split('\n').map(JSON.parse);
+	assert.equal(calls.length, 3);
+	for (const args of calls) {
+		assert.equal(
+			args.at(args.includes('--load-info-json') ? -2 : -1),
+			args.includes('--load-info-json') ? '--load-info-json' : xPost,
+		);
+		assert.equal(args[args.indexOf('--use-extractors') + 1], 'Twitter');
+	}
+});
+
+test('X metadata must identify one Twitter video in the requested post', async (t) => {
+	for (const fields of [
+		{extractor_key: 'Youtube'},
+		{display_id: xInfo.id},
+		{id: 'not-a-media-id'},
+	]) {
+		const {options} = await fixture(t, {info: {...xInfo, ...fields}});
+		await assert.rejects(resolveVideo(xPost, options), {code: 'wrong_video'});
+	}
+	const playlist = await fixture(t, {info: {...xInfo, _type: 'playlist', entries: [xInfo, xInfo]}});
+	await assert.rejects(resolveVideo(xPost, playlist.options), {code: 'unavailable'});
+});
+
+test('X discards the staged file when the receipt changes extractor, post, or media', async (t) => {
+	for (const fields of [{extractor_key: 'Generic'}, {display_id: '123'}, {id: '456'}]) {
+		const {options} = await fixture(t, {info: xInfo, receiptInfo: {...xInfo, ...fields}});
+		await assert.rejects(downloadVideo(xPost, options), {code: 'wrong_video'});
+		assert.deepEqual(await readdir(options.outputDir), []);
+	}
+});
+
 test('bitrate is reported in bit/s rather than yt-dlp kbit/s', async (t) => {
 	const {options} = await fixture(t, {
 		info: {...metadata, formats: [{...metadata.formats[0], tbr: 1000}]},
@@ -462,7 +584,7 @@ const hasTemplateRenderer =
 	existsSync(templatePython) &&
 	spawnSync(templatePython, ['-c', 'import yt_dlp'], {stdio: 'ignore', timeout: 5000}).status === 0;
 test(
-	'actual yt-dlp renderer produces valid receipts with absent and present optional archive IDs',
+	'actual yt-dlp renderer preserves YouTube, Bilibili and X receipt identities',
 	{
 		skip: hasTemplateRenderer
 			? false
@@ -490,6 +612,10 @@ test(
 		const avOutput = await downloadWithYtDlp(avTarget, av.options);
 		assert.equal(avOutput.sourceId, avInfo.id);
 		assert.equal(avOutput.validation.audio, true);
+		const x = await fixture(t, {templatePython, info: xInfo});
+		const xOutput = await downloadVideo(xPost, x.options);
+		assert.equal(xOutput.id, xInfo.display_id);
+		assert.equal(xOutput.sourceId, xInfo.id);
 	},
 );
 
@@ -656,3 +782,43 @@ test(
 		}
 	},
 );
+
+test('the reused extraction drops cookies only when a sign-in was lent', async (t) => {
+	const dir = await mkdtemp(path.join(tmpdir(), 'fetchy-info-'));
+	t.after(() => rm(dir, {recursive: true, force: true}));
+	const info = {
+		...metadata,
+		cookies: 'SESSDATA=secret',
+		formats: metadata.formats.map((f) => ({
+			...f,
+			cookies: 'SESSDATA=secret',
+			http_headers: {Cookie: 'SESSDATA=secret', Referer: 'https://example.org/'},
+		})),
+	};
+	const jar = path.join(dir, 'cookies.txt');
+	await writeFile(
+		jar,
+		'# Netscape HTTP Cookie File\n.example.org\tTRUE\t/\tTRUE\t0\tSESSDATA\tsecret\n',
+	);
+	for (const [name, cookiesFile] of [
+		['lent', jar],
+		['signed-out', undefined],
+	]) {
+		const keep = path.join(dir, name + '.json');
+		const {options} = await fixture(t, {
+			info,
+			before: `if (args.includes("--load-info-json")) await copyFile(args[args.indexOf("--load-info-json") + 1], ${JSON.stringify(keep)});`,
+		});
+		await downloadWithYtDlp(target, {...options, cookiesFile});
+		const written = await readFile(keep, 'utf8');
+		assert.match(written, /"Referer":"https:\/\/example\.org\/"/);
+		// Signed out, the cookies the extractor set are the download's only source.
+		if (cookiesFile) assert.doesNotMatch(written, /SESSDATA/);
+		else assert.match(written, /"cookies":"SESSDATA=secret"/);
+	}
+	assert.equal(
+		classifyEngineError('This video is only available to Premium members').code,
+		'premium_required',
+	);
+	assert.equal(classifyEngineError('Please log in to view this video').code, 'auth_required');
+});
