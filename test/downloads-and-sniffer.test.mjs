@@ -741,3 +741,140 @@ test('installBrowserCompat removes WebAuthn globals and rejects publicKey calls 
 	assert.equal(passthroughCalled, true);
 	assert.equal(res.type, 'password');
 });
+
+test('installMediaSniffer deduplicates X/HLS sub-playlists, enriches X tweet titles/posters, hides manifest sizes, and clears on SPA navigation', async () => {
+	const masterUrl = 'https://video.twimg.com/amplify_video/198765432100/pl/master.m3u8?tag=16';
+	const variant720 =
+		'https://video.twimg.com/amplify_video/198765432100/pl/avc1/1280x720/v720.m3u8';
+	const variantAudio = 'https://video.twimg.com/amplify_video/198765432100/pl/mp4a/128000/aud.m3u8';
+	const genericMaster = 'https://cdn.example.com/v1/master.m3u8';
+	const genericChild = 'https://cdn.example.com/v1/720p.m3u8';
+	const perfEntries = [
+		{name: variant720, transferSize: 18432},
+		{name: variantAudio, transferSize: 3072},
+		{name: masterUrl, transferSize: 4096},
+	];
+	let currentHref = 'https://x.com/home';
+	const mockTweetArticle = {
+		querySelector(sel) {
+			if (sel === 'video')
+				return {
+					poster: 'https://pbs.twimg.com/amplify_video_thumb/198765432100/img/thumb.jpg',
+					duration: 42,
+					videoWidth: 1280,
+					videoHeight: 720,
+				};
+			if (sel === '[data-testid="User-Name"]') return {textContent: 'Alice\n@alice·2h'};
+			if (sel === '[data-testid="tweetText"]') return {textContent: 'Check out this demo clip!'};
+			if (sel === 'a[href*="/status/"] time') return null;
+			if (sel === 'a[href*="/status/"]') return {getAttribute: () => '/alice/status/999888777'};
+			return null;
+		},
+		querySelectorAll() {
+			return [];
+		},
+	};
+	const mockWindow = {
+		top: null,
+		addEventListener() {},
+		async fetch(url) {
+			const bodies = {
+				[genericMaster]:
+					'#EXTM3U\n#EXT-X-STREAM-INF:BANDWIDTH=2000000,RESOLUTION=1920x1080\n720p.m3u8\n',
+				[genericChild]: '#EXTM3U\n#EXTINF:4.0,\nseg0.ts\n',
+			};
+			const body = bodies[url] || '';
+			const headers = new Map([
+				['content-type', 'application/vnd.apple.mpegurl'],
+				['content-length', String(body.length)],
+			]);
+			return {
+				ok: true,
+				url,
+				headers,
+				clone() {
+					return {text: async () => body};
+				},
+			};
+		},
+	};
+	mockWindow.top = mockWindow;
+	const mockHistory = {
+		pushState(_s, _t, nextUrl) {
+			currentHref = new URL(nextUrl, currentHref).href;
+		},
+		replaceState(_s, _t, nextUrl) {
+			currentHref = new URL(nextUrl, currentHref).href;
+		},
+	};
+	const prev = {
+		window: globalThis.window,
+		document: globalThis.document,
+		location: globalThis.location,
+		history: globalThis.history,
+		performance: globalThis.performance,
+		PerformanceObserver: globalThis.PerformanceObserver,
+		XMLHttpRequest: globalThis.XMLHttpRequest,
+		setInterval: globalThis.setInterval,
+	};
+	try {
+		globalThis.window = mockWindow;
+		globalThis.location = {
+			get href() {
+				return currentHref;
+			},
+			get origin() {
+				return new URL(currentHref).origin;
+			},
+			get hostname() {
+				return new URL(currentHref).hostname;
+			},
+		};
+		globalThis.history = mockHistory;
+		globalThis.document = {
+			title: '(1) Home / X',
+			querySelector: () => null,
+			querySelectorAll: (sel) => (sel === 'article[data-testid="tweet"]' ? [mockTweetArticle] : []),
+			addEventListener() {},
+		};
+		globalThis.performance = {getEntriesByType: () => perfEntries};
+		globalThis.PerformanceObserver = class {
+			observe() {}
+		};
+		globalThis.XMLHttpRequest = undefined;
+		globalThis.setInterval = () => 1;
+
+		installMediaSniffer();
+		await mockWindow.fetch(genericMaster);
+		await mockWindow.fetch(genericChild);
+		await new Promise((r) => setTimeout(r, 15));
+
+		const list = mockWindow.__fetchySniffer.list();
+		// Only 1 X video (variants filtered) + 1 generic master (child playlist suppressed)
+		assert.equal(list.length, 2);
+		const xItem = list.find((i) => i.url === masterUrl);
+		assert.ok(xItem, 'expected master X HLS entry');
+		assert.equal(xItem.size, 0);
+		assert.equal(xItem.title, 'Alice：Check out this demo clip!');
+		assert.equal(
+			xItem.poster,
+			'https://pbs.twimg.com/amplify_video_thumb/198765432100/img/thumb.jpg',
+		);
+		assert.equal(xItem.pageUrl, 'https://x.com/alice/status/999888777');
+		assert.equal(xItem.duration, 42);
+		assert.equal(xItem.width, 1280);
+		assert.equal(xItem.height, 720);
+
+		const genItem = list.find((i) => i.url === genericMaster);
+		assert.ok(genItem, 'expected generic master HLS entry');
+		assert.equal(genItem.width, 1920);
+		assert.equal(genItem.height, 1080);
+		assert.equal(genItem.size, 0);
+
+		// Navigating to another X SPA route clears old entries and does not resurrect old perf entries.
+		mockHistory.pushState({}, '', '/i/bookmarks');
+		assert.equal(mockWindow.__fetchySniffer.list().length, 0);
+	} finally {
+		Object.assign(globalThis, prev);
+	}
+});

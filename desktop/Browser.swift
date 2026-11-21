@@ -1625,6 +1625,7 @@ struct SniffedMedia: Identifiable, Equatable {
   let title: String
   let posterUrl: URL?
   let host: String
+  let pageUrl: String
   let size: Int64
   let duration: Double
   let width: Int
@@ -1645,7 +1646,9 @@ struct SniffedMedia: Identifiable, Equatable {
       posterUrl = nil
     }
     host = row["host"] as? String ?? (URL(string: url)?.host ?? "")
-    size = (row["size"] as? NSNumber)?.int64Value ?? 0
+    pageUrl = (row["pageUrl"] as? String ?? "").trimmingCharacters(in: .whitespacesAndNewlines)
+    let rawSize = (row["size"] as? NSNumber)?.int64Value ?? 0
+    size = (type == "hls" || type == "dash") ? 0 : rawSize
     duration = (row["duration"] as? NSNumber)?.doubleValue ?? 0
     width = (row["width"] as? NSNumber)?.intValue ?? 0
     height = (row["height"] as? NSNumber)?.intValue ?? 0
@@ -1755,6 +1758,7 @@ private func normalizedPostReadUrl(_ raw: String) -> String {
   private var sync: Task<Void, Never>?
   private var mediaTask: Task<Void, Never>?
   private var generation = 0
+  var userEditedMediaSelection = false
   private var commands: LocalCommands { browser?.commands ?? LocalCommands() }
 
   func reset() {
@@ -1771,6 +1775,7 @@ private func normalizedPostReadUrl(_ raw: String) -> String {
     post = nil
     media = []
     selectedMedia = []
+    userEditedMediaSelection = false
     queuedMediaUrls = []
     folders = []
     reason = nil
@@ -1897,9 +1902,13 @@ private func normalizedPostReadUrl(_ raw: String) -> String {
           }
           if next != self.media {
             let oldUrls = Set(self.media.map(\.url))
+            let nextUrls = Set(next.map(\.url))
             self.media = next
-            for item in next where !oldUrls.contains(item.url) {
-              self.selectedMedia.insert(item.url)
+            self.selectedMedia.formIntersection(nextUrls)
+            if !self.userEditedMediaSelection {
+              for item in next where !oldUrls.contains(item.url) {
+                self.selectedMedia.insert(item.url)
+              }
             }
           }
         }
@@ -2255,7 +2264,7 @@ private func normalizedPostReadUrl(_ raw: String) -> String {
   func saveMedia(_ item: SniffedMedia) async {
     guard let browser, let downloads = browser.downloads else { return }
     guard queuedMediaUrls.insert(item.url).inserted else { return }
-    let pageUrl = browser.webView?.url?.absoluteString
+    let pageUrl = item.pageUrl.isEmpty ? browser.webView?.url?.absoluteString : item.pageUrl
     let title = item.title.isEmpty ? browser.webView?.title : item.title
     let ok = await downloads.startUrlDownload(
       item.url, title: title, referer: pageUrl, pageUrl: pageUrl)
@@ -2282,61 +2291,6 @@ private func normalizedPostReadUrl(_ raw: String) -> String {
   }
 }
 
-struct MediaThumbView: View {
-  let url: URL?
-  let isVideo: Bool
-  let isAudio: Bool
-
-  init(url: URL?, isVideo: Bool = false, isAudio: Bool = false) {
-    self.url = url
-    self.isVideo = isVideo
-    self.isAudio = isAudio
-  }
-
-  var body: some View {
-    ZStack(alignment: .bottomTrailing) {
-      Group {
-        if let url {
-          AsyncImage(url: url) { phase in
-            switch phase {
-            case .success(let image):
-              image.resizable().scaledToFill()
-            default:
-              placeholder
-            }
-          }
-        } else {
-          placeholder
-        }
-      }
-      .frame(width: 64, height: 46)
-      .clipShape(RoundedRectangle(cornerRadius: 6, style: .continuous))
-      .overlay(
-        RoundedRectangle(cornerRadius: 6, style: .continuous)
-          .stroke(Color(nsColor: .separatorColor).opacity(0.45), lineWidth: 0.75)
-      )
-
-      if isVideo {
-        Image(systemName: "play.fill")
-          .font(.system(size: 8, weight: .bold))
-          .foregroundStyle(.white)
-          .padding(3.5)
-          .background(Color.black.opacity(0.62), in: Circle())
-          .padding(3)
-      }
-    }
-  }
-
-  private var placeholder: some View {
-    ZStack {
-      Color(nsColor: .quaternaryLabelColor).opacity(0.25)
-      Image(systemName: isAudio ? "waveform" : (isVideo ? "film" : "photo"))
-        .font(.callout)
-        .foregroundStyle(.secondary)
-    }
-  }
-}
-
 struct SitePanel: View {
   @ObservedObject var panel: SitePanelModel
   private let reasons = [
@@ -2357,7 +2311,7 @@ struct SitePanel: View {
             VStack(alignment: .leading, spacing: 6) {
               Label("正在监听当前网页", systemImage: "waveform.badge.magnifyingglass")
                 .font(.headline)
-              Text("打开支持平台的发现页、收藏夹或播放任意视频时，下方会自动出现带封面预览的可下载列表；也可以直接点工具栏「下载此页」。")
+              Text("打开支持平台的发现页、收藏夹或播放任意视频时，下方会自动列出可下载的视频或图文；也可以直接点工具栏「下载此页」。")
                 .font(.caption).foregroundStyle(.secondary)
             }
           }
@@ -2464,8 +2418,6 @@ struct SitePanel: View {
               .labelsHidden()
               .toggleStyle(.checkbox)
 
-            MediaThumbView(url: item.coverUrl, isVideo: item.isVideo)
-
             VStack(alignment: .leading, spacing: 3) {
               Text(item.title)
                 .font(.callout.weight(.medium))
@@ -2528,7 +2480,10 @@ struct SitePanel: View {
             "全选",
             isOn: Binding(
               get: { !panel.media.isEmpty && selectedCount == panel.media.count },
-              set: { panel.selectedMedia = $0 ? Set(panel.media.map(\.url)) : [] })
+              set: {
+                panel.userEditedMediaSelection = true
+                panel.selectedMedia = $0 ? Set(panel.media.map(\.url)) : []
+              })
           )
           .toggleStyle(.checkbox)
           .font(.caption)
@@ -2552,6 +2507,7 @@ struct SitePanel: View {
               isOn: Binding(
                 get: { panel.selectedMedia.contains(item.url) },
                 set: { checked in
+                  panel.userEditedMediaSelection = true
                   if checked {
                     panel.selectedMedia.insert(item.url)
                   } else {
@@ -2562,24 +2518,22 @@ struct SitePanel: View {
               .labelsHidden()
               .toggleStyle(.checkbox)
 
-            MediaThumbView(
-              url: item.posterUrl,
-              isVideo: item.type != "audio",
-              isAudio: item.type == "audio")
-
-            VStack(alignment: .leading, spacing: 3) {
-              HStack(spacing: 4) {
+            VStack(alignment: .leading, spacing: 4) {
+              Text(item.displayTitle)
+                .font(.callout.weight(.medium))
+                .lineLimit(2)
+              HStack(spacing: 5) {
                 Text(item.typeBadge)
                   .font(.caption2.bold())
-                  .padding(.horizontal, 5).padding(.vertical, 1.5)
+                  .padding(.horizontal, 5).padding(.vertical, 1)
                   .background(fetchyAccent.opacity(0.14), in: Capsule())
                   .foregroundStyle(fetchyAccent)
-                Text(item.displayTitle)
-                  .font(.callout.weight(.medium))
-                  .lineLimit(1)
-              }
-              if !item.metaText.isEmpty {
-                Text(item.metaText).font(.caption2).foregroundStyle(.secondary).lineLimit(1)
+                if !item.metaText.isEmpty {
+                  Text(item.metaText)
+                    .font(.caption2)
+                    .foregroundStyle(.secondary)
+                    .lineLimit(1)
+                }
               }
             }
 

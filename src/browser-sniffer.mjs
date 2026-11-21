@@ -13,6 +13,17 @@ export function installMediaSniffer() {
 		/\.(?:ts|m4s|cmfv|cmfa|vtt|srt|ass|png|jpe?g|gif|webp|avif|svg|ico|css|js|woff2?|ttf|map)(?:$|\?)/i;
 	const CHUNK_RE = /(?:^|\/)(?:seg|chunk|frag|init)[-_]?\d*\.(?:mp4|m4v|m4a|webm)(?:$|\?)/i;
 	const RANGE_RE = /[?&](?:range|bytestart|byteend)=/i;
+	// X/Twitter CMAF single-codec/single-resolution/audio-only HLS sub-playlists.
+	const TWIMG_VARIANT_RE =
+		/\/\/video\.twimg\.com\/.*\/pl\/(?:avc1|av01|hvc1|hev1|vp09|mp4a|audio|video|\d+x\d+)\//i;
+	const HLS_SUB_RE = /\/(?:subtitles?|captions?|webvtt|audio[_-]?only)\/[^/]*\.m3u8(?:$|\?)/i;
+	const TWIMG_VIDEO_ID_RE = /\/(ext_tw_video|amplify_video|tweet_video)\/(\d+)\//i;
+	const TWIMG_THUMB_ID_RE =
+		/\/(?:ext_tw_video_thumb|amplify_video_thumb|tweet_video_thumb)\/(\d+)\//i;
+	const URL_RES_RE = /\/(\d{2,4})x(\d{2,4})(?:\/|_|\.)/;
+	const X_HOST_RE = /(?:^|\.)(?:x\.com|twitter\.com)$/i;
+	const GENERIC_X_TITLE_RE =
+		/^(?:Home|History|Explore|Notifications|Messages|Bookmarks|X)\s*(?:\/\s*X)?$/i;
 
 	const EXT_HLS = /\.m3u8(?:$|\?)/i;
 	const EXT_DASH = /\.mpd(?:$|\?)/i;
@@ -28,6 +39,20 @@ export function installMediaSniffer() {
 	})();
 
 	const store = new Map();
+	const subPlaylistUrls = new Set();
+	const xMetaByVideoId = new Map();
+	let perfWatermark = 0;
+
+	function routeKey(href) {
+		try {
+			const u = new URL(href || location.href);
+			return u.origin + u.pathname + (u.pathname === '/home' ? '' : u.search);
+		} catch {
+			return String(href || '');
+		}
+	}
+
+	let currentRoute = routeKey(location?.href || '');
 
 	function normalizeMediaUrl(raw) {
 		if (typeof raw !== 'string') return '';
@@ -43,11 +68,47 @@ export function installMediaSniffer() {
 		}
 	}
 
+	function twimgVideoId(url) {
+		try {
+			const u = new URL(url);
+			if (!/(?:^|\.)twimg\.com$/i.test(u.hostname)) return '';
+			const m = TWIMG_VIDEO_ID_RE.exec(u.pathname);
+			return m ? m[2] : '';
+		} catch {
+			return '';
+		}
+	}
+
+	function canonicalKey(url) {
+		try {
+			const u = new URL(url);
+			if (/(?:^|\.)twimg\.com$/i.test(u.hostname)) {
+				const m = TWIMG_VIDEO_ID_RE.exec(u.pathname);
+				if (m) return `twimg:${m[1].toLowerCase()}:${m[2]}`;
+			}
+		} catch {}
+		return url;
+	}
+
+	function parseDimsFromUrl(url) {
+		const m = URL_RES_RE.exec(String(url || ''));
+		if (!m) return {width: 0, height: 0};
+		const width = Number(m[1]) || 0;
+		const height = Number(m[2]) || 0;
+		if (width >= 100 && height >= 100 && width <= 8192 && height <= 8192) {
+			return {width, height};
+		}
+		return {width: 0, height: 0};
+	}
+
 	function shouldIgnore(url) {
 		if (!url) return true;
 		if (AD_RE.test(url)) return true;
 		if (SEGMENT_RE.test(url)) return true;
 		if (CHUNK_RE.test(url)) return true;
+		if (TWIMG_VARIANT_RE.test(url)) return true;
+		if (HLS_SUB_RE.test(url)) return true;
+		if (subPlaylistUrls.has(url)) return true;
 		if (RANGE_RE.test(url) && !EXT_HLS.test(url) && !EXT_DASH.test(url)) return true;
 		return false;
 	}
@@ -65,6 +126,7 @@ export function installMediaSniffer() {
 	function pageTitle() {
 		try {
 			return String(document.title || '')
+				.replace(/^\(\d+\+?\)\s*/, '')
 				.replace(/\s+/g, ' ')
 				.trim()
 				.slice(0, 140);
@@ -81,6 +143,90 @@ export function installMediaSniffer() {
 		} catch {
 			return '';
 		}
+	}
+
+	function isGenericTitle(title) {
+		if (!title) return true;
+		return GENERIC_X_TITLE_RE.test(title.trim());
+	}
+
+	function inspectHlsBody(masterUrl, body) {
+		if (!body || typeof body !== 'string')
+			return {isMaster: false, isMedia: false, width: 0, height: 0};
+		const hasMasterTag = /#EXT-X-STREAM-INF\b|#EXT-X-MEDIA\b/i.test(body);
+		const hasSegmentTag = /#EXTINF:/i.test(body);
+		if (!hasMasterTag) {
+			return {isMaster: false, isMedia: hasSegmentTag, width: 0, height: 0};
+		}
+		let maxWidth = 0;
+		let maxHeight = 0;
+		const lines = body.split(/\r?\n/);
+		for (const rawLine of lines) {
+			const line = rawLine.trim();
+			if (!line) continue;
+			if (line.startsWith('#')) {
+				const resMatch = /RESOLUTION=(\d+)x(\d+)/i.exec(line);
+				if (resMatch) {
+					const w = Number(resMatch[1]) || 0;
+					const h = Number(resMatch[2]) || 0;
+					if (w * h > maxWidth * maxHeight) {
+						maxWidth = w;
+						maxHeight = h;
+					}
+				}
+				const uriMatch = /URI="([^"]+)"/i.exec(line);
+				if (uriMatch) {
+					const sub = normalizeMediaUrl(new URL(uriMatch[1], masterUrl).href);
+					if (sub && sub !== masterUrl) {
+						subPlaylistUrls.add(sub);
+						removeUrlFromStore(sub);
+					}
+				}
+				continue;
+			}
+			try {
+				const sub = normalizeMediaUrl(new URL(line, masterUrl).href);
+				if (sub && sub !== masterUrl) {
+					subPlaylistUrls.add(sub);
+					removeUrlFromStore(sub);
+				}
+			} catch {}
+		}
+		return {isMaster: true, isMedia: false, width: maxWidth, height: maxHeight};
+	}
+
+	function removeUrlFromStore(url) {
+		for (const [key, item] of store.entries()) {
+			if (item.url === url) store.delete(key);
+		}
+	}
+
+	function urlQualityScore(item) {
+		if (!item) return 0;
+		let score = 0;
+		if (item.type === 'hls') score += item.isMaster ? 500 : item.isSubPlaylist ? 100 : 350;
+		else if (item.type === 'dash') score += 450;
+		else if (item.type === 'video') score += 300;
+		else if (item.type === 'audio') score += 150;
+		const pixels = (item.width || 0) * (item.height || 0);
+		if (pixels > 0) score += Math.min(200, Math.round(pixels / 10000));
+		return score;
+	}
+
+	function enrichFromXMeta(item) {
+		const vid = twimgVideoId(item.url);
+		if (!vid) return item;
+		const meta = xMetaByVideoId.get(vid);
+		if (!meta) return item;
+		return {
+			...item,
+			title: !isGenericTitle(item.title) ? item.title : meta.title || item.title,
+			poster: item.poster || meta.poster || '',
+			pageUrl: meta.pageUrl || item.pageUrl,
+			duration: Math.max(item.duration || 0, meta.duration || 0),
+			width: Math.max(item.width || 0, meta.width || 0),
+			height: Math.max(item.height || 0, meta.height || 0),
+		};
 	}
 
 	function record(rawUrl, meta = {}) {
@@ -107,7 +253,9 @@ export function installMediaSniffer() {
 		const poster = /^https?:\/\//i.test(String(rawPoster || ''))
 			? String(rawPoster).replace(/^http:\/\//i, 'https://')
 			: '';
-		const item = {
+		const dims = parseDimsFromUrl(url);
+		const isManifest = type === 'hls' || type === 'dash';
+		const item = enrichFromXMeta({
 			url,
 			type,
 			title: meta.title || pageTitle() || filenameFromUrl(url),
@@ -116,14 +264,18 @@ export function installMediaSniffer() {
 				.split(';')[0]
 				.trim()
 				.toLowerCase(),
-			size: Number.isFinite(meta.size) && meta.size > 0 ? Math.round(meta.size) : 0,
+			// Never report .m3u8/.mpd manifest text bytes as media file size.
+			size: !isManifest && Number.isFinite(meta.size) && meta.size > 0 ? Math.round(meta.size) : 0,
 			duration: Number.isFinite(meta.duration) && meta.duration > 0 ? Math.round(meta.duration) : 0,
-			width: Number.isFinite(meta.width) && meta.width > 0 ? Math.round(meta.width) : 0,
-			height: Number.isFinite(meta.height) && meta.height > 0 ? Math.round(meta.height) : 0,
+			width: Number.isFinite(meta.width) && meta.width > 0 ? Math.round(meta.width) : dims.width,
+			height:
+				Number.isFinite(meta.height) && meta.height > 0 ? Math.round(meta.height) : dims.height,
+			isMaster: meta.isMaster === true,
+			isSubPlaylist: meta.isSubPlaylist === true,
 			host,
-			pageUrl: location.href,
+			pageUrl: meta.pageUrl || location.href,
 			ts: Date.now(),
-		};
+		});
 		if (!isTop) {
 			try {
 				window.top.postMessage({__fetchyMedia: true, item}, '*');
@@ -133,21 +285,34 @@ export function installMediaSniffer() {
 		mergeItem(item);
 	}
 
-	function mergeItem(item) {
-		if (!item?.url || shouldIgnore(item.url)) return;
-		const prev = store.get(item.url);
+	function mergeItem(rawItem) {
+		if (!rawItem?.url || shouldIgnore(rawItem.url)) return;
+		const item = enrichFromXMeta(rawItem);
+		const key = canonicalKey(item.url);
+		const prev = store.get(key);
 		if (prev) {
-			store.set(item.url, {
-				...prev,
-				type: prev.type === 'hls' || prev.type === 'dash' ? prev.type : item.type || prev.type,
-				title: prev.title || item.title,
-				poster: prev.poster || item.poster || '',
-				mime: prev.mime || item.mime,
-				size: Math.max(prev.size || 0, item.size || 0),
-				duration: Math.max(prev.duration || 0, item.duration || 0),
-				width: Math.max(prev.width || 0, item.width || 0),
-				height: Math.max(prev.height || 0, item.height || 0),
-				ts: item.ts || prev.ts,
+			const preferNew = urlQualityScore(item) > urlQualityScore(prev);
+			const chosen = preferNew ? item : prev;
+			const other = preferNew ? prev : item;
+			const isManifest = chosen.type === 'hls' || chosen.type === 'dash';
+			const bestTitle = !isGenericTitle(chosen.title)
+				? chosen.title
+				: !isGenericTitle(other.title)
+					? other.title
+					: chosen.title || other.title;
+			store.set(key, {
+				...chosen,
+				title: bestTitle,
+				poster: chosen.poster || other.poster || '',
+				mime: chosen.mime || other.mime,
+				size: isManifest ? 0 : Math.max(chosen.size || 0, other.size || 0),
+				duration: Math.max(chosen.duration || 0, other.duration || 0),
+				width: Math.max(chosen.width || 0, other.width || 0),
+				height: Math.max(chosen.height || 0, other.height || 0),
+				isMaster: Boolean(chosen.isMaster || other.isMaster),
+				isSubPlaylist: Boolean(chosen.isSubPlaylist && !chosen.isMaster && !other.isMaster),
+				pageUrl: chosen.pageUrl || other.pageUrl,
+				ts: Math.max(chosen.ts || 0, other.ts || 0),
 			});
 			return;
 		}
@@ -155,7 +320,7 @@ export function installMediaSniffer() {
 			const oldest = store.keys().next().value;
 			if (oldest) store.delete(oldest);
 		}
-		store.set(item.url, item);
+		store.set(key, item);
 	}
 
 	const JSON_VIDEO_HOST_RE =
@@ -247,6 +412,115 @@ export function installMediaSniffer() {
 		} catch {}
 	}
 
+	function scanXDom() {
+		if (!X_HOST_RE.test(String(location?.hostname || ''))) return;
+		try {
+			const articles = document.querySelectorAll?.('article[data-testid="tweet"]') || [];
+			for (const article of articles) {
+				const posterCandidates = [];
+				const videoEl = article.querySelector?.('video');
+				if (videoEl) {
+					const p = videoEl.poster || videoEl.getAttribute?.('poster') || '';
+					if (p) posterCandidates.push(p);
+				}
+				const imgs =
+					article.querySelectorAll?.(
+						'img[src*="_video_thumb/"], [data-testid="videoPlayer"] img[src*="pbs.twimg.com"], [data-testid="videoComponent"] img[src*="pbs.twimg.com"]',
+					) || [];
+				for (const img of imgs) {
+					const src = img.src || img.getAttribute?.('src') || '';
+					if (src) posterCandidates.push(src);
+				}
+				let videoId = '';
+				let poster = '';
+				for (const cand of posterCandidates) {
+					const m = TWIMG_THUMB_ID_RE.exec(cand);
+					if (m) {
+						videoId = m[1];
+						poster = cand.replace(/^http:\/\//i, 'https://');
+						break;
+					}
+				}
+				if (!videoId) continue;
+
+				const userEl = article.querySelector?.('[data-testid="User-Name"]');
+				const rawUser = String(userEl?.textContent || '')
+					.split(/\n|·/)[0]
+					.replace(/\s+/g, ' ')
+					.trim();
+				const author = rawUser.slice(0, 40);
+				const textEl = article.querySelector?.('[data-testid="tweetText"]');
+				const tweetText = String(textEl?.textContent || '')
+					.replace(/\s+/g, ' ')
+					.trim();
+				let statusUrl = '';
+				const timeLink = article.querySelector?.('a[href*="/status/"] time')?.closest?.('a');
+				const statusLink = timeLink || article.querySelector?.('a[href*="/status/"]');
+				if (statusLink) {
+					try {
+						const u = new URL(statusLink.getAttribute('href'), location.origin);
+						statusUrl = u.origin + u.pathname;
+					} catch {}
+				}
+				let title = '';
+				if (author && tweetText) title = `${author}：${tweetText.slice(0, 72)}`;
+				else if (tweetText) title = tweetText.slice(0, 88);
+				else if (author) title = `${author} 的视频`;
+
+				const duration = Number(videoEl?.duration) || 0;
+				const width = Number(videoEl?.videoWidth) || 0;
+				const height = Number(videoEl?.videoHeight) || 0;
+				xMetaByVideoId.set(videoId, {
+					title,
+					poster,
+					pageUrl: statusUrl || location.href,
+					duration: Number.isFinite(duration) && duration > 0 ? Math.round(duration) : 0,
+					width: Number.isFinite(width) && width > 0 ? Math.round(width) : 0,
+					height: Number.isFinite(height) && height > 0 ? Math.round(height) : 0,
+				});
+			}
+			// Backfill already-recorded twimg items with freshly matched tweet metadata.
+			for (const [key, item] of store.entries()) {
+				const enriched = enrichFromXMeta(item);
+				if (enriched !== item) store.set(key, enriched);
+			}
+		} catch {}
+	}
+
+	function checkRouteChange() {
+		if (!isTop) return;
+		const next = routeKey(location?.href || '');
+		if (next && next !== currentRoute) {
+			currentRoute = next;
+			clearAll();
+		}
+	}
+
+	function clearAll() {
+		store.clear();
+		subPlaylistUrls.clear();
+		try {
+			perfWatermark = (performance.getEntriesByType('resource') || []).length;
+		} catch {
+			perfWatermark = 0;
+		}
+	}
+
+	// Track SPA navigations so stale media from previous routes does not linger.
+	if (isTop && typeof history === 'object' && history) {
+		for (const fn of ['pushState', 'replaceState']) {
+			if (typeof history[fn] === 'function') {
+				const orig = history[fn].bind(history);
+				history[fn] = function (...args) {
+					const ret = orig(...args);
+					checkRouteChange();
+					return ret;
+				};
+			}
+		}
+		window.addEventListener('popstate', checkRouteChange);
+	}
+
 	// 1. Cross-iframe receiver on top frame
 	if (isTop) {
 		window.addEventListener('message', (event) => {
@@ -261,7 +535,8 @@ export function installMediaSniffer() {
 	function scanPerformance() {
 		try {
 			const entries = performance.getEntriesByType('resource') || [];
-			for (const entry of entries) {
+			for (let i = perfWatermark; i < entries.length; i++) {
+				const entry = entries[i];
 				if (typeof entry?.name === 'string') {
 					const type = classify(entry.name);
 					if (type)
@@ -295,7 +570,33 @@ export function installMediaSniffer() {
 					const size = Number(res.headers?.get('content-length') || 0) || 0;
 					const baseMime = mime.split(';')[0].trim().toLowerCase();
 					const direct = classify(url, mime);
-					if (direct) {
+					if (direct === 'hls') {
+						const norm = normalizeMediaUrl(url);
+						if (!shouldIgnore(norm)) {
+							if (res.ok && (size === 0 || size <= 512 * 1024)) {
+								res
+									.clone()
+									.text()
+									.then((body) => {
+										const info = inspectHlsBody(norm, body);
+										if (info.isMedia && subPlaylistUrls.has(norm)) return;
+										record(norm, {
+											type: 'hls',
+											mime,
+											isMaster: info.isMaster,
+											isSubPlaylist: info.isMedia && !info.isMaster,
+											width: info.width,
+											height: info.height,
+										});
+									})
+									.catch(() => {
+										record(norm, {type: 'hls', mime});
+									});
+							} else {
+								record(norm, {type: 'hls', mime});
+							}
+						}
+					} else if (direct) {
 						record(url, {type: direct, mime, size});
 					} else if (res.ok && baseMime.includes('json')) {
 						if (isWhitelistedJsonVideoApi(url) && (size === 0 || size <= 2 * 1024 * 1024)) {
@@ -317,7 +618,21 @@ export function installMediaSniffer() {
 							.then((body) => {
 								const head = body.slice(0, 512);
 								const detected = classify(url, mime, head);
-								if (detected) record(url, {type: detected, mime, size});
+								if (detected === 'hls') {
+									const norm = normalizeMediaUrl(url);
+									const info = inspectHlsBody(norm, body);
+									if (info.isMedia && subPlaylistUrls.has(norm)) return;
+									record(norm, {
+										type: 'hls',
+										mime,
+										isMaster: info.isMaster,
+										isSubPlaylist: info.isMedia && !info.isMaster,
+										width: info.width,
+										height: info.height,
+									});
+								} else if (detected) {
+									record(url, {type: detected, mime, size});
+								}
 							})
 							.catch(() => {});
 					}
@@ -344,15 +659,35 @@ export function installMediaSniffer() {
 						const mime = this.getResponseHeader('content-type') || '';
 						const size = Number(this.getResponseHeader('content-length') || 0) || 0;
 						let head = '';
+						let textBody = '';
 						if (!this.responseType || this.responseType === 'text') {
 							if (typeof this.responseText === 'string') {
-								head = this.responseText.slice(0, 512);
+								textBody = this.responseText;
+								head = textBody.slice(0, 512);
 								if (mime.includes('json') && isWhitelistedJsonVideoApi(url))
-									extractJsonVideos(this.responseText);
+									extractJsonVideos(textBody);
 							}
 						}
 						const type = classify(url, mime, head);
-						if (type) record(url, {type, mime, size});
+						if (type === 'hls') {
+							const norm = normalizeMediaUrl(url);
+							if (!shouldIgnore(norm)) {
+								const info = textBody
+									? inspectHlsBody(norm, textBody)
+									: {isMaster: false, isMedia: false, width: 0, height: 0};
+								if (info.isMedia && subPlaylistUrls.has(norm)) return;
+								record(norm, {
+									type: 'hls',
+									mime,
+									isMaster: info.isMaster,
+									isSubPlaylist: info.isMedia && !info.isMaster,
+									width: info.width,
+									height: info.height,
+								});
+							}
+						} else if (type) {
+							record(url, {type, mime, size});
+						}
 					} catch {}
 				},
 				{once: true},
@@ -389,6 +724,7 @@ export function installMediaSniffer() {
 
 	function scanDom() {
 		try {
+			scanXDom();
 			for (const el of document.querySelectorAll('video, audio')) inspectMediaElement(el);
 			for (const s of document.querySelectorAll('source[src]')) {
 				const src = s.getAttribute('src');
@@ -411,24 +747,33 @@ export function installMediaSniffer() {
 	}
 
 	setInterval(() => {
+		checkRouteChange();
 		scanDom();
 	}, 2000);
 
 	window.__fetchySniffer = {
 		scan() {
+			checkRouteChange();
 			scanPerformance();
 			scanDom();
 		},
 		list() {
-			scanPerformance();
+			checkRouteChange();
 			scanDom();
+			scanPerformance();
 			const rank = {hls: 4, dash: 3, video: 2, audio: 1};
-			return [...store.values()].sort(
-				(a, b) => (rank[b.type] || 0) - (rank[a.type] || 0) || b.size - a.size || b.ts - a.ts,
-			);
+			return [...store.values()]
+				.filter((item) => !subPlaylistUrls.has(item.url))
+				.sort(
+					(a, b) =>
+						(rank[b.type] || 0) - (rank[a.type] || 0) ||
+						(b.isMaster ? 1 : 0) - (a.isMaster ? 1 : 0) ||
+						b.size - a.size ||
+						b.ts - a.ts,
+				);
 		},
 		clear() {
-			store.clear();
+			clearAll();
 		},
 		add(url, meta) {
 			record(url, meta);

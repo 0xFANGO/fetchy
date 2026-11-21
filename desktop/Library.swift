@@ -540,14 +540,11 @@ struct DownloadsHomePane: View {
       ForEach(entries) { entry in
         let isSelected = selection.contains(entry.id)
         HStack(spacing: 12) {
-          Color.clear.frame(width: 48, height: 32)
-            .overlay {
-              CoverImage(
-                url: entry.cover,
-                kind: entry.coverKind ?? (entry.kind == "video" ? "video" : nil),
-                symbol: .caption)
-            }
-            .clipShape(RoundedRectangle(cornerRadius: 5, style: .continuous))
+          Image(systemName: entry.kind == "video" ? "film" : (entry.kind == "audio" ? "waveform" : "doc.richtext"))
+            .font(.callout)
+            .foregroundStyle(.secondary)
+            .frame(width: 28, height: 28)
+            .background(Color(nsColor: .quaternaryLabelColor).opacity(0.25), in: RoundedRectangle(cornerRadius: 6, style: .continuous))
           VStack(alignment: .leading, spacing: 2) {
             Text(entry.title).font(.callout.weight(.medium)).lineLimit(1)
             Text(
