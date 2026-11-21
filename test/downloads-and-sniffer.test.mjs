@@ -699,23 +699,10 @@ test('installMediaSniffer never clones JSON or streaming responses on unrelated/
 	}
 });
 
-test('installBrowserCompat disables unavailable platform passkeys while preserving non-publicKey credentials', async () => {
+test('installBrowserCompat removes WebAuthn globals and rejects publicKey calls while preserving non-publicKey credentials', async () => {
 	let passthroughCalled = false;
-	class FakePublicKeyCredential {
-		static async isUserVerifyingPlatformAuthenticatorAvailable() {
-			return true;
-		}
-		static async isConditionalMediationAvailable() {
-			return true;
-		}
-		static async getClientCapabilities() {
-			return {
-				conditionalGet: true,
-				userVerifyingPlatformAuthenticator: true,
-				hybridTransport: true,
-			};
-		}
-	}
+	class FakePublicKeyCredential {}
+	class FakeAuthenticatorResponse {}
 	const fakeCredentials = {
 		async get(options) {
 			passthroughCalled = options?.password === true;
@@ -728,28 +715,27 @@ test('installBrowserCompat disables unavailable platform passkeys while preservi
 	const sandbox = {
 		DOMException,
 		PublicKeyCredential: FakePublicKeyCredential,
+		AuthenticatorResponse: FakeAuthenticatorResponse,
+		AuthenticatorAttestationResponse: FakeAuthenticatorResponse,
+		AuthenticatorAssertionResponse: FakeAuthenticatorResponse,
 		navigator: {credentials: fakeCredentials},
 	};
 	sandbox.window = sandbox;
 	vm.runInNewContext('(' + installBrowserCompat.toString() + ')()', sandbox);
 
-	assert.equal(
-		await sandbox.PublicKeyCredential.isUserVerifyingPlatformAuthenticatorAvailable(),
-		false,
-	);
-	assert.equal(await sandbox.PublicKeyCredential.isConditionalMediationAvailable(), false);
-	const caps = await sandbox.PublicKeyCredential.getClientCapabilities();
-	assert.equal(caps.userVerifyingPlatformAuthenticator, false);
-	assert.equal(caps.conditionalGet, false);
-	assert.equal(caps.hybridTransport, false);
+	assert.equal('PublicKeyCredential' in sandbox, false);
+	assert.equal(typeof sandbox.PublicKeyCredential, 'undefined');
+	assert.equal('AuthenticatorResponse' in sandbox, false);
+	assert.equal('AuthenticatorAttestationResponse' in sandbox, false);
+	assert.equal('AuthenticatorAssertionResponse' in sandbox, false);
 
 	await assert.rejects(
 		() => sandbox.navigator.credentials.get({publicKey: {challenge: new Uint8Array(8)}}),
-		{name: 'NotAllowedError'},
+		{name: 'NotSupportedError'},
 	);
 	await assert.rejects(
 		() => sandbox.navigator.credentials.create({publicKey: {challenge: new Uint8Array(8)}}),
-		{name: 'NotAllowedError'},
+		{name: 'NotSupportedError'},
 	);
 	const res = await sandbox.navigator.credentials.get({password: true});
 	assert.equal(passthroughCalled, true);

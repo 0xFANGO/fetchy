@@ -4,10 +4,10 @@
  *
  * macOS 13.3+ requires the restricted `com.apple.developer.web-browser.public-key-credential`
  * entitlement for embedded WKWebViews to use native Passkeys on third-party domains.
- * Without it, WKWebView still advertises `PublicKeyCredential` as available, causing
- * Google/X sign-in flows to trigger Touch ID and then fail with a Bluetooth CTAP2 error.
- * Reporting platform passkeys as unavailable lets sites fall back cleanly to password,
- * 2FA, or QR login.
+ * Without it, keeping `PublicKeyCredential` exposed causes Google/X sign-in flows to
+ * still pick the Passkey challenge (and fall back to Bluetooth CTAP2 errors).
+ * Removing WebAuthn globals and rejecting `publicKey` requests with `NotSupportedError`
+ * lets sites detect that WebAuthn is unavailable and go straight to password / 2FA / QR.
  */
 export function installBrowserCompat() {
 	if (typeof window === 'undefined' || window.__fetchyCompatInstalled) return;
@@ -21,15 +21,43 @@ export function installBrowserCompat() {
 		window.__fetchyCompatInstalled = true;
 	}
 
-	const denyPasskey = () => {
-		const message = 'Platform passkeys are unavailable in this embedded browser.';
+	const unsupportedPasskey = () => {
+		const message = 'WebAuthn passkeys are not supported in this embedded browser.';
 		if (typeof DOMException === 'function') {
-			return Promise.reject(new DOMException(message, 'NotAllowedError'));
+			return Promise.reject(new DOMException(message, 'NotSupportedError'));
 		}
 		const err = new Error(message);
-		err.name = 'NotAllowedError';
+		err.name = 'NotSupportedError';
 		return Promise.reject(err);
 	};
+
+	const removeGlobal = (name) => {
+		for (const target of [window, typeof globalThis === 'object' ? globalThis : null]) {
+			if (!target || !(name in target)) continue;
+			let deleted = false;
+			try {
+				deleted = delete target[name];
+			} catch {}
+			if (!deleted || name in target) {
+				try {
+					Object.defineProperty(target, name, {
+						value: undefined,
+						configurable: true,
+						writable: true,
+					});
+				} catch {}
+			}
+		}
+	};
+
+	for (const name of [
+		'PublicKeyCredential',
+		'AuthenticatorResponse',
+		'AuthenticatorAttestationResponse',
+		'AuthenticatorAssertionResponse',
+	]) {
+		removeGlobal(name);
+	}
 
 	const defineMethod = (target, key, value) => {
 		if (!target) return;
@@ -47,29 +75,6 @@ export function installBrowserCompat() {
 	};
 
 	try {
-		const PKC = window.PublicKeyCredential;
-		if (typeof PKC === 'function') {
-			defineMethod(PKC, 'isUserVerifyingPlatformAuthenticatorAvailable', () =>
-				Promise.resolve(false),
-			);
-			defineMethod(PKC, 'isConditionalMediationAvailable', () => Promise.resolve(false));
-			defineMethod(PKC, 'getClientCapabilities', () =>
-				Promise.resolve({
-					conditionalCreate: false,
-					conditionalGet: false,
-					hybridTransport: false,
-					passkeyPlatformAuthenticator: false,
-					userVerifyingPlatformAuthenticator: false,
-					relatedOrigins: false,
-					signalAllAcceptedCredentials: false,
-					signalCurrentUserDetails: false,
-					signalUnknownCredential: false,
-				}),
-			);
-		}
-	} catch {}
-
-	try {
 		const creds = window.navigator?.credentials;
 		if (creds) {
 			if (typeof creds.get === 'function') {
@@ -81,7 +86,7 @@ export function installBrowserCompat() {
 						'publicKey' in options &&
 						options.publicKey
 					) {
-						return denyPasskey();
+						return unsupportedPasskey();
 					}
 					return origGet(options);
 				});
@@ -95,7 +100,7 @@ export function installBrowserCompat() {
 						'publicKey' in options &&
 						options.publicKey
 					) {
-						return denyPasskey();
+						return unsupportedPasskey();
 					}
 					return origCreate(options);
 				});

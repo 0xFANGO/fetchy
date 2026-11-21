@@ -1313,16 +1313,25 @@ struct BrowserPane: View {
     HStack(spacing: 8) {
       HStack(spacing: 4) {
         Button(action: browser.back) { Image(systemName: "chevron.left") }
+          .foregroundStyle(canGoBackNow ? Color.primary : Color.secondary.opacity(0.45))
           .disabled(!canGoBackNow).help("后退 (⌘[)")
         Button(action: browser.forward) { Image(systemName: "chevron.right") }
+          .foregroundStyle(
+            (browser.canGoForward && !browser.showingStartPage)
+              ? Color.primary : Color.secondary.opacity(0.45)
+          )
           .disabled(!browser.canGoForward || browser.showingStartPage).help("前进 (⌘])")
         Button(action: { browser.isLoading ? browser.stop() : browser.reload() }) {
           Image(systemName: browser.isLoading ? "xmark" : "arrow.clockwise")
         }
+        .foregroundStyle(
+          (!browser.showingStartPage && browser.webView != nil)
+            ? Color.primary : Color.secondary.opacity(0.45)
+        )
         .disabled(browser.showingStartPage || browser.webView == nil)
         .help(browser.isLoading ? "停止加载" : "刷新 (⌘R)")
         Button(action: browser.goHome) { Image(systemName: "house") }
-          .foregroundStyle(browser.showingStartPage ? fetchyAccent : .primary)
+          .foregroundStyle(browser.showingStartPage ? fetchyAccent : Color.primary)
           .help("起始页 (⇧⌘H)")
       }
       .buttonStyle(.borderless)
@@ -1393,6 +1402,7 @@ struct BrowserPane: View {
 
         Button(action: browser.openInDefaultBrowser) {
           Image(systemName: "arrow.up.forward.app")
+            .foregroundStyle(browser.currentUrl == nil ? Color.secondary.opacity(0.45) : Color.primary)
         }
         .disabled(browser.currentUrl == nil)
         .help("在默认浏览器中打开")
