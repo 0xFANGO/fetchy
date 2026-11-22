@@ -19,28 +19,20 @@ no runtime npm dependencies. Tests use `node:test`.
   restate the code.
 - Never commit downloaded media, cookies, tokens or signed media URLs. Logs
   and validation output go to the git-ignored `.local/`.
-- Commit messages follow Conventional Commits (`feat(extension): …`,
-  `fix(core): …`, `chore: …`); see CONTRIBUTING.md. Subject in English,
-  imperative, under 72 characters; body explains why.
 
 ## Changelog & Git workflow
 
-- Write `CHANGELOG.md` and GitHub release notes in English.
-- Keep `CHANGELOG.md` focused on user-visible changes, grouped by release.
-  Use short entries under relevant Added / Changed / Removed / Fixed sections;
-  include deprecations, security fixes and migration steps when applicable.
-  Omit formatting, refactoring, test counts and development chronology.
-- Put upcoming changes in `Unreleased`; move them into the version section
-  when releasing. Keep GitHub release notes consistent and link to installation
-  docs instead of copying them. Preserve breaking changes and license changes.
-- Use a fresh branch from `main` for each focused PR. Iterative commits on the
-  branch are fine; merge into `main` with **squash merge only**. The PR title
-  follows Conventional Commits and becomes the final commit subject; use a
-  concise PR description rather than a list of intermediate commits.
-- Prepare version and changelog updates in a release PR. Tag the merged `main`
-  commit only after squash merge, then publish the GitHub Release. See
-  CONTRIBUTING.md for commands. Do not rewrite published tags or `main` history
-  unless the user explicitly requests that separate operation.
+- Commit messages and PR titles follow Conventional Commits (`feat(extension): …`,
+  `fix(core): …`, `chore: …`), English imperative subject under 72 characters.
+- Record user-visible changes in `CHANGELOG.md` (English, under `Unreleased`);
+  omit formatting, refactoring, test counts and development chronology.
+- Use a fresh branch from `main` per focused PR and merge with **squash merge
+  only**, using a concise PR description rather than intermediate commit lists.
+- Ship releases via a release PR (version + changelog), tag the merged `main`
+  commit only after squash merge, then publish the GitHub Release. Never rewrite
+  published tags or `main` history unless explicitly asked.
+- See [CONTRIBUTING.md](CONTRIBUTING.md) for commit examples, changelog rules,
+  PR checklist and release commands.
 
 ## Architecture
 
@@ -49,8 +41,8 @@ Dependency direction is one-way; never import upwards.
 ```
 bin/        CLI                       → src/index.mjs
 extension/  MV3 popup + background    → src/urls.mjs, src/page-extract.mjs (copied at build)
-native/     messaging host + daemon   → src/index.mjs, src/process.mjs
-src/index.mjs  public API, engine routing, bounded fallbacks
+native/     messaging host + daemon   → src/index.mjs, src/process.mjs, src/dependencies.mjs
+src/index.mjs  public API, engine routing, bounded fallbacks → dependencies.mjs
   ├─ yt-dlp.mjs   → mp4.mjs, filenames.mjs, thumbnails.mjs, process.mjs
   ├─ browser.mjs  → filenames.mjs, thumbnails.mjs, process.mjs (downloads caller-supplied page media)
   └─ urls.mjs     link normalisation and content identity (no imports)
@@ -61,22 +53,23 @@ src/index.mjs  public API, engine routing, bounded fallbacks
   self-contained: no imports, no closures over module scope.
 - The browser engine never opens pages. It takes `options.pageMedia` from the
   extension and re-validates identity and CDN hosts before downloading.
-- Signed media URLs in `pageMedia` live only in memory in `native/`.
-- `src/process.mjs` is the only place that spawns child processes. Always
-  pass argument arrays, never shell strings; always bound time and output.
-- `native/` persists only sanitised task results; raw inputs stay in memory.
+- `native/` keeps raw inputs and signed `pageMedia` URLs in memory only;
+  persisted state stores only sanitised task results.
+- `src/process.mjs` owns bounded external-tool subprocess execution (the only
+  other `child_process` callers are `native/host.mjs` launching the detached
+  daemon and `scripts/pack-extension.mjs` packing releases). Always pass
+  argument arrays, never shell strings; always bound time and output.
 - Public errors are `EngineError` with a stable `code`. Never surface raw
   tool output, which may contain signed URLs.
 
 ## Build & test
 
-- `npm run deps:install` installs the external yt-dlp downloader into `.venv`.
-  Keep its tested version in `requirements.txt`; local setup and CI share it.
+- `npm run deps:install` installs the pinned yt-dlp from `requirements.txt` into
+  `.venv` (shared by local setup and CI).
 - `npm test` runs offline contract tests; FFmpeg is required for the MP4
   suite and `.venv` yt-dlp for two integration tests (skipped otherwise).
-- PR CI checks Node 22 and 24 with media-test dependencies installed, then
-  runs format/lint, tests and extension packaging.
-- `npm run check` = `oxfmt --check` + `oxlint`. Style: tabs, single quotes,
-  no bracket spacing. Run `npm run fmt` before committing.
-- `npm run extension:build` writes the loadable extension to `dist/extension`.
-- `npm run native:install` registers the native host (macOS only for now).
+- `npm run check` = `oxfmt --check` + `oxlint` (tabs, single quotes, no bracket
+  spacing). Run `npm run fmt` before committing.
+- `npm run extension:build` writes the loadable extension to `dist/extension`;
+  `npm run native:install` registers the native host (macOS only for now).
+- See [CONTRIBUTING.md](CONTRIBUTING.md) for CI matrix and full setup details.

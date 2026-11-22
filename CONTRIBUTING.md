@@ -46,10 +46,10 @@ npm run fmt            # format in place
 npm run lint:fix
 ```
 
-Formatting is enforced by [oxfmt](https://oxc.rs) (tabs, single quotes) and
-linting by [oxlint](https://oxc.rs). Run the relevant checks locally before
-requesting review. The Release workflow also checks formatting and lint before
-packing the extension.
+Formatting is enforced by [oxfmt](https://oxc.rs) (tabs, single quotes, no
+bracket spacing) and linting by [oxlint](https://oxc.rs). Run the relevant
+checks locally before requesting review. The Release workflow also checks
+formatting and lint before packing the extension.
 
 ## Commit messages
 
@@ -109,7 +109,7 @@ Prepare a release PR from current `main`:
 ```sh
 git switch main
 git pull --ff-only
-git switch -c codex/release-X.Y.Z
+git switch -c chore/release-X.Y.Z
 npm version X.Y.Z --no-git-tag-version
 npm run fmt
 npm run check
